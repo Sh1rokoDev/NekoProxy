@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../data/app_storage.dart';
 import '../domain/models.dart';
 import '../runtime/runtime_client.dart';
+import 'github_releases.dart';
 
 const _sources = {
   'geosite': (repo: 'domain-list-community', asset: 'dlc.dat'),
@@ -16,6 +17,7 @@ const _sources = {
 };
 const _maxDatabaseSize = 64 * 1024 * 1024;
 const _maxRuleSize = 8 * 1024 * 1024;
+const _requestTimeout = Duration(seconds: 30);
 final _digestPattern = RegExp(r'^[a-f0-9]{64}$');
 final _releasePattern = RegExp(r'^[A-Za-z0-9._-]+$');
 final _filePattern = RegExp(
@@ -249,10 +251,9 @@ class RuleSetManager {
         }
         final release = releases[kind]!;
         final source = entry.value;
-        final url = Uri.https(
-          'github.com',
-          '/v2fly/${source.repo}/releases/download/${release.tag}/${source.asset}',
-        );
+        final url = GitHubReleases(
+          'v2fly/${source.repo}',
+        ).download(release.tag, source.asset);
         final input = File(_join(stage.path, source.asset));
         final sink = input.openWrite();
         try {
@@ -455,49 +456,110 @@ class RuleSetManager {
     HttpClient client,
     ({String repo, String asset}) source,
   ) async {
-    final raw = await _download(
-      client,
-      Uri.https(
-        'api.github.com',
-        '/repos/v2fly/${source.repo}/releases/latest',
-      ),
-      1024 * 1024,
-    ).transform(utf8.decoder).join();
-    final release = _decodeObject(raw);
-    final tag = release['tag_name'];
-    final assets = release['assets'];
-    if (assets is List) {
-      for (final asset in assets) {
-        if (asset is! Map || asset['name'] != source.asset) continue;
-        final digest = asset['digest'];
-        if (digest is String && digest.startsWith('sha256:')) {
-          return _parseRelease(tag, digest.substring(7), asset['size']);
-        }
-      }
+    final releases = GitHubReleases('v2fly/${source.repo}');
+    final latest = releases.latest;
+    final response = await _request(client, latest, followRedirects: false);
+    final tagged = _redirectTarget(latest, response, const {'github.com'});
+    await response.listen(null).cancel();
+    final tag = releases.tagAt(tagged);
+    if (tag == null) {
+      throw RuleSetException('${source.repo} 无法从 GitHub 发布页确认最新版本，已保留现有规则集');
     }
-    throw RuleSetException('${source.repo} 发布信息缺少规则集或 SHA-256');
-  }
-
-  Stream<List<int>> _download(HttpClient client, Uri uri, int limit) async* {
-    const timeout = Duration(seconds: 30);
-    final request = await client.getUrl(uri).timeout(timeout);
-    request.headers.set(HttpHeaders.userAgentHeader, 'NekoProxy (rules)');
-    if (uri.host == 'api.github.com') {
-      request.headers.set(
-        HttpHeaders.acceptHeader,
-        'application/vnd.github+json',
+    final html = await _download(
+      client,
+      releases.assetsPage(tag),
+      maxGitHubReleaseMetadataSize,
+      followRedirects: false,
+    ).transform(utf8.decoder).join();
+    final matches = releases
+        .assets(tag, html)
+        .where((asset) => asset.name == source.asset)
+        .toList();
+    final digest = matches.length == 1 ? matches.single.sha256 : null;
+    if (digest == null) {
+      throw RuleSetException(
+        '${source.repo} 的 GitHub 发布页缺少规则集 SHA-256，已保留现有规则集',
       );
     }
-    final response = await request.close().timeout(timeout);
-    if (response.statusCode != HttpStatus.ok) {
-      throw RuleSetException('${uri.host} 返回 HTTP ${response.statusCode}');
+    final size = await _assetSize(client, releases.download(tag, source.asset));
+    return _parseRelease(tag, digest, size);
+  }
+
+  Future<int> _assetSize(HttpClient client, Uri uri) async {
+    for (var redirects = 0; redirects <= 5; redirects++) {
+      final response = await _request(
+        client,
+        uri,
+        head: true,
+        followRedirects: false,
+      );
+      final size = response.contentLength;
+      final next = _redirectTarget(uri, response, githubReleaseAssetHosts);
+      await response.listen(null).cancel();
+      if (response.statusCode == HttpStatus.ok) return size;
+      if (next == null) break;
+      uri = next;
     }
+    throw RuleSetException('无法从 GitHub 确认规则集大小，已保留现有规则集');
+  }
+
+  static Uri? _redirectTarget(
+    Uri uri,
+    HttpClientResponse response,
+    Set<String> hosts,
+  ) {
+    if (!githubRedirectCodes.contains(response.statusCode)) return null;
+    return githubReleaseRedirect(
+      uri,
+      response.headers.value(HttpHeaders.locationHeader),
+      hosts,
+    );
+  }
+
+  Future<HttpClientResponse> _request(
+    HttpClient client,
+    Uri uri, {
+    bool head = false,
+    bool followRedirects = true,
+  }) async {
+    final request = await (head ? client.headUrl(uri) : client.getUrl(uri))
+        .timeout(_requestTimeout);
+    if (!followRedirects) request.followRedirects = false;
+    request.headers.set(HttpHeaders.userAgentHeader, 'NekoProxy (rules)');
+    return request.close().timeout(_requestTimeout);
+  }
+
+  Stream<List<int>> _download(
+    HttpClient client,
+    Uri uri,
+    int limit, {
+    bool followRedirects = true,
+  }) async* {
+    final response = await _request(
+      client,
+      uri,
+      followRedirects: followRedirects,
+    );
+    _requireSuccess(response, uri.host);
+    yield* _limitedBody(response, limit);
+  }
+
+  static void _requireSuccess(HttpClientResponse response, String host) {
+    if (response.statusCode != HttpStatus.ok) {
+      throw RuleSetException('$host 返回 HTTP ${response.statusCode}');
+    }
+  }
+
+  static Stream<List<int>> _limitedBody(
+    HttpClientResponse response,
+    int limit,
+  ) async* {
     if (response.contentLength > limit) {
       throw RuleSetException('规则集下载大小超过上限');
     }
     var received = 0;
     final stopwatch = Stopwatch()..start();
-    await for (final chunk in response.timeout(timeout)) {
+    await for (final chunk in response.timeout(_requestTimeout)) {
       if (stopwatch.elapsed > const Duration(minutes: 3)) {
         throw TimeoutException('规则集下载超时');
       }

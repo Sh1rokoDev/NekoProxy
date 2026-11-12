@@ -85,6 +85,93 @@ void main() {
     expect(await second.readAsBytes(), _rule);
   });
 
+  test('uses only GitHub Releases and verifies downloaded assets', () async {
+    final requests = <(String, String)>[];
+    var corruptDownload = true;
+    final manager = RuleSetManager(
+      paths: paths,
+      bundle: _FixtureBundle(),
+      clientFactory: () => _Client.responses((method, uri) {
+        requests.add((method, '${uri.host}${uri.path}'));
+        if (uri.host == 'release-assets.githubusercontent.com') {
+          expect(method, 'HEAD');
+          return _Response([], size: uri.path.endsWith('dlc.dat') ? 3 : 1);
+        }
+        expect(uri.host, 'github.com');
+        final site = uri.path.contains('domain-list-community');
+        final repo = site ? 'domain-list-community' : 'geoip';
+        final file = site ? 'dlc.dat' : 'geoip.dat';
+        final tag = site ? '2' : '1';
+        final prefix = '/v2fly/$repo/releases';
+        final path = '$prefix/download/$tag/$file';
+        if (uri.path == '$prefix/latest') {
+          return _Response(
+            [],
+            status: 302,
+            headers: {'location': '$prefix/tag/$tag'},
+          );
+        }
+        if (uri.path == '$prefix/expanded_assets/$tag') {
+          final digest = sha256.convert(site ? [1, 2, 3] : [0]);
+          return _Response(
+            utf8.encode('''
+<li><a href="$path.sha256sum">checksum</a><clipboard-copy value="sha256:$_ruleHash"></clipboard-copy></li>
+<li><a href="$path">$file</a><clipboard-copy value="sha256:$digest"></clipboard-copy></li>
+'''),
+          );
+        }
+        expect(uri.path, path);
+        if (method == 'HEAD') {
+          return _Response(
+            [],
+            status: 302,
+            headers: {
+              'location': 'https://release-assets.githubusercontent.com/$file',
+            },
+          );
+        }
+        expect(file, 'dlc.dat');
+        return _Response(corruptDownload ? [1, 2, 4] : [1, 2, 3]);
+      }),
+      converter: (kind, input, output) async {
+        expect(kind, 'geosite');
+        expect(await File(input).readAsBytes(), [1, 2, 3]);
+        for (final tag in ['geosite-cn', 'geosite-category-ads-all']) {
+          await File('$output/$tag.srs').writeAsBytes(_rule);
+        }
+      },
+    );
+    await manager.initialize();
+    final original = manager.pathsByTag;
+
+    await expectLater(
+      manager.update(),
+      throwsA(
+        isA<RuleSetException>().having(
+          (e) => e.message,
+          'message',
+          'dlc.dat 校验失败',
+        ),
+      ),
+    );
+    expect(manager.pathsByTag, original);
+    expect((await manager.readStatus()).checkedAt, isNull);
+    corruptDownload = false;
+
+    final result = await manager.update();
+    expect(result.updated, isTrue);
+    expect(result.status.releaseTag('geosite'), '2');
+    expect(result.status.releaseTag('geoip'), '1');
+    expect(
+      requests.where(
+        (request) =>
+            request.$1 == 'HEAD' &&
+            request.$2.startsWith('release-assets.githubusercontent.com'),
+      ),
+      hasLength(4),
+    );
+  });
+
   test(
     'publishes a complete verified update and restores the offline snapshot',
     () async {
@@ -96,22 +183,35 @@ void main() {
       final manager = RuleSetManager(
         paths: paths,
         bundle: bundle,
-        clientFactory: () => _Client((uri) {
-          if (uri.host == 'github.com') {
-            downloads++;
-            expect(
-              uri.path,
-              '/v2fly/domain-list-community/releases/download/2/dlc.dat',
+        clientFactory: () => _Client.responses((method, uri) {
+          expect(uri.host, 'github.com');
+          final site = uri.path.contains('domain-list-community');
+          final repo = site ? 'domain-list-community' : 'geoip';
+          final tag = site ? '2' : '1';
+          final file = site ? 'dlc.dat' : 'geoip.dat';
+          final bytes = site ? [1, 2, 3] : [0];
+          final path = '/v2fly/$repo/releases';
+          if (uri.path == '$path/latest') {
+            return _Response(
+              [],
+              status: 302,
+              headers: {'location': '$path/tag/$tag'},
             );
-            return failChecksum ? [1, 2, 4] : [1, 2, 3];
           }
-          return utf8.encode(
-            jsonEncode(
-              uri.path.contains('domain-list-community')
-                  ? _release('dlc.dat', '2', [1, 2, 3])
-                  : _release('geoip.dat', '1', [0]),
-            ),
-          );
+          final assetPath = '$path/download/$tag/$file';
+          if (uri.path == '$path/expanded_assets/$tag') {
+            return _Response(
+              utf8.encode(
+                '<li><a href="$assetPath">$file</a>'
+                '<clipboard-copy value="sha256:${sha256.convert(bytes)}"></clipboard-copy></li>',
+              ),
+            );
+          }
+          expect(uri.path, assetPath);
+          if (method == 'HEAD') return _Response([], size: bytes.length);
+          expect(file, 'dlc.dat');
+          downloads++;
+          return _Response(failChecksum ? [1, 2, 4] : bytes);
         }),
         converter: (kind, input, output) async {
           conversions++;
@@ -183,17 +283,6 @@ void main() {
 final _rule = Uint8List.fromList([0x53, 0x52, 0x53, 5, ...List.filled(20, 0)]);
 final _ruleHash = sha256.convert(_rule).toString();
 
-Map<String, Object> _release(String name, String tag, List<int> bytes) => {
-  'tag_name': tag,
-  'assets': [
-    {
-      'name': name,
-      'digest': 'sha256:${sha256.convert(bytes)}',
-      'size': bytes.length,
-    },
-  ],
-};
-
 class _FixtureBundle extends CachingAssetBundle {
   @override
   Future<ByteData> load(String key) async {
@@ -229,42 +318,65 @@ class _FixtureBundle extends CachingAssetBundle {
 }
 
 class _Client extends Fake implements HttpClient {
-  _Client(this.reply);
-  final List<int> Function(Uri) reply;
+  _Client.responses(this._reply);
+  final HttpClientResponse Function(String, Uri) _reply;
 
   @override
-  Future<HttpClientRequest> getUrl(Uri url) async => _Request(reply(url));
+  Future<HttpClientRequest> getUrl(Uri url) async =>
+      _Request(_reply('GET', url));
+
+  @override
+  Future<HttpClientRequest> headUrl(Uri url) async =>
+      _Request(_reply('HEAD', url));
 
   @override
   void close({bool force = false}) {}
 }
 
 class _Request extends Fake implements HttpClientRequest {
-  _Request(this.bytes);
-  final List<int> bytes;
+  _Request(this.response);
+  final HttpClientResponse response;
 
   @override
-  final HttpHeaders headers = _Headers();
+  final HttpHeaders headers = _Headers(const {});
 
   @override
-  Future<HttpClientResponse> close() async => _Response(bytes);
+  bool followRedirects = true;
+
+  @override
+  Future<HttpClientResponse> close() async => response;
 }
 
 class _Headers extends Fake implements HttpHeaders {
+  _Headers(this.values);
+  final Map<String, String> values;
+
+  @override
+  String? value(String name) => values[name];
+
   @override
   void set(String name, Object value, {bool preserveHeaderCase = false}) {}
 }
 
 class _Response extends StreamView<List<int>> implements HttpClientResponse {
-  _Response(List<int> bytes)
-    : contentLength = bytes.length,
-      super(Stream.value(bytes));
+  _Response(
+    List<int> bytes, {
+    int? size,
+    int status = HttpStatus.ok,
+    Map<String, String> headers = const {},
+  }) : contentLength = size ?? bytes.length,
+       statusCode = status,
+       headers = _Headers(headers),
+       super(Stream.value(bytes));
 
   @override
   final int contentLength;
 
   @override
-  int get statusCode => HttpStatus.ok;
+  final int statusCode;
+
+  @override
+  final HttpHeaders headers;
 
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);

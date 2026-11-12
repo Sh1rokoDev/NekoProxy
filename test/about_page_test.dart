@@ -1,7 +1,14 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/app/widgets.dart';
+import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/features/tools/about_page.dart';
+import 'package:nekoproxy/services/app_update_service.dart';
+import 'package:nekoproxy/state/app_controller.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
@@ -63,4 +70,80 @@ void main() {
     await tester.pump(const Duration(milliseconds: 350), EnginePhase.paint);
     expect(find.byType(LicensePage), findsOneWidget);
   });
+
+  testWidgets('进入关于页自动检查一次，检查进度与右侧按钮并排', (tester) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'NekoProxy',
+      packageName: 'nekoproxy',
+      version: '1.0.0',
+      buildNumber: '1',
+      buildSignature: '',
+    );
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = _UpdateController();
+    addTearDown(controller.dispose);
+    final page = AppScope(
+      controller: controller,
+      child: const MaterialApp(home: AboutPage()),
+    );
+
+    await tester.pumpWidget(page, phase: EnginePhase.paint);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    expect(controller.checks, 1);
+
+    final button = find.widgetWithText(TextButton, '检查更新');
+    final progress = find.byType(LinearProgressIndicator);
+    expect(tester.widget<TextButton>(button).onPressed, isNull);
+    final buttonRect = tester.getRect(button);
+    final progressRect = tester.getRect(progress);
+    final titleRect = tester.getRect(find.text('应用更新'));
+    expect(buttonRect.top, greaterThan(titleRect.bottom));
+    expect(buttonRect.left, greaterThan(progressRect.right));
+    expect(buttonRect.top, lessThan(progressRect.center.dy));
+    expect(buttonRect.bottom, greaterThan(progressRect.center.dy));
+
+    controller.result.complete(null);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    final statusRect = tester.getRect(find.text('没有可用的新版本。'));
+    final settledButtonRect = tester.getRect(button);
+    expect(settledButtonRect.left, greaterThan(statusRect.right));
+    expect(settledButtonRect.center.dy, closeTo(statusRect.center.dy, 1));
+    expect(controller.checks, 1);
+
+    await tester.tap(button);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    expect(controller.checks, 2);
+
+    await tester.pumpWidget(const SizedBox.shrink(), phase: EnginePhase.paint);
+    await tester.pumpWidget(page, phase: EnginePhase.paint);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    expect(controller.checks, 3);
+  }, skip: !Platform.isWindows && !Platform.isAndroid);
+}
+
+class _UpdateController extends AppController {
+  _UpdateController() {
+    paths = AppPaths.forDirectory(Directory.systemTemp.path);
+  }
+
+  final result = Completer<AppUpdate?>();
+  int checks = 0;
+
+  @override
+  AppUpdateService createUpdateService() => _UpdateService(this);
+}
+
+class _UpdateService extends AppUpdateService {
+  _UpdateService(this.controller)
+    : super(() => throw StateError('Unexpected HTTP client'));
+
+  final _UpdateController controller;
+
+  @override
+  Future<AppUpdate?> check(String currentVersion, UpdatePackageKind kind) {
+    controller.checks++;
+    return controller.result.future;
+  }
 }

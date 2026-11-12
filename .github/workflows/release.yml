@@ -26,7 +26,6 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-          submodules: recursive
           persist-credentials: false
 
       - name: Validate release tag
@@ -124,7 +123,7 @@ jobs:
             }
           }
 
-      - name: Record bundled rule versions
+      - name: Record bundled upstream versions
         shell: pwsh
         run: Copy-Item -LiteralPath assets/rules/manifest.json -Destination dist/rules-manifest.json
 
@@ -173,12 +172,13 @@ jobs:
           done
 
           {
-            printf '## 内置规则集\n\n'
+            printf '## 上游版本\n\n'
             for platform in windows android; do
               manifest="release/$platform/rules-manifest.json"
+              sing_box=$(jq -er '.singBox | select(type == "string" and length > 0)' "$manifest")
               geosite=$(jq -er '.releases.geosite.tag | select(type == "string" and length > 0)' "$manifest")
               geoip=$(jq -er '.releases.geoip.tag | select(type == "string" and length > 0)' "$manifest")
-              printf -- '- %s: GeoSite `%s`, GeoIP `%s`\n' "$platform" "$geosite" "$geoip"
+              printf -- '- %s: sing-box `%s`, GeoSite `%s`, GeoIP `%s`\n' "$platform" "$sing_box" "$geosite" "$geoip"
             done
           } > release-notes.md
 

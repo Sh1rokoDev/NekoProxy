@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -21,7 +22,9 @@ class AppUpdateCard extends StatefulWidget {
 class _AppUpdateCardState extends State<AppUpdateCard> {
   late final _controller = AppScope.read(context);
   late final _installer = AppUpdateInstaller(_controller.paths.base);
-  late final _packageKind = _installer.packageKind;
+  late final _packageKind = Platform.isAndroid || Platform.isWindows
+      ? _installer.packageKind
+      : null;
   late final _service = _controller.createUpdateService();
   bool _usedService = false;
   bool _busy = false;
@@ -29,6 +32,15 @@ class _AppUpdateCardState extends State<AppUpdateCard> {
   AppUpdate? _update;
   File? _downloaded;
   String? _message;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_packageKind case final kind?) unawaited(_check(kind));
+    });
+  }
 
   @override
   void dispose() {
@@ -123,9 +135,6 @@ class _AppUpdateCardState extends State<AppUpdateCard> {
 
   @override
   Widget build(BuildContext context) {
-    if (!Platform.isAndroid && !Platform.isWindows) {
-      return const SizedBox.shrink();
-    }
     final kind = _packageKind;
     if (kind == null) return const SizedBox.shrink();
     final update = _update;
@@ -134,55 +143,68 @@ class _AppUpdateCardState extends State<AppUpdateCard> {
     return SectionCard(
       title: '应用更新',
       icon: Icons.system_update_alt_rounded,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
+        spacing: 12,
         children: [
-          if (update != null) Text('新版本：${update.tag}'),
-          if (_message case final message?) Text(message),
-          if (_busy) ...[
-            const SizedBox(height: 8),
-            LinearProgressIndicator(value: progress),
-            if (progress != null)
-              Text(
-                progress == 1 ? '正在校验更新包…' : '下载中 ${(progress * 100).floor()}%',
-              ),
-          ],
-          Wrap(
-            spacing: 8,
-            children: [
-              TextButton(
-                onPressed: _busy ? null : () => _check(kind),
-                child: const Text('检查更新'),
-              ),
-              if (update != null)
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              spacing: 4,
+              children: [
+                if (update != null) Text('新版本：${update.tag}'),
+                if (_message case final message?) Text(message),
+                if (_busy) ...[
+                  LinearProgressIndicator(value: progress),
+                  if (progress != null)
+                    Text(
+                      progress == 1
+                          ? '正在校验更新包…'
+                          : '下载中 ${(progress * 100).floor()}%',
+                    ),
+                ],
+              ],
+            ),
+          ),
+          Expanded(
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              children: [
                 TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => _run(() async {
-                          if (!await launchUrl(
-                            update.releasePage,
-                            mode: LaunchMode.externalApplication,
-                          )) {
-                            throw const AppUpdateException('无法打开发布说明。');
-                          }
-                        }),
-                  child: const Text('发布说明'),
+                  onPressed: _busy ? null : () => _check(kind),
+                  child: const Text('检查更新'),
                 ),
-              if (update != null && file == null)
-                FilledButton(
-                  onPressed: _busy ? null : () => _download(update),
-                  child: const Text('下载更新'),
-                ),
-              if (update != null && file != null)
-                FilledButton(
-                  onPressed: _busy ? null : () => _install(update, file),
-                  child: Text(
-                    kind == UpdatePackageKind.windowsPortable
-                        ? '打开下载位置'
-                        : '安装更新',
+                if (update != null)
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => _run(() async {
+                            if (!await launchUrl(
+                              update.releasePage,
+                              mode: LaunchMode.externalApplication,
+                            )) {
+                              throw const AppUpdateException('无法打开发布说明。');
+                            }
+                          }),
+                    child: const Text('发布说明'),
                   ),
-                ),
-            ],
+                if (update != null && file == null)
+                  FilledButton(
+                    onPressed: _busy ? null : () => _download(update),
+                    child: const Text('下载更新'),
+                  ),
+                if (update != null && file != null)
+                  FilledButton(
+                    onPressed: _busy ? null : () => _install(update, file),
+                    child: Text(
+                      kind == UpdatePackageKind.windowsPortable
+                          ? '打开下载位置'
+                          : '安装更新',
+                    ),
+                  ),
+              ],
+            ),
           ),
         ],
       ),

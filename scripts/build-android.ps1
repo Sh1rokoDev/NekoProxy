@@ -1,11 +1,11 @@
 param(
-    [switch]$SkipAar,
     [string]$Flutter = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot "version.ps1")
+. (Join-Path $PSScriptRoot "upstream.ps1")
 $version = Get-NekoVersionInfo -Root $root
 
 function Resolve-Tool([string]$Name) {
@@ -80,7 +80,7 @@ if (-not $gomobile) {
     $candidate = Join-Path $goBin "gomobile.exe"
     if (Test-Path $candidate) { $gomobile = $candidate }
 }
-if (-not $SkipAar -and -not $gomobile) {
+if (-not $gomobile) {
     throw "gomobile not found. Install it with: go install golang.org/x/mobile/cmd/gomobile@latest"
 }
 
@@ -94,8 +94,10 @@ $env:PATH = "$jdk\bin;$goBin;$env:PATH"
 $libs = Join-Path $root "android\app\libs"
 New-Item -ItemType Directory -Force -Path $libs | Out-Null
 
-if (-not $SkipAar) {
-    Push-Location (Join-Path $root "runtime")
+Invoke-WithLatestNekoRuntime -Root $root -Build {
+    param($SourceDir, $CoreVersion)
+    & (Join-Path $PSScriptRoot "sync-rules.ps1") -RuntimeDir $SourceDir -CoreVersion $CoreVersion -RequireLatest
+    Push-Location $SourceDir
     try {
         $bindArgs = @(
             "bind",
@@ -114,8 +116,6 @@ if (-not $SkipAar) {
         Pop-Location
     }
 }
-
-& (Join-Path $PSScriptRoot "sync-rules.ps1")
 
 Push-Location $root
 try {

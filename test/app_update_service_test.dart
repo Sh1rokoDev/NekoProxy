@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -12,20 +11,38 @@ const _tag = 'v1.10.0';
 const _prefix = 'NekoProxy-1.10.0+abcdef1-';
 const _data = [1, 2, 3, 4];
 
-http.Response _release({bool prerelease = false, bool checksum = true}) {
-  return http.Response(
-    jsonEncode({
-      'tag_name': _tag,
-      'prerelease': prerelease,
-      'assets': [
+http.Response? _release(
+  http.Request request, {
+  bool prerelease = false,
+  bool checksum = true,
+}) {
+  if (request.url.host != 'github.com') return null;
+  const releases = '/Sh1rokoDev/NekoProxy/releases';
+  if (request.url.path == '$releases/latest') {
+    expect(request.followRedirects, isFalse);
+    return http.Response(
+      '',
+      302,
+      headers: {
+        'location': '$releases/tag/${prerelease ? 'v1.10.0-beta' : _tag}',
+      },
+    );
+  }
+  if (request.url.path == '$releases/expanded_assets/$_tag') {
+    String row(String name) =>
+        '<li><a href="$releases/download/$_tag/${Uri.encodeComponent(name)}">$name</a></li>';
+    return http.Response(
+      [
         for (final kind in UpdatePackageKind.values) ...[
-          {'name': '$_prefix${kind.suffix}', 'size': _data.length},
-          if (checksum) {'name': '$_prefix${kind.suffix}.sha256'},
+          row('$_prefix${kind.suffix}'),
+          if (checksum) row('$_prefix${kind.suffix}.sha256'),
         ],
-      ],
-    }),
-    200,
-  );
+      ].join(),
+      200,
+    );
+  }
+  if (request.method == 'HEAD') return http.Response.bytes(_data, 200);
+  return null;
 }
 
 AppUpdateService _service(Future<http.Response> Function(http.Request) handle) {
@@ -37,9 +54,8 @@ AppUpdateService _service(Future<http.Response> Function(http.Request) handle) {
 void main() {
   test('checks a newer stable tag and selects the matching package', () async {
     final service = _service((request) async {
-      expect(request.url.host, 'api.github.com');
-      expect(request.url.path, '/repos/Sh1rokoDev/NekoProxy/releases/latest');
-      return _release();
+      expect(request.url.host, 'github.com');
+      return _release(request)!;
     });
     for (final kind in UpdatePackageKind.values) {
       final update = await service.check('1.9.99+0123456', kind);
@@ -56,15 +72,25 @@ void main() {
   test(
     'ignores pre-releases and handles the repository with no release',
     () async {
-      final preview = _service((_) async => _release(prerelease: true));
-      final empty = _service((_) async => http.Response('', 404));
+      final preview = _service(
+        (request) async => _release(request, prerelease: true)!,
+      );
+      final empty = _service(
+        (_) async => http.Response(
+          '',
+          302,
+          headers: {'location': '/Sh1rokoDev/NekoProxy/releases'},
+        ),
+      );
       expect(await preview.check('1.0.0', UpdatePackageKind.android), isNull);
       expect(await empty.check('1.0.0', UpdatePackageKind.android), isNull);
     },
   );
 
   test('rejects a release without the selected package checksum', () async {
-    final service = _service((_) async => _release(checksum: false));
+    final service = _service(
+      (request) async => _release(request, checksum: false)!,
+    );
     await expectLater(
       service.check('1.0.0', UpdatePackageKind.android),
       throwsA(isA<AppUpdateException>()),
@@ -79,7 +105,7 @@ void main() {
     const fileName = '${_prefix}android-arm64.apk';
     var downloads = 0;
     final service = _service((request) async {
-      if (request.url.host == 'api.github.com') return _release();
+      if (_release(request) case final metadata?) return metadata;
       if (request.url.path.endsWith('.sha256')) {
         return http.Response('${sha256.convert(_data)} *$fileName\n', 200);
       }
@@ -117,7 +143,7 @@ void main() {
     );
     addTearDown(() => directory.delete(recursive: true));
     final service = _service((request) async {
-      if (request.url.host == 'api.github.com') return _release();
+      if (_release(request) case final metadata?) return metadata;
       expect(request.url.host, 'github.com');
       return http.Response(
         '',
@@ -139,7 +165,7 @@ void main() {
     );
     addTearDown(() => directory.delete(recursive: true));
     final service = _service((request) async {
-      if (request.url.host == 'api.github.com') return _release();
+      if (_release(request) case final metadata?) return metadata;
       if (request.url.path.endsWith('.sha256')) {
         return http.Response(
           '${sha256.convert(_data)} *${_prefix}android-arm64.apk\n',

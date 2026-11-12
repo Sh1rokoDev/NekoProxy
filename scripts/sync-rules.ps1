@@ -1,10 +1,17 @@
 param(
     [string]$OutputDir = "",
+    [string]$RuntimeDir = "",
+    [string]$CoreVersion = "",
+    [switch]$RequireLatest,
     [switch]$Force
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'upstream.ps1')
+if ([string]::IsNullOrWhiteSpace($RuntimeDir)) {
+    $RuntimeDir = Join-Path $root 'runtime'
+}
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $root "assets\rules"
 }
@@ -14,7 +21,42 @@ $sources = @{
     geosite = @{ Repo = "domain-list-community"; Asset = "dlc.dat" }
     geoip = @{ Repo = "geoip"; Asset = "geoip.dat" }
 }
-$headers = @{ "User-Agent" = "NekoProxy-build"; Accept = "application/vnd.github+json" }
+$headers = @{ "User-Agent" = "NekoProxy-build" }
+
+function Get-ReleaseMetadata($source) {
+    $releasePath = "/v2fly/$($source.Repo)/releases"
+    $tag = Get-LatestGitHubReleaseTag "v2fly/$($source.Repo)"
+
+    $page = Invoke-WebRequest "https://github.com$releasePath/expanded_assets/$tag" `
+        -Headers $headers -TimeoutSec 30 -MaximumRedirection 0
+    if ($page.RawContentLength -gt 1MB) {
+        throw "Release metadata is too large for $($source.Repo)."
+    }
+    $assetPath = "$releasePath/download/$tag/$($source.Asset)"
+    $link = '<a\b[^>]*\shref="' + [regex]::Escape($assetPath) + '"'
+    $rows = @([regex]::Matches($page.Content, '<li\b[^>]*>[\s\S]*?</li>') |
+        Where-Object { $_.Value -cmatch $link })
+    if ($rows.Count -ne 1) {
+        throw "Missing or ambiguous release asset for $($source.Repo)."
+    }
+    $digest = [regex]::Matches($rows[0].Value, '<clipboard-copy\b[^>]*\svalue="sha256:([a-f0-9]{64})"')
+    if ($digest.Count -ne 1) {
+        throw "Missing or ambiguous release SHA-256 for $($source.Repo)."
+    }
+
+    $asset = Invoke-WebRequest "https://github.com$assetPath" `
+        -Method Head -Headers $headers -TimeoutSec 30 -MaximumRedirection 5
+    $uri = $asset.BaseResponse.RequestMessage.RequestUri
+    $length = [string[]]$asset.Headers['Content-Length']
+    $size = 0L
+    if ($asset.StatusCode -ne 200 -or $uri.Scheme -ne 'https' -or $uri.Port -ne 443 -or
+        $uri.UserInfo -or $uri.Host -notin @('github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com') -or
+        $length.Count -ne 1 -or -not [long]::TryParse($length[0], [ref]$size) -or
+        $size -lt 1 -or $size -gt 64MB) {
+        throw "Invalid release asset size for $($source.Repo)."
+    }
+    return [ordered]@{ tag = $tag; sha256 = $digest[0].Groups[1].Value; size = $size }
+}
 
 $previous = $null
 $previousFiles = @()
@@ -44,38 +86,30 @@ $releases = [ordered]@{}
 try {
     foreach ($kind in @("geosite", "geoip")) {
         $source = $sources[$kind]
-        $release = Invoke-RestMethod "https://api.github.com/repos/v2fly/$($source.Repo)/releases/latest" `
-            -Headers $headers -TimeoutSec 30
-        $asset = @($release.assets | Where-Object { $_.name -eq $source.Asset })
-        if ($release.tag_name -notmatch '^[A-Za-z0-9._-]+$' -or $release.tag_name -in @('.', '..') -or
-            $asset.Count -ne 1 -or
-            $asset[0].digest -notmatch '^sha256:[0-9a-f]{64}$' -or
-            $asset[0].size -lt 1 -or $asset[0].size -gt 64MB) {
-            throw "Invalid release metadata for $($source.Repo)."
-        }
-        $releases[$kind] = [ordered]@{
-            tag = $release.tag_name
-            sha256 = $asset[0].digest.Substring(7)
-            size = $asset[0].size
-        }
+        $releases[$kind] = Get-ReleaseMetadata $source
     }
 } catch {
-    if ($null -eq $previous -or $Force) { throw }
+    if ($null -eq $previous -or $Force -or $RequireLatest) { throw }
     Write-Warning "Cannot check v2fly releases. Using the verified bundled rules. $($_.Exception.Message)"
     return
 }
 
 if (-not $Force -and $null -ne $previous -and
-    $previous.releases.geosite.sha256 -eq $releases.geosite.sha256 -and
-    $previous.releases.geoip.sha256 -eq $releases.geoip.sha256) {
-    Write-Host "Bundled GeoSite and GeoIP rules are up to date."
+    (-not $CoreVersion -or $previous.singBox -ceq $CoreVersion) -and
+    $previous.releases.geosite.tag -ceq $releases.geosite.tag -and
+    $previous.releases.geosite.sha256 -ceq $releases.geosite.sha256 -and
+    $previous.releases.geosite.size -eq $releases.geosite.size -and
+    $previous.releases.geoip.tag -ceq $releases.geoip.tag -and
+    $previous.releases.geoip.sha256 -ceq $releases.geoip.sha256 -and
+    $previous.releases.geoip.size -eq $releases.geoip.size) {
+    Write-Host "Bundled rules are up to date (GeoSite $($releases.geosite.tag) / GeoIP $($releases.geoip.tag))."
     return
 }
 
 $stage = Join-Path ([IO.Path]::GetTempPath()) ("nekoproxy-rules-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $stage | Out-Null
 try {
-    Push-Location (Join-Path $root "runtime")
+    Push-Location $RuntimeDir
     try {
         foreach ($kind in @("geosite", "geoip")) {
             $source = $sources[$kind]
@@ -85,7 +119,7 @@ try {
             try {
                 Invoke-WebRequest -Uri $url -OutFile $input -TimeoutSec 120
             } catch {
-                if ($null -eq $previous -or $Force) { throw }
+                if ($null -eq $previous -or $Force -or $RequireLatest) { throw }
                 Write-Warning "Cannot download $($source.Asset). Using the verified bundled rules. $($_.Exception.Message)"
                 return
             }
@@ -114,6 +148,7 @@ try {
         releases = $releases
         files = $files
     }
+    if ($CoreVersion) { $manifest['singBox'] = $CoreVersion }
     $json = $manifest | ConvertTo-Json -Depth 6
 
     New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null

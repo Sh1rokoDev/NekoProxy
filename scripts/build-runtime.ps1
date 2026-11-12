@@ -1,15 +1,17 @@
 param(
-    [string]$OutputDir = ""
+    [string]$OutputDir = "",
+    [string]$RuntimeDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
-$runtime = Join-Path $root "runtime"
 . (Join-Path $PSScriptRoot "version.ps1")
+. (Join-Path $PSScriptRoot "upstream.ps1")
 $version = Get-NekoVersionInfo -Root $root
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $root "build"
 }
+$OutputDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($OutputDir)
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $go = (Get-Command go -ErrorAction SilentlyContinue).Source
@@ -18,12 +20,20 @@ if (-not $env:GOPROXY) { $env:GOPROXY = "https://goproxy.cn,direct" }
 
 $tags = "with_gvisor,with_quic,with_wireguard,with_utls"
 
-Push-Location $runtime
-try {
-    & $go build -tags $tags -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$($version.Version)" -o (Join-Path $OutputDir "nekoproxy-worker.exe") ./cmd/worker
-    if ($LASTEXITCODE -ne 0) { throw "worker build failed" }
-} finally {
-    Pop-Location
+$buildWorker = {
+    param($SourceDir)
+    Push-Location $SourceDir
+    try {
+        & $go build -tags $tags -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$($version.Version)" -o (Join-Path $OutputDir "nekoproxy-worker.exe") ./cmd/worker
+        if ($LASTEXITCODE -ne 0) { throw "worker build failed" }
+    } finally {
+        Pop-Location
+    }
+}
+if ($RuntimeDir) {
+    & $buildWorker $RuntimeDir
+} else {
+    Invoke-WithLatestNekoRuntime -Root $root -Build $buildWorker
 }
 
 # Remove the retired elevation helper from incremental build directories.

@@ -49,7 +49,7 @@
 
 ### 环境准备
 
-构建前请确保系统已安装 **Flutter 3.47.x**、**Go 1.26+** 与 **PowerShell 7**。在仓库根目录下初始化 `sing-box` 子模块并拉取 Flutter 依赖：
+构建前请确保系统已安装 **Flutter 3.47.x**、**Go 1.26+** 与 **PowerShell 7**。在仓库根目录下拉取 Flutter 依赖；直接在 `runtime/` 下开发或运行 Go 测试时，还需初始化仓库固定的 `sing-box` 子模块：
 
 ```powershell
 git submodule update --init --recursive
@@ -73,7 +73,8 @@ go install "golang.org/x/mobile/cmd/gobind@$mobileVersion"
 
 ### 构建产物与签名说明
 
-- 打包脚本会自动同步规则集，构建完成的安装包及对应的 SHA-256 校验文件统一输出至 `dist/` 目录。
+- Windows 和 Android 的构建与打包脚本每次都从 GitHub Releases 确认最新的稳定版 sing-box、GeoSite 和 GeoIP。核心在临时目录使用官方 Go 模块构建，不改动开发用子模块和依赖锁定文件。规则只有在上游标签、大小、校验值及转换所用核心版本都一致时才复用；无法确认或获取最新上游时，构建会停止。
+- 构建完成的安装包及对应的 SHA-256 校验文件统一输出至 `dist/` 目录，正式发布说明会记录各平台实际打包的上游版本。
 - 构建正式发布版本时，请确保工作区处于干净状态（无未提交更改）。
 - 本地 Android 构建默认使用调试签名。正式 APK 由 GitHub Actions 签名并随 Windows 安装版和便携版发布，见[发布工作流](.github/workflows/release.yml)。
 

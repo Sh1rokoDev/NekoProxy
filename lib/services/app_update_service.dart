@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 
+import 'github_releases.dart';
+
 enum UpdatePackageKind {
   android('android-arm64.apk'),
   windowsInstaller('windows-x64-setup.exe'),
@@ -58,18 +60,13 @@ class AppUpdate {
 
   Uri get releasePage =>
       Uri.https('github.com', '/$repository/releases/tag/$tag');
-  Uri get _download =>
-      Uri.https('github.com', '/$repository/releases/download/$tag/$fileName');
+  Uri get _download => _releases.download(tag, fileName);
 }
 
 const repository = 'Sh1rokoDev/NekoProxy';
+const _releases = GitHubReleases(repository);
 const _maxPackageBytes = 512 * 1024 * 1024;
 const _idleTimeout = Duration(seconds: 30);
-const _assetHosts = {
-  'github.com',
-  'release-assets.githubusercontent.com',
-  'objects.githubusercontent.com',
-};
 
 class AppUpdateService {
   AppUpdateService(this._createClient);
@@ -88,51 +85,63 @@ class AppUpdateService {
     }
     final response = await _get(
       client,
-      Uri.https('api.github.com', '/repos/$repository/releases/latest'),
-      hosts: const {'api.github.com'},
-      accept: 'application/vnd.github+json',
+      _releases.latest,
+      hosts: const {'github.com'},
+      followRedirects: false,
+      accept: 'text/html',
     );
     if (response.statusCode == 404) return null;
-    final body = await _readText(response, 1024 * 1024);
-    final Object? release;
-    try {
-      release = jsonDecode(body);
-    } on FormatException {
-      throw const AppUpdateException('更新服务器返回了无效的版本信息。');
-    }
-    if (release is! Map) {
-      throw const AppUpdateException('更新服务器返回了无效的版本信息。');
-    }
-    if (release['prerelease'] == true || release['draft'] == true) return null;
-    final tag = release['tag_name'];
-    final latest = tag is String ? _parseVersion(tag, tag: true) : null;
-    if (tag is! String || latest == null) {
+    final redirected = githubRedirectCodes.contains(response.statusCode);
+    if (!redirected) _requireSuccess(response);
+    final location = githubReleaseRedirect(
+      _releases.latest,
+      response.headers['location'],
+      const {'github.com'},
+    );
+    await response.stream.listen(null).cancel();
+    if (redirected && location?.path == _releases.index.path) return null;
+    final tag = redirected ? _releases.tagAt(location) : null;
+    if (tag == null) {
       throw const AppUpdateException('更新服务器返回了无效的版本号。');
     }
+    // GitHub's latest route excludes drafts and pre-releases; also require a stable tag.
+    final latest = _parseVersion(tag, tag: true);
+    if (latest == null) return null;
     if (!_newer(latest, current)) return null;
-    final assets = release['assets'];
-    if (assets is! List) {
-      throw const AppUpdateException('该版本没有可用的更新包。');
-    }
+    final html = await _readText(
+      await _get(
+        client,
+        _releases.assetsPage(tag),
+        hosts: const {'github.com'},
+        accept: 'text/html',
+      ),
+      maxGitHubReleaseMetadataSize,
+    );
     final namePattern = RegExp(
       '^NekoProxy-${RegExp.escape(tag.substring(1))}\\+[0-9a-f]{7,40}-${RegExp.escape(kind.suffix)}\$',
     );
-    final files = assets.whereType<Map>().toList();
-    final matches = files.where((asset) {
-      final name = asset['name'];
-      return name is String && namePattern.hasMatch(name);
-    }).toList();
+    final files = _releases.assets(tag, html);
+    final matches = files
+        .where((asset) => namePattern.hasMatch(asset.name))
+        .toList();
     if (matches.length != 1) {
       throw const AppUpdateException('该版本没有适用于此安装方式的更新包。');
     }
-    final file = matches.single;
-    final name = file['name'] as String;
-    final size = file['size'];
-    if (size is! int ||
-        size <= 0 ||
-        size > _maxPackageBytes ||
-        files.where((asset) => asset['name'] == '$name.sha256').length != 1) {
-      throw const AppUpdateException('该版本的更新包大小或校验文件无效。');
+    final name = matches.single.name;
+    if (files.where((asset) => asset.name == '$name.sha256').length != 1) {
+      throw const AppUpdateException('该版本的更新包缺少校验文件。');
+    }
+    final headers = await _get(
+      client,
+      _releases.download(tag, name),
+      hosts: githubReleaseAssetHosts,
+      method: 'HEAD',
+    );
+    _requireSuccess(headers);
+    final size = headers.contentLength;
+    await headers.stream.listen(null).cancel();
+    if (size == null || size <= 0 || size > _maxPackageBytes) {
+      throw const AppUpdateException('该版本的更新包大小无效。');
     }
     return AppUpdate._(tag: tag, kind: kind, fileName: name, size: size);
   });
@@ -146,7 +155,7 @@ class AppUpdateService {
       await _get(
         client,
         update._download.replace(path: '${update._download.path}.sha256'),
-        hosts: _assetHosts,
+        hosts: githubReleaseAssetHosts,
       ),
       4096,
     );
@@ -170,7 +179,11 @@ class AppUpdateService {
     final scratch = await directory.createTemp('download-');
     final partial = File.fromUri(scratch.uri.resolve(update.fileName));
     try {
-      final response = await _get(client, update._download, hosts: _assetHosts);
+      final response = await _get(
+        client,
+        update._download,
+        hosts: githubReleaseAssetHosts,
+      );
       _requireSuccess(response);
       if (response.contentLength != null &&
           response.contentLength != update.size) {
@@ -247,6 +260,8 @@ class AppUpdateService {
     Uri uri, {
     required Set<String> hosts,
     String accept = 'application/octet-stream',
+    String method = 'GET',
+    bool followRedirects = true,
   }) async {
     for (var redirects = 0; redirects <= 5; redirects++) {
       if (uri.scheme != 'https' ||
@@ -255,12 +270,13 @@ class AppUpdateService {
           !hosts.contains(uri.host)) {
         throw const AppUpdateException('更新服务器返回了不受信任的下载地址。');
       }
-      final request = http.Request('GET', uri)
+      final request = http.Request(method, uri)
         ..followRedirects = false
         ..headers['Accept'] = accept
         ..headers['User-Agent'] = 'NekoProxy-Updater';
       final response = await client.send(request).timeout(_idleTimeout);
-      if (!const {301, 302, 303, 307, 308}.contains(response.statusCode)) {
+      if (!followRedirects ||
+          !githubRedirectCodes.contains(response.statusCode)) {
         return response;
       }
       final location = response.headers['location'];

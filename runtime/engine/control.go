@@ -103,16 +103,43 @@ func (s *Server) handle(connection net.Conn) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64<<10), 4<<20)
 	encoder := json.NewEncoder(connection)
+	var writeMu sync.Mutex
+	send := func(response Response) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return encoder.Encode(response)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Only probes run asynchronously. Keep lifecycle and selection commands ordered.
+	probes := make(chan struct{}, probeConcurrency)
 	for scanner.Scan() {
 		var request Request
 		if err = json.Unmarshal(scanner.Bytes(), &request); err != nil {
-			_ = encoder.Encode(Response{OK: false, Error: "invalid request"})
+			_ = send(Response{OK: false, Error: "invalid request"})
 			continue
 		}
 		s.lastActive.Store(time.Now().UnixMilli())
-		response := s.execute(request)
+		if request.Cmd == "test" {
+			select {
+			case probes <- struct{}{}:
+			case <-ctx.Done():
+				return
+			}
+			go func(request Request) {
+				defer func() { <-probes }()
+				response := s.execute(ctx, request)
+				response.ID = request.ID
+				if send(response) != nil {
+					cancel()
+					_ = connection.Close()
+				}
+			}(request)
+			continue
+		}
+		response := s.execute(ctx, request)
 		response.ID = request.ID
-		if err = encoder.Encode(response); err != nil {
+		if err = send(response); err != nil {
 			return
 		}
 		if request.Cmd == "shutdown" {
@@ -128,7 +155,7 @@ func (s *Server) handle(connection net.Conn) {
 	}
 }
 
-func (s *Server) execute(request Request) Response {
+func (s *Server) execute(ctx context.Context, request Request) Response {
 	switch request.Cmd {
 	case "ping":
 		return Response{OK: true, Data: map[string]any{"time": time.Now().UnixMilli()}}
@@ -158,7 +185,7 @@ func (s *Server) execute(request Request) Response {
 		if len(request.Tags) > 500 {
 			return Response{Error: "too many outbound tags"}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 40*time.Second)
+		ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 		defer cancel()
 		return Response{OK: true, Data: s.engine.Test(ctx, request.Tags, request.URL)}
 	case "clear":

@@ -80,7 +80,7 @@ void main() {
 
     runtime.completeProbe(first.id);
     await tester.pump();
-    expect(progressIn(groupButtons.first), findsNothing);
+    expect(progressIn(groupButtons.first), findsOneWidget);
     expect(progressIn(groupButtons.last), findsOneWidget);
     expect(progressIn(visibleButton), findsOneWidget);
     expect(runtime.probes.keys, ['node-first', 'node-second']);
@@ -89,7 +89,7 @@ void main() {
     runtime.completeProbe(second.id, delay: 70);
     runtime.probes.remove('node-second');
     await tester.pump();
-    expect(progressIn(groupButtons), findsNothing);
+    expect(progressIn(groupButtons), findsNWidgets(2));
     expect(progressIn(visibleButton), findsOneWidget);
     expect(visibleLabel('测速中 0/2'), findsOneWidget);
     expect(runtime.probes.keys, ['node-first', 'node-second']);
@@ -97,13 +97,12 @@ void main() {
     runtime.completeProbe(first.id, delay: 100);
     await tester.pump();
     expect(visibleLabel('测速中 1/2'), findsOneWidget);
-    expect(
-      tester.widget<CircularProgressIndicator>(progressIn(visibleButton)).value,
-      0.5,
-    );
+    expect(controller.latencies[first.id], 100);
+    expect(controller.testingNodes, isTrue);
 
     runtime.completeProbe(second.id, delay: 80);
     await tester.pumpAndSettle();
+    expect(progressIn(groupButtons), findsNothing);
     expect(progressIn(visibleButton), findsNothing);
     expect(visibleLabel('测速'), findsOneWidget);
     expect(
@@ -111,6 +110,79 @@ void main() {
       isNotNull,
     );
     expect(controller.latencies, {first.id: 100, second.id: 80});
+  });
+
+  testWidgets('全量测速包含搜索隐藏的分组，并让所有分组图标持续显示动画', (tester) async {
+    final first = _node('first', '节点甲', group: 'first-group');
+    final second = _node('second', '节点乙', group: 'second-group');
+    final runtime = _Runtime();
+    final startTest = runtime.delayedTestStart = Completer<void>();
+    final controller = AppController()
+      ..paths = AppPaths.forDirectory(Directory.systemTemp.path)
+      ..runtime = runtime
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(splitMode: SplitMode.global),
+        subscriptions: [
+          Subscription(id: 'first-group', name: '分组甲', nodes: [first]),
+          Subscription(id: 'second-group', name: '分组乙', nodes: [second]),
+        ],
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          controller: controller,
+          child: const Scaffold(body: NodesPage()),
+        ),
+      ),
+    );
+
+    final groupButtons = find.byWidgetPredicate(
+      (widget) => widget is IconButton && widget.tooltip == '测试本组节点',
+    );
+    final allButton = find.byWidgetPredicate(
+      (widget) =>
+          widget is FloatingActionButton && widget.heroTag == 'nodes-speed',
+    );
+    Finder groupProgress() => find.descendant(
+      of: groupButtons,
+      matching: find.byType(CircularProgressIndicator),
+    );
+
+    await tester.tap(find.byTooltip('搜索节点'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), '节点甲');
+    await tester.pump();
+    expect(groupButtons, findsOneWidget);
+
+    await tester.tap(allButton);
+    await tester.pump();
+    expect(groupProgress(), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭搜索'));
+    await tester.pump();
+    expect(groupButtons, findsNWidgets(2));
+    expect(groupProgress(), findsNWidgets(2));
+    for (final button in tester.widgetList<IconButton>(groupButtons)) {
+      expect(button.onPressed, isNull);
+    }
+
+    startTest.complete();
+    await tester.pump();
+    expect(runtime.probes.keys, ['node-first', 'node-second']);
+    expect(groupProgress(), findsNWidgets(2));
+
+    runtime.completeProbe(first.id, delay: 50);
+    await tester.pump();
+    expect(controller.testCompleted, 1);
+    expect(groupProgress(), findsNWidgets(2));
+
+    runtime.completeProbe(second.id);
+    await tester.pumpAndSettle();
+    expect(groupProgress(), findsNothing);
+    expect(controller.testingNodes, isFalse);
+    for (final button in tester.widgetList<IconButton>(groupButtons)) {
+      expect(button.onPressed, isNotNull);
+    }
   });
 
   testWidgets('节点卡片的状态提示各有独立的无障碍节点', (tester) async {
@@ -157,6 +229,102 @@ void main() {
     expect(find.byTooltip('测速失败'), findsNothing);
     expect(tooltipNodeId('已收藏'), favoriteId);
     expect(tooltipNodeId('已移出自动候选'), autoId);
+  });
+
+  test('延迟测试最多并发 32 个，单个完成后立即回传并补充下一个', () async {
+    final nodes = [
+      for (var index = 0; index < 33; index++)
+        _node('batch-$index', '节点$index'),
+    ];
+    final runtime = _Runtime();
+    final controller = AppController()
+      ..paths = AppPaths.forDirectory(Directory.systemTemp.path)
+      ..runtime = runtime
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(splitMode: SplitMode.global),
+        subscriptions: [Subscription(id: 'main', name: '主分组', nodes: nodes)],
+      );
+    addTearDown(controller.dispose);
+
+    final run = controller.testNodes();
+    await _waitUntil(() => runtime.probes.length == 32);
+    expect(runtime.batchSizes, List.filled(32, 1));
+
+    runtime.completeProbe(nodes[7].id, delay: 50);
+    await _waitUntil(() => runtime.probes.length == 33);
+    expect(runtime.batchSizes, List.filled(33, 1));
+    expect(controller.testCompleted, 1);
+    expect(controller.latencies, {nodes[7].id: 50});
+    expect(controller.testingNodes, isTrue);
+
+    runtime.completeProbe(nodes.last.id, delay: 40);
+    await _waitUntil(() => controller.testCompleted == 2);
+    for (final node in nodes.take(32).where((node) => node != nodes[7])) {
+      runtime.completeProbe(node.id, delay: 50);
+    }
+    await run;
+    expect(controller.testCompleted, 33);
+    expect(controller.latencies, hasLength(33));
+  });
+
+  test('少于 32 个节点时成功、失败和请求异常均立即回传', () async {
+    final nodes = [
+      for (var index = 0; index < 3; index++) _node('$index', '节点$index'),
+    ];
+    final runtime = _Runtime();
+    final controller = AppController()
+      ..paths = AppPaths.forDirectory(Directory.systemTemp.path)
+      ..runtime = runtime
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(splitMode: SplitMode.global),
+        subscriptions: [Subscription(id: 'main', name: '主分组', nodes: nodes)],
+      );
+    addTearDown(controller.dispose);
+
+    final run = controller.testNodes();
+    await _waitUntil(() => runtime.probes.length == 3);
+    runtime.completeProbe(nodes[1].id);
+    await _waitUntil(() => controller.testCompleted == 1);
+    expect(controller.latencyErrors[nodes[1].id], '测速失败');
+    expect(controller.testingNodes, isTrue);
+
+    runtime.completeProbe(nodes[2].id, delay: 70);
+    await _waitUntil(() => controller.testCompleted == 2);
+    expect(controller.latencies, {nodes[2].id: 70});
+    expect(controller.testingNodes, isTrue);
+
+    runtime.probes['node-${nodes[0].id}']!.completeError(
+      const RuntimeException('控制连接已关闭'),
+    );
+    await run;
+    expect(controller.testCompleted, 3);
+    expect(controller.latencyErrors[nodes[0].id], contains('控制连接已关闭'));
+    expect(controller.testingNodes, isFalse);
+  });
+
+  test('取消测速后丢弃迟到结果并停止调度剩余节点', () async {
+    final nodes = [
+      for (var index = 0; index < 33; index++) _node('$index', '节点$index'),
+    ];
+    final runtime = _Runtime();
+    final controller = AppController()
+      ..paths = AppPaths.forDirectory(Directory.systemTemp.path)
+      ..runtime = runtime
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(splitMode: SplitMode.global),
+        subscriptions: [Subscription(id: 'main', name: '主分组', nodes: nodes)],
+      );
+
+    final run = controller.testNodes();
+    await _waitUntil(() => runtime.probes.length == 32);
+    controller.dispose();
+    for (final node in nodes.take(32)) {
+      runtime.completeProbe(node.id, delay: 50);
+    }
+    await run;
+    expect(runtime.probes, hasLength(32));
+    expect(controller.testCompleted, 0);
+    expect(controller.latencies, isEmpty);
   });
 
   testWidgets('自动节点高亮随离线测速和核心状态切换', (tester) async {
@@ -289,6 +457,7 @@ void main() {
       {'node-first': 240, 'node-second': 75, 'node-disabled': null},
     ]);
     expect(selectionStatus, findsNothing);
+    await tester.pump();
     expectHighlight('节点乙', true);
     delayedStatus.complete(previousStatus);
     await tester.pump();
@@ -325,6 +494,14 @@ ProxyNode _node(String id, String name, {String group = 'main'}) => ProxyNode(
   },
 );
 
+Future<void> _waitUntil(bool Function() condition) async {
+  for (var attempt = 0; attempt < 200; attempt++) {
+    if (condition()) return;
+    await Future<void>.delayed(const Duration(milliseconds: 1));
+  }
+  fail('条件在等待时间内未满足');
+}
+
 class _Storage extends AppStorage {
   _Storage(super.paths);
 
@@ -335,6 +512,7 @@ class _Storage extends AppStorage {
 class _Runtime extends RuntimeClient {
   final probes = <String, Completer<RuntimeTestResult>>{};
   final autoRefreshes = <Map<String, int?>>[];
+  final batchSizes = <int>[];
   Completer<void>? delayedTestStart;
   Completer<RuntimeStatus>? delayedStatus;
   String selected = '';
@@ -352,8 +530,15 @@ class _Runtime extends RuntimeClient {
     List<String> tags,
     String url,
   ) async {
-    final tag = tags.single;
-    return {tag: await probes.putIfAbsent(tag, Completer.new).future};
+    batchSizes.add(tags.length);
+    final results = await Future.wait([
+      for (final tag in tags)
+        probes
+            .putIfAbsent(tag, Completer.new)
+            .future
+            .then((result) => MapEntry(tag, result)),
+    ]);
+    return Map.fromEntries(results);
   }
 
   @override

@@ -30,15 +30,18 @@ import (
 var ErrNotRunning = errors.New("runtime is not running")
 
 const (
-	defaultTestURL  = "http://www.gstatic.com/generate_204"
-	probeTimeout    = 5 * time.Second
-	probeTLSTimeout = 4 * time.Second
+	defaultTestURL   = "http://www.gstatic.com/generate_204"
+	probeTimeout     = 2 * time.Second
+	probeTLSTimeout  = 2 * time.Second
+	probeConcurrency = 32
 )
 
 // Probes are separate short-lived connections and sing-box keeps no client
 // session cache, so HTTPS probes pay a full handshake on every test. Sharing
 // one cache lets repeated probes resume the session like Clash and NekoBox do.
 var probeSessionCache = tls.NewLRUClientSessionCache(128)
+
+var probeSlots = make(chan struct{}, probeConcurrency)
 
 type GroupInfo struct {
 	Kind     string   `json:"kind"`
@@ -344,7 +347,6 @@ func (e *Engine) Test(ctx context.Context, tags []string, testURL string) map[st
 	e.mu.RLock()
 	instance := e.instance
 	servers := e.serverByTag
-	engineCtx := e.ctx
 	e.mu.RUnlock()
 	result := make(map[string]any, len(tags))
 	if instance == nil {
@@ -362,23 +364,29 @@ func (e *Engine) Test(ctx context.Context, tags []string, testURL string) map[st
 		dns    dnsInfo
 		err    error
 	}
-	sem := make(chan struct{}, 6)
 	output := make(chan outcome, len(tags))
 	for _, tag := range tags {
 		tag := tag
 		go func() {
-			sem <- struct{}{}
-			defer func() { <-sem }()
 			outbound, loaded := instance.Outbound().Outbound(tag)
 			if !loaded {
 				output <- outcome{tag: tag, err: fmt.Errorf("unknown outbound")}
 				return
 			}
+			select {
+			case probeSlots <- struct{}{}:
+			case <-ctx.Done():
+				output <- outcome{tag: tag, err: ctx.Err()}
+				return
+			}
+			defer func() { <-probeSlots }()
+			probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
+			defer cancel()
 			// Resolve the proxy server endpoint first: a cold lookup would
 			// otherwise be billed to the node's latency, and the resolved
 			// addresses are what the probe is about to dial.
-			dns := resolveEndpoint(engineCtx, servers[tag])
-			probe, err := testOutbound(ctx, outbound, testURL)
+			dns := resolveEndpoint(probeCtx, servers[tag])
+			probe, err := testOutbound(probeCtx, outbound, testURL)
 			output <- outcome{tag: tag, result: probe, dns: dns, err: err}
 		}()
 	}
@@ -496,6 +504,8 @@ type probeResult struct {
 // what gets reported. Counting the cold handshake made fast nodes look several
 // hundred milliseconds slower than the browsing experience and than Clash.
 func probeDelay(ctx context.Context, testURL string, dial func(context.Context) (net.Conn, error)) (probeResult, error) {
+	probeCtx, cancelProbe := context.WithTimeout(ctx, probeTimeout)
+	defer cancelProbe()
 	var dialMS, dial2MS int64
 	dialCount := 0
 	transport := &http.Transport{
@@ -531,8 +541,8 @@ func probeDelay(ctx context.Context, testURL string, dial func(context.Context) 
 		},
 	}
 	perform := func() (int64, error) {
-		requestCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-		defer cancel()
+		requestCtx, cancelRequest := context.WithTimeout(probeCtx, probeTimeout)
+		defer cancelRequest()
 		request, err := http.NewRequestWithContext(requestCtx, http.MethodGet, testURL, nil)
 		if err != nil {
 			return 0, err

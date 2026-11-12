@@ -66,6 +66,22 @@ func TestProbeDelayRejectsBadStatus(t *testing.T) {
 	}
 }
 
+func TestProbeDelayTimesOutAfterBudget(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+
+	started := time.Now()
+	if _, err := probeDelay(context.Background(), server.URL, localDial(t, server.URL)); err == nil {
+		t.Fatal("probeDelay accepted a request that never answered")
+	}
+	elapsed := time.Since(started)
+	if elapsed < probeTimeout-250*time.Millisecond || elapsed > probeTimeout+time.Second {
+		t.Fatalf("probeDelay returned after %v, want about %v", elapsed, probeTimeout)
+	}
+}
+
 func TestProbeTargetDefaultsPorts(t *testing.T) {
 	cases := map[string]string{
 		"http://example.com/probe":  "example.com:80",

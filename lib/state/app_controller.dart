@@ -20,6 +20,8 @@ import '../services/connectivity_service.dart';
 import '../services/rule_set_manager.dart';
 import '../services/windows_system_proxy.dart';
 
+const _latencyTestConcurrency = 32;
+
 class TrafficSample {
   const TrafficSample(this.time, this.up, this.down);
   final DateTime time;
@@ -119,12 +121,12 @@ class AppController extends ChangeNotifier {
 
   bool get canQueueNodeTest => !busy || _nodeTestRequests.isNotEmpty;
 
-  bool get testingVisibleNodes =>
+  bool get testingAllNodes =>
       testingNodes &&
       _nodeTestRequests.isNotEmpty &&
       _nodeTestRequests.keys.first == null;
 
-  /// Includes both running and waiting requests. A null ID is the visible list.
+  /// Includes both running and waiting requests. A null ID is the global request.
   bool isNodeTestRequested(String? groupId) =>
       _nodeTestRequests.containsKey(groupId);
 
@@ -832,47 +834,47 @@ class AppController extends ChangeNotifier {
       if (run != _testGeneration || !_temporaryTestRuntime) return;
       notifyListeners();
     }
-    Future<void> worker() async {
-      while (run == _testGeneration && (running || _temporaryTestRuntime)) {
-        if (queue.isEmpty) return;
-        final node = queue.removeAt(0);
-        final compiledTag = compiledTags?[node.id];
-        String? error;
-        int? delay;
-        try {
-          final tag = compiledTag ?? ConfigCompiler.nodeTag(node);
-          final result = await runtime.test([tag], url);
-          if (run != _testGeneration) return;
-          final value = result[tag];
-          delay = value?.delay;
-          if (value != null) roundDelays[tag] = delay;
-          if (delay == null) {
-            error = value?.error?.trim().isNotEmpty == true
-                ? value!.error!
-                : '测速失败';
-          }
-        } catch (e) {
-          if (run != _testGeneration) return;
-          error = _friendlyError(e);
-        }
-        if (delay != null) {
-          updated[node.id] = delay;
-          errors.remove(node.id);
-          if (temporary && compiledTag != null) {
-            offlineDelays[node] = delay;
-          }
-        } else {
-          errors[node.id] = error ?? '测速失败';
-        }
-        latencies = Map.unmodifiable(updated);
-        latencyErrors = Map.unmodifiable(errors);
-        testCompleted++;
-        notifyListeners();
+    Future<void> testNode(ProxyNode node) async {
+      final tag = compiledTags?[node.id] ?? ConfigCompiler.nodeTag(node);
+      RuntimeTestResult? value;
+      String? requestError;
+      try {
+        final results = await runtime.test([tag], url);
+        value = results[tag];
+      } catch (e) {
+        requestError = _friendlyError(e);
       }
+      if (run != _testGeneration) return;
+      final delay = value?.delay;
+      if (value != null) roundDelays[tag] = delay;
+      if (delay != null) {
+        updated[node.id] = delay;
+        errors.remove(node.id);
+        if (temporary && (compiledTags?.containsKey(node.id) ?? false)) {
+          offlineDelays[node] = delay;
+        }
+      } else {
+        final message = value?.error?.trim();
+        errors[node.id] =
+            requestError ?? (message?.isNotEmpty == true ? message! : '测速失败');
+      }
+      latencies = Map.unmodifiable(updated);
+      latencyErrors = Map.unmodifiable(errors);
+      testCompleted++;
+      notifyListeners();
     }
 
-    final workerCount = min(3, queue.length);
-    await Future.wait([for (var i = 0; i < workerCount; i++) worker()]);
+    final pending = <Future<void>>{};
+    for (final node in queue) {
+      if (pending.length >= _latencyTestConcurrency) {
+        await Future.any(pending);
+      }
+      if (run != _testGeneration || !(running || _temporaryTestRuntime)) break;
+      late final Future<void> probe;
+      probe = testNode(node).whenComplete(() => pending.remove(probe));
+      pending.add(probe);
+    }
+    await Future.wait(pending);
     if (run != _testGeneration) return;
     try {
       await _stopTemporaryTestRuntime();

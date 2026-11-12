@@ -46,14 +46,13 @@ class _NodesPageState extends State<NodesPage> {
         : controller.offlineRecommendedNode;
     final highlightedId = highlightedNode?.id;
     final groups = _buildGroups(controller, automatic ? null : highlightedId);
-    final visibleNodes = [for (final group in groups) ...group.nodes];
-    final visibleTestRequested = controller.isNodeTestRequested(null);
-    final testProgress = controller.testingVisibleNodes
+    final allTestRequested = controller.isNodeTestRequested(null);
+    final testProgress = controller.testingAllNodes
         ? controller.testCompleted / controller.testTotal
         : null;
     final testLabel = testProgress != null
         ? '测速中 ${controller.testCompleted}/${controller.testTotal}'
-        : visibleTestRequested
+        : allTestRequested
         ? '排队中'
         : '测速';
     return PageFrame(
@@ -79,11 +78,15 @@ class _NodesPageState extends State<NodesPage> {
           if (hasNodes) ...[
             FloatingActionButton.extended(
               heroTag: 'nodes-speed',
-              tooltip: visibleTestRequested ? null : '测速当前可见节点',
-              onPressed: visibleTestRequested
+              tooltip: allTestRequested ? null : '测速所有分组节点',
+              onPressed: allTestRequested
                   ? null
-                  : () => _startNodeTest(context, controller, visibleNodes),
-              icon: visibleTestRequested
+                  : () => _startNodeTest(
+                      context,
+                      controller,
+                      controller.snapshot.allNodes.toList(),
+                    ),
+              icon: allTestRequested
                   ? SizedBox(
                       width: 20,
                       height: 20,
@@ -1451,7 +1454,9 @@ class _GroupCard extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final subscription = group.subscription;
-    final testRequested = controller.isNodeTestRequested(group.id);
+    final testRequested =
+        controller.isNodeTestRequested(group.id) ||
+        controller.isNodeTestRequested(null);
     final actionStyle = _groupActionStyle(scheme, background: false, size: 32);
     final isUrlSubscription = subscription?.isUrlSubscription ?? false;
     final filterActive =

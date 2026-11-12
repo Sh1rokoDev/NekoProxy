@@ -1,0 +1,110 @@
+package mobile
+
+import (
+	"context"
+	"encoding/json"
+	"net/netip"
+
+	"nekoproxy/runtime/engine"
+	"nekoproxy/runtime/rulesets"
+)
+
+func ConvertRules(kind, input, output string) error {
+	return rulesets.Convert(kind, input, output)
+}
+
+// Engine is the gomobile surface used by the Android VpnService.
+type Engine struct {
+	inner    *engine.Engine
+	platform *androidPlatform
+}
+
+func NewEngine(protector Protector, finder OwnerFinder) *Engine {
+	return &Engine{
+		inner:    engine.New(),
+		platform: &androidPlatform{protector: protector, finder: finder},
+	}
+}
+
+// PrepareTun registers the VpnService interface descriptor before Start.
+func (e *Engine) PrepareTun(fd int32, addressesJSON string) error {
+	e.platform.mu.Lock()
+	e.platform.tunFD = int(fd)
+	e.platform.mu.Unlock()
+	if addressesJSON == "" {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(addressesJSON), &values); err != nil {
+		return err
+	}
+	addresses := make([]netip.Addr, 0, len(values))
+	for _, value := range values {
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			addr, addrErr := netip.ParseAddr(value)
+			if addrErr != nil {
+				return err
+			}
+			addresses = append(addresses, addr)
+			continue
+		}
+		addresses = append(addresses, prefix.Addr())
+	}
+	e.platform.mu.Lock()
+	e.platform.address = addresses
+	e.platform.mu.Unlock()
+	return nil
+}
+
+func (e *Engine) Start(configJSON string) error {
+	return e.inner.StartWithPlatform([]byte(configJSON), e.platform)
+}
+
+func (e *Engine) Stop() error {
+	return e.inner.Close()
+}
+
+func (e *Engine) StatusJSON() string {
+	return marshal(e.inner.Status())
+}
+
+func (e *Engine) TrafficJSON() string {
+	return marshal(e.inner.Traffic())
+}
+
+func (e *Engine) ConnectionsJSON() string {
+	return marshal(e.inner.Connections())
+}
+
+func (e *Engine) Select(tag string) error {
+	return e.inner.Select(tag)
+}
+
+func (e *Engine) RefreshAuto(delaysJSON string) error {
+	var delays map[string]*uint16
+	if err := json.Unmarshal([]byte(delaysJSON), &delays); err != nil {
+		return err
+	}
+	return e.inner.RefreshAuto(delays)
+}
+
+func (e *Engine) Test(tagsJSON string, url string) string {
+	var tags []string
+	if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
+		return marshal(map[string]any{"error": err.Error()})
+	}
+	return marshal(e.inner.Test(context.Background(), tags, url))
+}
+
+func (e *Engine) ClearConnections() {
+	e.inner.CloseConnections()
+}
+
+func marshal(value any) string {
+	data, err := json.Marshal(value)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}

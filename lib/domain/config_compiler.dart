@@ -1,0 +1,841 @@
+import 'dart:convert';
+
+import 'config_policy.dart';
+import 'models.dart';
+
+class ConfigCompileException implements Exception {
+  const ConfigCompileException(this.message, {this.violations = const []});
+
+  final String message;
+  final List<PolicyViolation> violations;
+
+  @override
+  String toString() => message;
+}
+
+enum CompileTarget { windows, android }
+
+bool _hasTunInbound(Object? inbounds) =>
+    inbounds is List &&
+    inbounds.any((item) => item is Map && item['type'] == 'tun');
+
+class CompiledConfig {
+  const CompiledConfig({
+    required this.json,
+    required this.encoded,
+    required this.warnings,
+    required this.nodeTags,
+    required this.proxyGroupTag,
+    required this.autoGroupTag,
+    required this.custom,
+  });
+
+  final Map<String, dynamic> json;
+  final String encoded;
+  final List<String> warnings;
+  final Map<String, String> nodeTags;
+  final String proxyGroupTag;
+  final String autoGroupTag;
+  final bool custom;
+
+  Iterable<String> get localRuleSetPaths sync* {
+    final route = json['route'];
+    if (route is! Map) return;
+    final ruleSets = route['rule_set'];
+    if (ruleSets is! List) return;
+    for (final entry in ruleSets) {
+      if (entry is! Map || entry['type'] != 'local') continue;
+      final path = entry['path'];
+      if (path is String) yield path;
+    }
+  }
+
+  bool get hasTunInbound => _hasTunInbound(json['inbounds']);
+}
+
+class ConfigCompiler {
+  ConfigCompiler._();
+
+  static const proxyTag = 'proxy';
+  static const autoTag = 'auto';
+  static const directTag = 'direct';
+  static const mixedTag = 'mixed-in';
+  static const tunTag = 'tun-in';
+  static const bootstrapTag = 'dns-bootstrap';
+  static const systemTag = 'dns-system';
+
+  static String nodeTag(ProxyNode node) => 'node-${node.id}';
+
+  static Iterable<ProxyNode> autoCandidates(
+    Iterable<ProxyNode> nodes,
+    Iterable<Subscription> subscriptions,
+  ) {
+    final disabledGroupIds = {
+      for (final group in subscriptions)
+        if (!group.autoEnabled) group.id,
+    };
+    return nodes.where(
+      (node) =>
+          node.autoEnabled && !disabledGroupIds.contains(node.subscriptionId),
+    );
+  }
+
+  static String ruleSetDirectory(String cachePath) {
+    final forward = cachePath.lastIndexOf('/');
+    final backward = cachePath.lastIndexOf('\\');
+    final index = forward > backward ? forward : backward;
+    if (index < 0) return 'rules';
+    final separator = index == forward ? '/' : '\\';
+    return '${cachePath.substring(0, index)}${separator}rules';
+  }
+
+  static String _ruleSetPath(String directory, String name) {
+    final forward = directory.lastIndexOf('/');
+    final backward = directory.lastIndexOf('\\');
+    final separator = forward > backward ? '/' : '\\';
+    return '$directory$separator$name';
+  }
+
+  static CompiledConfig compile(
+    AppSnapshot snapshot, {
+    required CompileTarget target,
+    required String cachePath,
+    Map<String, String>? ruleSetPaths,
+    String? logPath,
+    bool testOnly = false,
+    List<String> systemDnsServers = const [],
+  }) {
+    if (snapshot.useCustomConfig) {
+      if (testOnly) {
+        throw const ConfigCompileException('完整自定义配置无法映射节点标签，未连接时不能测速，请先连接。');
+      }
+      return _compileCustom(snapshot);
+    }
+
+    final seenIds = <String>{};
+    final nodes = snapshot.allNodes
+        .where(
+          (node) => _isSupportedOutbound(node.outbound) && seenIds.add(node.id),
+        )
+        .toList();
+    if (nodes.isEmpty) {
+      throw const ConfigCompileException('没有可用的节点，请先导入订阅或节点。');
+    }
+
+    final warnings = <String>[];
+    final settings = snapshot.settings;
+    final selectionAuto = settings.selectionMode == SelectionMode.auto;
+    final autoNodes = autoCandidates(nodes, snapshot.subscriptions).toList();
+    final useAuto = selectionAuto && autoNodes.isNotEmpty;
+    if (selectionAuto && autoNodes.isEmpty) {
+      warnings.add('自动选择没有候选节点，已暂时使用手动选择。');
+    }
+    final proxyGroupTag = useAuto ? autoTag : proxyTag;
+
+    final nodeTags = <String, String>{};
+    final nodeTagsById = <String, String>{};
+    for (final node in nodes) {
+      var tag = nodeTag(node);
+      var suffix = 2;
+      while (nodeTags.containsValue(tag)) {
+        tag = '${nodeTag(node)}-$suffix';
+        suffix++;
+      }
+      nodeTags[node.id] = tag;
+      nodeTagsById[node.id] = tag;
+    }
+
+    final manualNode = snapshot.nodeById(settings.manualNodeId);
+    final selectedTag =
+        manualNode != null && nodeTags.containsKey(manualNode.id)
+        ? nodeTags[manualNode.id]
+        : nodeTags[nodes.first.id];
+
+    final outbounds = <Map<String, dynamic>>[
+      {
+        'type': 'direct',
+        'tag': directTag,
+        // A completely empty direct outbound is rejected when used as a DNS
+        // detour, so keep a harmless explicit dialer option.
+        'connect_timeout': '10s',
+      },
+    ];
+
+    outbounds.add({
+      'type': 'selector',
+      'tag': proxyTag,
+      'outbounds': [for (final node in nodes) nodeTagsById[node.id]!],
+      'default': selectedTag,
+    });
+
+    if (!testOnly && autoNodes.isNotEmpty) {
+      // Until the first urltest finishes, sing-box selects the group's first
+      // outbound. Start from the node the user chose last instead of whatever
+      // happens to come first in the subscription.
+      final autoCandidates = [...autoNodes];
+      final manualIndex = manualNode == null
+          ? -1
+          : autoCandidates.indexWhere((node) => node.id == manualNode.id);
+      if (manualIndex > 0) {
+        autoCandidates.insert(0, autoCandidates.removeAt(manualIndex));
+      }
+      outbounds.add({
+        'type': 'urltest',
+        'tag': autoTag,
+        'outbounds': [for (final node in autoCandidates) nodeTagsById[node.id]!],
+        'url': settings.advancedOrDefault.urlTestUrl,
+        'interval': settings.advancedOrDefault.urlTestInterval,
+        'tolerance': settings.advancedOrDefault.urlTestTolerance,
+        'idle_timeout': settings.advancedOrDefault.urlTestIdleTimeout,
+        'interrupt_exist_connections':
+            settings.advancedOrDefault.interruptExistingConnections,
+      });
+    }
+
+    for (final node in nodes) {
+      final outbound = Map<String, dynamic>.from(node.outbound);
+      if (outbound.remove('detour') != null) {
+        warnings.add('节点「${node.name}」的 detour 引用未包含在订阅中，已忽略。');
+      }
+      if (outbound.remove('domain_resolver') != null) {
+        warnings.add('节点「${node.name}」的 domain_resolver 引用未包含在订阅中，已忽略。');
+      }
+      outbound['tag'] = nodeTagsById[node.id]!;
+      outbounds.add(outbound);
+    }
+
+    final systemDns = _systemDnsAddress(systemDnsServers);
+    final availableRuleSets =
+        ruleSetPaths ??
+        {
+          for (final tag in builtInRuleSetTags)
+            tag: _ruleSetPath(ruleSetDirectory(cachePath), '$tag.srs'),
+        };
+    final activeRuleSets = !testOnly && settings.splitMode == SplitMode.rule
+        ? snapshot.activeRuleSetTags(availableRuleSets.containsKey)
+        : const <String>{};
+    final dns = testOnly
+        ? _buildTestDns(snapshot, warnings, systemDns)
+        : _buildDns(
+            snapshot,
+            target,
+            proxyGroupTag,
+            warnings,
+            systemDns,
+            activeRuleSets,
+          );
+    final route = testOnly
+        ? <String, dynamic>{
+            'final': proxyTag,
+            'default_domain_resolver': {
+              'server': systemDns == null ? 'dns-direct' : systemTag,
+            },
+          }
+        : _buildRoute(
+            snapshot,
+            target,
+            proxyGroupTag,
+            autoNodes.isNotEmpty,
+            warnings,
+            availableRuleSets,
+            activeRuleSets,
+            systemDns,
+          );
+    final inbounds = <Map<String, dynamic>>[
+      if (!testOnly) _buildMixedInbound(snapshot, target),
+      if (!testOnly && (settings.tunEnabled || target == CompileTarget.android))
+        _buildTunInbound(snapshot, target, warnings),
+    ];
+    final effectiveInbounds =
+        !testOnly && snapshot.advancedJson.containsKey('inbounds')
+        ? snapshot.advancedJson['inbounds']
+        : inbounds;
+    // Without a TUN to loop back into, let Windows route through VPN adapters
+    // such as WireGuard that sing-box's interface detection skips.
+    route['auto_detect_interface'] =
+        target == CompileTarget.android || _hasTunInbound(effectiveInbounds);
+
+    final config = <String, dynamic>{
+      'log': testOnly
+          ? {'level': 'warn'}
+          : {
+              'level': settings.advancedOrDefault.logLevel,
+              'timestamp': true,
+              if (logPath != null && logPath.isNotEmpty) 'output': logPath,
+            },
+      'dns': dns,
+      'inbounds': inbounds,
+      'outbounds': outbounds,
+      'route': route,
+      if (!testOnly)
+        'experimental': {
+          'cache_file': {'enabled': true, 'path': cachePath},
+        },
+    };
+
+    if (!testOnly && snapshot.advancedJson.isNotEmpty) {
+      _deepMerge(config, snapshot.advancedJson, warnings);
+    }
+
+    final violations = ConfigPolicy.validate(config);
+    if (violations.isNotEmpty) {
+      throw ConfigCompileException(
+        '配置包含不支持的设置：${violations.map((e) => e.message).toSet().join('；')}',
+        violations: violations,
+      );
+    }
+
+    return CompiledConfig(
+      json: config,
+      encoded: const JsonEncoder.withIndent('  ').convert(config),
+      warnings: warnings,
+      nodeTags: nodeTags,
+      proxyGroupTag: proxyGroupTag,
+      autoGroupTag: autoTag,
+      custom: false,
+    );
+  }
+
+  static CompiledConfig _compileCustom(AppSnapshot snapshot) {
+    final text = snapshot.customConfig.trim();
+    if (text.isEmpty) throw const ConfigCompileException('完整自定义配置为空');
+    final Object? decoded;
+    try {
+      decoded = jsonDecode(text);
+    } catch (e) {
+      throw ConfigCompileException('自定义配置 JSON 格式错误：$e');
+    }
+    if (decoded is! Map) {
+      throw const ConfigCompileException('自定义配置根节点必须是 JSON 对象');
+    }
+    final config = Map<String, dynamic>.from(decoded);
+    final violations = ConfigPolicy.validate(config);
+    if (violations.isNotEmpty) {
+      throw ConfigCompileException(
+        '自定义配置包含被禁止的能力：${violations.map((e) => e.message).toSet().join('；')}',
+        violations: violations,
+      );
+    }
+    if (config['outbounds'] is! List) {
+      throw const ConfigCompileException('自定义配置必须包含 outbounds');
+    }
+    return CompiledConfig(
+      json: config,
+      encoded: const JsonEncoder.withIndent('  ').convert(config),
+      warnings: const ['完整自定义配置模式：节点选择由配置本身决定。'],
+      nodeTags: const {},
+      proxyGroupTag: proxyTag,
+      autoGroupTag: autoTag,
+      custom: true,
+    );
+  }
+
+  static bool _isSupportedOutbound(Map<String, dynamic> outbound) {
+    final type = outbound['type'];
+    if (type is! String) return false;
+    return !const {
+      'direct',
+      'block',
+      'selector',
+      'urltest',
+      'dns',
+    }.contains(type);
+  }
+
+  // Test-only engines resolve node server names through the system resolver so
+  // a proxy protocol's handshake never waits for (or trusts answers from) the
+  // user's DoH. Public resolvers can be slow or filtered on some networks,
+  // which inflates every latency probe and marks working nodes as failed.
+  static Map<String, dynamic> _buildTestDns(
+    AppSnapshot snapshot,
+    List<String> warnings,
+    String? systemDns,
+  ) {
+    final dns = snapshot.settings.dnsOrDefault;
+    return {
+      'servers': [
+        _bootstrapServer(),
+        if (systemDns != null) _systemServer(systemDns),
+        _dnsServer(
+          tag: 'dns-direct',
+          value: dns.directServer,
+          detour: directTag,
+          resolver: bootstrapTag,
+          warnings: warnings,
+        ),
+      ],
+      'final': 'dns-direct',
+      'strategy': 'prefer_ipv4',
+      'independent_cache': true,
+    };
+  }
+
+  /// Plain UDP resolver using the device's own network DNS. This is what the
+  /// platform (and other proxy clients) use for proxy server addresses; it is
+  /// reachable before any DoH connection exists and bypasses the proxy itself.
+  static Map<String, dynamic> _systemServer(String address) {
+    return {
+      'type': 'udp',
+      'tag': systemTag,
+      'server': address,
+      'detour': directTag,
+    };
+  }
+
+  /// Only plain IPv4 servers are usable as a fixed UDP endpoint; IPv6
+  /// link-local entries from LinkProperties cannot be dialed without a scope.
+  static String? _systemDnsAddress(List<String> servers) {
+    for (final raw in servers) {
+      final value = raw.trim();
+      final match = RegExp(r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$')
+          .firstMatch(value);
+      if (match == null) continue;
+      var valid = true;
+      for (var i = 1; i <= 4; i++) {
+        final octet = int.parse(match.group(i)!);
+        if (octet > 255) {
+          valid = false;
+          break;
+        }
+      }
+      if (valid) return value;
+    }
+    return null;
+  }
+
+  /// Plain UDP resolver at a fixed address. The configured DoH servers are
+  /// addressed by hostname, and Android exposes no resolv.conf, so something
+  /// has to answer before any DoH connection can be opened.
+  static Map<String, dynamic> _bootstrapServer() {
+    return {
+      'type': 'udp',
+      'tag': bootstrapTag,
+      'server': DnsSettings.bootstrapServer,
+      'detour': directTag,
+    };
+  }
+
+  static Map<String, dynamic> _buildDns(
+    AppSnapshot snapshot,
+    CompileTarget target,
+    String proxyGroupTag,
+    List<String> warnings,
+    String? systemDns,
+    Set<String> activeRuleSets,
+  ) {
+    final dns = snapshot.settings.dnsOrDefault;
+    final mode = snapshot.settings.splitMode;
+    final servers = <Map<String, dynamic>>[
+      _bootstrapServer(),
+      if (systemDns != null) _systemServer(systemDns),
+    ];
+
+    final directServer = _dnsServer(
+      tag: 'dns-direct',
+      value: dns.directServer,
+      detour: directTag,
+      resolver: bootstrapTag,
+      warnings: warnings,
+    );
+    final proxyServer = _dnsServer(
+      tag: 'dns-proxy',
+      value: dns.proxyServer,
+      detour: proxyGroupTag,
+      resolver: 'dns-direct',
+      warnings: warnings,
+    );
+    servers.add(directServer);
+    if (dns.proxyServer != dns.directServer) {
+      servers.add(proxyServer);
+    } else {
+      servers.add({...proxyServer, 'tag': 'dns-proxy'});
+    }
+
+    final rules = <Map<String, dynamic>>[];
+    if (mode == SplitMode.rule &&
+        dns.dnsRouting &&
+        activeRuleSets.contains('geosite-cn')) {
+      rules.add({
+        'rule_set': ['geosite-cn'],
+        'action': 'route',
+        'server': 'dns-direct',
+      });
+    }
+
+    final finalServer = mode == SplitMode.direct ? 'dns-direct' : 'dns-proxy';
+    // Without TUN IPv6, advertising AAAA only sends apps into a dead route.
+    final strategy =
+        target == CompileTarget.android && !snapshot.settings.tunOrDefault.ipv6
+        ? 'ipv4_only'
+        : dns.strategy;
+    return {
+      'servers': servers,
+      'rules': rules,
+      'final': finalServer,
+      'strategy': strategy,
+      'reverse_mapping': dns.reverseMapping,
+      'timeout': dns.timeout,
+      'independent_cache': true,
+      'cache_capacity': 4096,
+    };
+  }
+
+  static Map<String, dynamic> _dnsServer({
+    required String tag,
+    required String value,
+    required String detour,
+    required String resolver,
+    required List<String> warnings,
+  }) {
+    final parsed = _parseDnsEndpoint(value);
+    if (parsed == null) {
+      warnings.add('DNS 地址无效，已使用本地 DNS：$value');
+      return {'type': 'local', 'tag': tag};
+    }
+    final result = <String, dynamic>{
+      'tag': tag,
+      'type': parsed.$1,
+      if (parsed.$2.isNotEmpty) 'server': parsed.$2,
+      if (parsed.$3 != null) 'server_port': parsed.$3,
+      if (parsed.$4 != null) 'path': parsed.$4,
+      'detour': detour,
+    };
+    if (_isDomain(parsed.$2) && parsed.$1 != 'local') {
+      result['domain_resolver'] = {'server': resolver};
+    }
+    if (parsed.$1 == 'tls' ||
+        parsed.$1 == 'https' ||
+        parsed.$1 == 'quic' ||
+        parsed.$1 == 'h3') {
+      result['tls'] = {
+        'enabled': true,
+        if (_isDomain(parsed.$2)) 'server_name': parsed.$2,
+      };
+    }
+    return result;
+  }
+
+  /// Returns (type, host, port, path).
+  static (String, String, int?, String?)? _parseDnsEndpoint(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return null;
+    final lower = trimmed.toLowerCase();
+    if (lower == 'local') return ('local', '', null, null);
+    if (!lower.contains('://')) {
+      final ip = trimmed;
+      if (!_looksLikeHost(ip)) return null;
+      return ('udp', ip, null, null);
+    }
+    final uri = Uri.tryParse(trimmed);
+    if (uri == null || uri.host.isEmpty) return null;
+    switch (uri.scheme.toLowerCase()) {
+      case 'udp':
+      case 'tcp':
+      case 'tls':
+      case 'https':
+      case 'quic':
+      case 'h3':
+        return (
+          uri.scheme.toLowerCase(),
+          uri.host,
+          uri.hasPort ? uri.port : null,
+          uri.scheme.toLowerCase() == 'https' ||
+                  uri.scheme.toLowerCase() == 'h3'
+              ? (uri.path.isEmpty ? '/dns-query' : uri.path)
+              : null,
+        );
+      case 'http':
+        return (
+          'https',
+          uri.host,
+          uri.hasPort ? uri.port : 443,
+          uri.path.isEmpty ? '/dns-query' : uri.path,
+        );
+      default:
+        return null;
+    }
+  }
+
+  static Map<String, dynamic> _buildRoute(
+    AppSnapshot snapshot,
+    CompileTarget target,
+    String proxyGroupTag,
+    bool hasAutoGroup,
+    List<String> warnings,
+    Map<String, String> ruleSetPaths,
+    Set<String> activeRuleSets,
+    String? systemDns,
+  ) {
+    final settings = snapshot.settings;
+    final mode = settings.splitMode;
+    final rules = <Map<String, dynamic>>[];
+
+    if (settings.dnsOrDefault.sniff) {
+      rules.add({'action': 'sniff'});
+    }
+    if (settings.tunEnabled || target == CompileTarget.android) {
+      rules.add({'protocol': 'dns', 'action': 'hijack-dns'});
+    }
+    rules.add({
+      'ip_is_private': true,
+      'action': 'route',
+      'outbound': directTag,
+    });
+
+    if (mode == SplitMode.rule) {
+      for (final rule in snapshot.rules) {
+        if (!rule.enabled) continue;
+        final built = _buildRule(
+          rule,
+          proxyGroupTag,
+          hasAutoGroup,
+          warnings,
+          activeRuleSets,
+        );
+        if (built != null) rules.add(built);
+      }
+    }
+
+    final needsProcess = snapshot.rules.any(
+      (rule) =>
+          rule.enabled &&
+          rule.effectiveConditions.any(
+            (condition) =>
+                condition.kind == RuleKind.processName ||
+                condition.kind == RuleKind.processPath,
+          ),
+    );
+    final finalOutbound = mode == SplitMode.direct ? directTag : proxyGroupTag;
+
+    return {
+      'rules': rules,
+      'final': finalOutbound,
+      if (needsProcess) 'find_process': true,
+      'default_domain_resolver': {
+        'server': systemDns == null ? 'dns-direct' : systemTag,
+      },
+      if (activeRuleSets.isNotEmpty)
+        'rule_set': [
+          for (final tag in {...builtInRuleSetTags, ...activeRuleSets})
+            if (activeRuleSets.contains(tag))
+              {
+                'type': 'local',
+                'tag': tag,
+                'format': 'binary',
+                'path': ruleSetPaths[tag],
+              },
+        ],
+    };
+  }
+
+  static Map<String, dynamic>? _buildRule(
+    RoutingRule rule,
+    String proxyGroupTag,
+    bool hasAutoGroup,
+    List<String> warnings,
+    Set<String> activeRuleSets,
+  ) {
+    final Map<String, dynamic> match;
+    if (rule.isLogical) {
+      final children = <Map<String, dynamic>>[];
+      for (final condition in rule.conditions) {
+        final child = _buildCondition(
+          condition.kind,
+          condition.value,
+          rule.name,
+          warnings,
+          activeRuleSets,
+        );
+        if (child == null) return null;
+        children.add(child);
+      }
+      if (children.length < 2) return null;
+      match = {
+        'type': 'logical',
+        'mode': rule.logic == RuleLogic.and ? 'and' : 'or',
+        'rules': children,
+      };
+    } else {
+      final child = _buildCondition(
+        rule.kind,
+        rule.value,
+        rule.name,
+        warnings,
+        activeRuleSets,
+      );
+      if (child == null) return null;
+      match = child;
+    }
+
+    switch (rule.target) {
+      case RuleTarget.proxy:
+        match['action'] = 'route';
+        match['outbound'] = proxyGroupTag;
+      case RuleTarget.direct:
+        match['action'] = 'route';
+        match['outbound'] = directTag;
+      case RuleTarget.block:
+        match['action'] = 'reject';
+      case RuleTarget.manualGroup:
+        match['action'] = 'route';
+        match['outbound'] = proxyTag;
+      case RuleTarget.autoGroup:
+        if (hasAutoGroup) {
+          match['action'] = 'route';
+          match['outbound'] = autoTag;
+        } else {
+          warnings.add('规则「${rule.name}」指定自动选择，但当前没有启用的自动节点，已改走手动选择。');
+          match['action'] = 'route';
+          match['outbound'] = proxyTag;
+        }
+    }
+    return match;
+  }
+
+  static Map<String, dynamic>? _buildCondition(
+    RuleKind kind,
+    String rawValue,
+    String ruleName,
+    List<String> warnings,
+    Set<String> activeRuleSets,
+  ) {
+    final values = kind == RuleKind.ruleSet
+        ? splitRuleSetTags(rawValue)
+        : splitRuleValues(rawValue);
+    if (values.isEmpty) {
+      warnings.add('规则「$ruleName」的条件为空，已跳过。');
+      return null;
+    }
+
+    final match = <String, dynamic>{};
+    switch (kind) {
+      case RuleKind.domain:
+        match['domain'] = values;
+      case RuleKind.domainSuffix:
+        match['domain_suffix'] = values;
+      case RuleKind.domainKeyword:
+        match['domain_keyword'] = values;
+      case RuleKind.domainRegex:
+        match['domain_regex'] = values;
+      case RuleKind.ipCidr:
+        match['ip_cidr'] = values;
+      case RuleKind.sourceIpCidr:
+        match['source_ip_cidr'] = values;
+      case RuleKind.port:
+        final ports = values.map(int.tryParse).whereType<int>().toList();
+        if (ports.isEmpty) return null;
+        match['port'] = ports;
+      case RuleKind.sourcePort:
+        final ports = values.map(int.tryParse).whereType<int>().toList();
+        if (ports.isEmpty) return null;
+        match['source_port'] = ports;
+      case RuleKind.network:
+      case RuleKind.protocol:
+        match[kind == RuleKind.network ? 'network' : 'protocol'] = values.first
+            .toLowerCase();
+      case RuleKind.processName:
+        match['process_name'] = values;
+      case RuleKind.processPath:
+        match['process_path'] = values;
+      case RuleKind.packageName:
+        match['package_name'] = values;
+      case RuleKind.ruleSet:
+        final known = values.where(activeRuleSets.contains).toList();
+        if (known.isEmpty) {
+          warnings.add('规则「$ruleName」引用了不存在的规则集，已跳过。');
+          return null;
+        }
+        if (known.length != values.length) {
+          warnings.add('规则「$ruleName」包含未知规则集，已自动忽略。');
+        }
+        match['rule_set'] = known;
+    }
+    return match;
+  }
+
+  static Map<String, dynamic> _buildMixedInbound(
+    AppSnapshot snapshot,
+    CompileTarget target,
+  ) {
+    final inbound = snapshot.settings.inboundOrDefault;
+    final hasAuth =
+        inbound.authUsername.isNotEmpty || inbound.authPassword.isNotEmpty;
+    return {
+      'type': 'mixed',
+      'tag': mixedTag,
+      'listen': inbound.allowLan ? '0.0.0.0' : '127.0.0.1',
+      'listen_port': inbound.localPort,
+      if (hasAuth)
+        'users': [
+          {'username': inbound.authUsername, 'password': inbound.authPassword},
+        ],
+    };
+  }
+
+  static Map<String, dynamic> _buildTunInbound(
+    AppSnapshot snapshot,
+    CompileTarget target,
+    List<String> warnings,
+  ) {
+    final tun = snapshot.settings.tunOrDefault;
+    var stack = tun.stack.name;
+    if (target == CompileTarget.windows && stack != 'system') {
+      warnings.add('Windows 仅支持 system TUN 栈，已自动改用 system。');
+      stack = 'system';
+    }
+    return {
+      'type': 'tun',
+      'tag': tunTag,
+      'interface_name': target == CompileTarget.windows ? 'NekoProxy' : 'tun0',
+      'address': ['172.19.0.1/30', if (tun.ipv6) 'fdfe:dcba:9876::1/126'],
+      'mtu': tun.mtu,
+      'auto_route': tun.autoRoute,
+      'strict_route': tun.strictRoute,
+      'stack': stack,
+      'dns_mode': 'hijack',
+      if (tun.bypassLan)
+        'route_exclude_address': [
+          '10.0.0.0/8',
+          '172.16.0.0/12',
+          '192.168.0.0/16',
+          '169.254.0.0/16',
+          'fc00::/7',
+          'fe80::/10',
+        ],
+    };
+  }
+
+  static bool _isDomain(String host) {
+    if (host.isEmpty) return false;
+    return !RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(host) &&
+        !host.contains(':');
+  }
+
+  static bool _looksLikeHost(String value) {
+    if (value.isEmpty || value.contains(' ')) return false;
+    return _isDomain(value) ||
+        RegExp(r'^\d{1,3}(\.\d{1,3}){3}$').hasMatch(value);
+  }
+
+  static void _deepMerge(
+    Map<String, dynamic> target,
+    Map<String, dynamic> source,
+    List<String> warnings,
+  ) {
+    for (final entry in source.entries) {
+      final existing = target[entry.key];
+      if (existing is Map && entry.value is Map) {
+        final existingMap = Map<String, dynamic>.from(existing);
+        _deepMerge(
+          existingMap,
+          Map<String, dynamic>.from(entry.value as Map),
+          warnings,
+        );
+        target[entry.key] = existingMap;
+      } else {
+        if (existing != null) warnings.add('高级 JSON 覆盖了 ${entry.key}');
+        target[entry.key] = entry.value;
+      }
+    }
+  }
+}

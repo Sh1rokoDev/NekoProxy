@@ -1,0 +1,47 @@
+name: nekoproxy
+description: A clean, cross-platform sing-box client for Android and Windows.
+publish_to: 'none'
+# 对外版本由构建脚本注入为 <版本>+<git 短哈希>，详见 AGENTS.md。
+# 此处构建号必须保持数字，供 Flutter、Android versionCode 与 Windows 资源版本使用。
+version: 1.3.0+15
+
+environment:
+  sdk: '>=3.10.0 <4.0.0'
+
+dependencies:
+  crypto: ^3.0.8
+  cryptography: ^2.9.0
+  file_picker: ^13.3.0
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  flutter_secure_storage: ^11.2.0
+  flutter_svg: ^2.3.2
+  http: ^1.6.0
+  image: ^4.12.0
+  intl: ^0.20.3
+  package_info_plus: ^10.2.2
+  path_provider: ^2.1.6
+  tray_manager: ^0.8.3
+  url_launcher: ^6.3.3
+  win32: ^6.4.0
+  win32_registry: ^3.0.3
+  window_manager: ^0.6.0
+  zxing2: ^0.2.4
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icons/app_icon.ico
+    - assets/icons/app_icon.png
+    - assets/icons/services/
+    - assets/rules/
+    - LICENSE
+    - third_party/THIRD_PARTY_NOTICES.md
+    - third_party/wintun-LICENSE.txt

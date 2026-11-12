@@ -88,4 +88,18 @@ void main() {
     expect(target.lastError, isNull);
     expect(controller.error, isNull);
   }, skip: !Platform.isWindows);
+
+  test('更新响应不会覆盖用户设置的自动更新周期', () async {
+    final target = controller.snapshot.subscriptions[1]
+      ..autoUpdate = true
+      ..updateIntervalMinutes = 6 * 60;
+    final update = controller.updateSubscription('target');
+    final request = await nextRequest();
+    request.response.headers.set('profile-update-interval', '1');
+    await respond(request, nodeLink);
+    await update;
+
+    expect(target.autoUpdate, isTrue);
+    expect(target.updateIntervalMinutes, 6 * 60);
+  }, skip: !Platform.isWindows);
 }

@@ -64,15 +64,6 @@ class ToolsPage extends StatelessWidget {
                     },
                   ),
                 SwitchRow(
-                  title: '订阅自动更新',
-                  icon: Icons.update_rounded,
-                  value: controller.settings.subscriptionAutoUpdate,
-                  onChanged: (value) async {
-                    controller.settings.subscriptionAutoUpdate = value;
-                    await controller.saveSettings();
-                  },
-                ),
-                SwitchRow(
                   title: '规则集自动更新',
                   icon: Icons.rule_folder_outlined,
                   value: controller.settings.ruleSetAutoUpdate,

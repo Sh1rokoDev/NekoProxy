@@ -6,6 +6,7 @@ import '../../app/app_scope.dart';
 import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
+import 'split_mode_switch.dart';
 
 class RulesPage extends StatefulWidget {
   const RulesPage({super.key});
@@ -30,7 +31,7 @@ class _RulesPageState extends State<RulesPage> {
     final rulesActive = controller.settings.splitMode == SplitMode.rule;
     return PageFrame(
       title: '规则',
-      actions: _SplitModeSwitch(controller: controller),
+      actions: SplitModeSwitch(controller: controller),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showEditor(context, controller),
         icon: const Icon(Icons.add_rounded),
@@ -595,26 +596,6 @@ Future<String?> _pickRuleSet(BuildContext context, List<String> tags) {
       ),
     ),
   );
-}
-
-class _SplitModeSwitch extends StatelessWidget {
-  const _SplitModeSwitch({required this.controller});
-
-  final AppController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    return SlidingSegmentedControl<SplitMode>(
-      width: 168,
-      segments: const [
-        SlidingSegmentOption(value: SplitMode.direct, label: '直连'),
-        SlidingSegmentOption(value: SplitMode.rule, label: '规则'),
-        SlidingSegmentOption(value: SplitMode.global, label: '全局'),
-      ],
-      selected: controller.settings.splitMode,
-      onChanged: controller.busy ? null : controller.setSplitMode,
-    );
-  }
 }
 
 class _ConditionDraft {

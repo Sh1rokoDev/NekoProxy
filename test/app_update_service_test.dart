@@ -97,6 +97,22 @@ void main() {
     );
   });
 
+  test('reports TLS failures as update errors', () async {
+    final service = _service(
+      (_) async => throw HandshakeException('certificate verify failed'),
+    );
+    await expectLater(
+      service.check('1.0.0', UpdatePackageKind.android),
+      throwsA(
+        isA<AppUpdateException>().having(
+          (error) => error.message,
+          'message',
+          contains('安全连接'),
+        ),
+      ),
+    );
+  });
+
   test('only saves verified bytes and reuses a valid cached update', () async {
     final directory = await Directory.systemTemp.createTemp(
       'neko-update-test-',

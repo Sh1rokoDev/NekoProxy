@@ -17,6 +17,7 @@ import '../runtime/runtime_client.dart';
 import '../services/app_update_service.dart';
 import '../services/backup_service.dart';
 import '../services/connectivity_service.dart';
+import '../services/exit_info_service.dart';
 import '../services/rule_set_manager.dart';
 import '../services/windows_system_proxy.dart';
 
@@ -27,6 +28,13 @@ class TrafficSample {
   final DateTime time;
   final double up;
   final double down;
+}
+
+class HomeActivity {
+  HomeActivity(this.message, {this.failed = false}) : time = DateTime.now();
+  final String message;
+  final bool failed;
+  final DateTime time;
 }
 
 class AppController extends ChangeNotifier {
@@ -49,6 +57,8 @@ class AppController extends ChangeNotifier {
   bool initialized = false;
   bool busy = false;
   bool running = false;
+  bool _changingSplitMode = false;
+  bool get canChangeSplitMode => !busy && !_changingSplitMode && !_disposed;
   String? _error;
   String? _notice;
   int _errorRevision = 0;
@@ -88,6 +98,13 @@ class AppController extends ChangeNotifier {
   final Map<String, Object> _subscriptionUpdates = {};
   List<TrafficSample> samples = const [];
   DateTime? connectedAt;
+  ExitInfo? exitInfo;
+  String? exitInfoError;
+  bool checkingExitInfo = false;
+  HttpClient? _exitInfoClient;
+  int _exitInfoGeneration = 0;
+  bool _disposed = false;
+  final List<HomeActivity> homeActivities = [];
   CompiledConfig? _compiled;
   String? _effectiveTag;
   bool _unexpectedStop = false;
@@ -119,6 +136,80 @@ class AppController extends ChangeNotifier {
 
   AppSettings get settings => snapshot.settings;
 
+  void _recordHomeActivity(String message, {bool failed = false}) {
+    homeActivities.insert(0, HomeActivity(message, failed: failed));
+    if (homeActivities.length > 5) homeActivities.removeLast();
+  }
+
+  void _cancelExitInfo() {
+    _exitInfoGeneration++;
+    _exitInfoClient?.close(force: true);
+    _exitInfoClient = null;
+    checkingExitInfo = false;
+    exitInfo = null;
+    exitInfoError = null;
+  }
+
+  Future<void> refreshExitInfo() async {
+    if (!running || busy || _disposed) return;
+    _cancelExitInfo();
+    final generation = _exitInfoGeneration;
+    final client = _exitInfoClient = _createManagedHttpClient();
+    checkingExitInfo = true;
+    notifyListeners();
+    try {
+      final result = await fetchExitInfo(client);
+      if (running && generation == _exitInfoGeneration) exitInfo = result;
+    } catch (e) {
+      if (running && generation == _exitInfoGeneration) {
+        exitInfoError = switch (e) {
+          TimeoutException() => '出口检测超时，请重试',
+          FormatException() => '出口信息格式无效，请重试',
+          HandshakeException() => '出口检测 TLS 握手失败，请重试',
+          SocketException() => '出口检测连接失败，请重试',
+          HttpException() => e.message,
+          _ => '出口检测失败，请重试',
+        };
+      }
+    } finally {
+      client.close(force: true);
+      if (generation == _exitInfoGeneration) {
+        _exitInfoClient = null;
+        checkingExitInfo = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> saveHomeLayout(
+    HomeLayout layout, {
+    required bool desktop,
+  }) async {
+    final source = snapshot;
+    final previous = desktop ? settings.homeDesktop : settings.homeMobile;
+    if (desktop) {
+      settings.homeDesktop = layout;
+    } else {
+      settings.homeMobile = layout;
+    }
+    try {
+      await storage.save(source);
+    } catch (_) {
+      final current = desktop
+          ? source.settings.homeDesktop
+          : source.settings.homeMobile;
+      if (identical(snapshot, source) && identical(current, layout)) {
+        if (desktop) {
+          settings.homeDesktop = previous;
+        } else {
+          settings.homeMobile = previous;
+        }
+      }
+      rethrow;
+    }
+    notifyListeners();
+  }
+
   bool get canQueueNodeTest => !busy || _nodeTestRequests.isNotEmpty;
 
   bool get testingAllNodes =>
@@ -132,6 +223,27 @@ class AppController extends ChangeNotifier {
 
   ProxyNode? get currentNode {
     return reportedNode ?? snapshot.nodeById(settings.manualNodeId);
+  }
+
+  /// Returns the URL subscription that owns the current node, or the sole URL
+  /// subscription when no node is selected.
+  Subscription? get currentSubscription {
+    final node = currentNode;
+    final subscriptionId = node?.subscriptionId;
+    if (subscriptionId != null) {
+      for (final subscription in snapshot.subscriptions) {
+        if (subscription.id == subscriptionId &&
+            subscription.isUrlSubscription) {
+          return subscription;
+        }
+      }
+      return null;
+    }
+    if (node != null) return null;
+    final subscriptions = snapshot.subscriptions
+        .where((subscription) => subscription.isUrlSubscription)
+        .toList(growable: false);
+    return subscriptions.length == 1 ? subscriptions.single : null;
   }
 
   ProxyNode? get reportedNode {
@@ -231,17 +343,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _autoUpdateSubscriptions({bool initial = false}) async {
-    if (!settings.subscriptionAutoUpdate) return;
     if (initial) {
       await Future<void>.delayed(const Duration(seconds: 4));
     }
+    final now = DateTime.now();
     for (final subscription in List<Subscription>.of(snapshot.subscriptions)) {
-      final due =
-          subscription.lastUpdated == null ||
-          subscription.updateIntervalMinutes <= 0 ||
-          DateTime.now().difference(subscription.lastUpdated!) >=
-              Duration(minutes: subscription.updateIntervalMinutes);
-      if (!due || subscription.url.isEmpty) continue;
+      if (!subscription.isAutoUpdateDue(now)) continue;
       try {
         await updateSubscription(subscription.id, silent: true);
       } catch (_) {}
@@ -408,6 +515,7 @@ class AppController extends ChangeNotifier {
       _lastDownTotal = 0;
       _lastTrafficAt = null;
       samples = const [];
+      _recordHomeActivity('代理已连接');
       _startPolling();
       try {
         await _refreshStatus();
@@ -423,6 +531,8 @@ class AppController extends ChangeNotifier {
       }
     } catch (e) {
       running = false;
+      _cancelExitInfo();
+      _recordHomeActivity('代理连接失败', failed: true);
       _pollTimer?.cancel();
       _uiTimer?.cancel();
       _setError(_friendlyError(e));
@@ -435,9 +545,14 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       await storage.save(snapshot);
     }
+    if (running && !checkingExitInfo && exitInfo == null) {
+      unawaited(refreshExitInfo());
+    }
   }
 
   Future<void> disconnect({bool silent = false}) async {
+    _cancelExitInfo();
+    final wasRunning = running;
     _pollTimer?.cancel();
     _pollTimer = null;
     _uiTimer?.cancel();
@@ -461,12 +576,14 @@ class AppController extends ChangeNotifier {
       if (!silent) _setError(_friendlyError(e));
     } finally {
       running = false;
+      _cancelExitInfo();
       runtimeStatus = null;
       traffic = const RuntimeTraffic();
       connections = const [];
       samples = const [];
       _effectiveTag = null;
       connectedAt = null;
+      if (wasRunning) _recordHomeActivity('代理已断开');
       busy = false;
       notifyListeners();
     }
@@ -502,11 +619,24 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setSplitMode(SplitMode mode) async {
-    if (settings.splitMode == mode) return;
+    final previous = settings.splitMode;
+    if (!canChangeSplitMode || previous == mode) return;
+    _changingSplitMode = true;
     settings.splitMode = mode;
-    await storage.save(snapshot);
     notifyListeners();
-    if (running) await restartCore();
+    try {
+      try {
+        await storage.save(snapshot);
+      } catch (error) {
+        settings.splitMode = previous;
+        if (!_disposed) _setError('规则模式保存失败：${_friendlyError(error)}');
+        return;
+      }
+      if (!_disposed && running) await restartCore();
+    } finally {
+      _changingSplitMode = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   Future<void> setSelectionMode(SelectionMode mode) async {
@@ -533,6 +663,7 @@ class AppController extends ChangeNotifier {
         try {
           await runtime.select(tag);
           _effectiveTag = tag;
+          unawaited(refreshExitInfo());
           await _refreshStatus();
         } catch (e) {
           _setError('切换节点失败：${_friendlyError(e)}');
@@ -1016,7 +1147,9 @@ class AppController extends ChangeNotifier {
           : (headers.profileTitle ?? uri.host),
       url: uri.toString(),
       userAgent: userAgent,
-      updateIntervalMinutes: parsed.updateIntervalMinutes ?? 0,
+      updateIntervalMinutes:
+          parsed.updateIntervalMinutes ??
+          Subscription.defaultUpdateIntervalMinutes,
       lastUpdated: DateTime.now(),
       uploadBytes: parsed.uploadBytes,
       downloadBytes: parsed.downloadBytes,
@@ -1135,6 +1268,8 @@ class AppController extends ChangeNotifier {
     required String name,
     required String url,
     required String userAgent,
+    bool? autoUpdate,
+    int? updateIntervalMinutes,
   }) async {
     final index = snapshot.subscriptions.indexWhere((e) => e.id == id);
     if (index < 0) return;
@@ -1147,6 +1282,12 @@ class AppController extends ChangeNotifier {
         throw const ParseException('订阅链接必须是 http 或 https');
       }
     }
+    if (updateIntervalMinutes != null &&
+        (updateIntervalMinutes < Subscription.minimumUpdateIntervalMinutes ||
+            updateIntervalMinutes >
+                Subscription.maximumUpdateIntervalMinutes)) {
+      throw const ParseException('更新周期必须在 30 分钟到 30 天之间');
+    }
     final existing = snapshot.subscriptions[index];
     final trimmedUserAgent = userAgent.trim();
     if (existing.url != trimmedUrl || existing.userAgent != trimmedUserAgent) {
@@ -1156,6 +1297,8 @@ class AppController extends ChangeNotifier {
       name: trimmedName,
       url: trimmedUrl,
       userAgent: trimmedUserAgent,
+      autoUpdate: autoUpdate,
+      updateIntervalMinutes: updateIntervalMinutes,
       clearError: true,
     );
     await storage.save(snapshot);
@@ -1198,6 +1341,8 @@ class AppController extends ChangeNotifier {
       );
       final current = currentSubscription();
       if (current == null) return;
+      // The server interval only seeds new imports; refreshing must not
+      // overwrite the per-subscription schedule configured by the user.
       final oldByFingerprint = <String, ProxyNode>{};
       for (final node in current.nodes) {
         oldByFingerprint[ProfileParser.fingerprintOf(node.outbound)] = node;
@@ -1226,10 +1371,6 @@ class AppController extends ChangeNotifier {
         ..downloadBytes = parsed.downloadBytes
         ..totalBytes = parsed.totalBytes
         ..expireAt = parsed.expireAt;
-      final updateInterval = parsed.updateIntervalMinutes;
-      if (updateInterval != null) {
-        current.updateIntervalMinutes = updateInterval;
-      }
       final selectedBefore = settings.manualNodeId;
       final selectionLost =
           selectedBefore != null && snapshot.nodeById(selectedBefore) == null;
@@ -1238,6 +1379,7 @@ class AppController extends ChangeNotifier {
       }
       await storage.save(snapshot);
       if (!identical(snapshot, sourceSnapshot)) return;
+      _recordHomeActivity('订阅更新完成，共 ${parsed.nodes.length} 个节点');
       notifyListeners();
       if (selectionLost) {
         if (running) await disconnect(silent: true);
@@ -1255,6 +1397,7 @@ class AppController extends ChangeNotifier {
       final current = currentSubscription();
       if (current == null) return;
       current.lastError = _friendlyError(e);
+      _recordHomeActivity('订阅更新失败', failed: true);
       await storage.save(snapshot);
       notifyListeners();
       if (!silent && currentSubscription() != null) {
@@ -1453,6 +1596,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> shutdownForExit() async {
+    _cancelExitInfo();
     _subscriptionTimer?.cancel();
     _stopRuleSetUpdates();
     _pollTimer?.cancel();
@@ -1465,6 +1609,8 @@ class AppController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _cancelExitInfo();
     _cancelNodeTests();
     _stopRuleSetUpdates();
     super.dispose();
@@ -1579,6 +1725,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     if (previousTag != _effectiveTag) {
+      unawaited(refreshExitInfo());
       liveTick.value++;
       notifyListeners();
     }
@@ -1587,6 +1734,8 @@ class AppController extends ChangeNotifier {
   Future<void> _handleUnexpectedStop(String message) async {
     if (_unexpectedStop) return;
     _unexpectedStop = true;
+    _cancelExitInfo();
+    _recordHomeActivity('代理意外停止', failed: true);
     running = false;
     _pollTimer?.cancel();
     _pollTimer = null;

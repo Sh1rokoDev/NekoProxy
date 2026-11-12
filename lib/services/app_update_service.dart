@@ -243,6 +243,9 @@ class AppUpdateService {
     } on SocketException {
       if (timedOut) throw const AppUpdateException('更新请求超时，请重试。');
       throw const AppUpdateException('与 GitHub 的连接中断，请检查网络后重试。');
+    } on TlsException {
+      if (timedOut) throw const AppUpdateException('更新请求超时，请重试。');
+      throw const AppUpdateException('无法与 GitHub 建立安全连接，请检查网络或系统时间后重试。');
     } finally {
       timer.cancel();
       client.close();

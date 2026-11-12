@@ -119,7 +119,7 @@ Invoke-WithLatestNekoRuntime -Root $root -Build {
 
 Push-Location $root
 try {
-    & $Flutter build apk --release --target-platform android-arm64 "--build-number=$($version.BuildNumber)" "--dart-define=NEKO_VERSION=$($version.Version)"
+    & $Flutter build apk --release --target-platform android-arm64 "--build-number=$($version.BuildNumber)" "--dart-define=NEKO_VERSION=$($version.Version)" "--dart-define=NEKO_CORE_VERSION=$($NekoCoreVersion)"
     if ($LASTEXITCODE -ne 0) { throw "flutter build apk failed" }
 } finally {
     Pop-Location

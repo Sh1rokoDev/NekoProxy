@@ -32,6 +32,8 @@ function Invoke-WithLatestNekoRuntime {
     if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
         throw "Unexpected stable sing-box release tag: $tag."
     }
+    # Expose the resolved tag so build entry points can report it to Flutter.
+    $script:NekoCoreVersion = $tag
 
     # Resolve the published Go module in a private copy, leaving the development
     # submodule and the tracked dependency files unchanged.

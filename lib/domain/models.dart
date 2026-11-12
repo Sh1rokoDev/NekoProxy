@@ -212,6 +212,7 @@ class Subscription {
     this.url = '',
     this.userAgent = '',
     this.updateIntervalMinutes = 0,
+    this.autoUpdate = true,
     this.lastUpdated,
     this.lastError,
     this.uploadBytes,
@@ -232,6 +233,7 @@ class Subscription {
   final String url;
   final String userAgent;
   int updateIntervalMinutes;
+  bool autoUpdate;
   DateTime? lastUpdated;
   String? lastError;
   int? uploadBytes;
@@ -248,11 +250,36 @@ class Subscription {
 
   bool get isUrlSubscription => url.isNotEmpty;
 
+  static const minimumUpdateIntervalMinutes = 30;
+  static const defaultUpdateIntervalMinutes = 24 * 60;
+  static const maximumUpdateIntervalMinutes = 30 * 24 * 60;
+
+  int get effectiveUpdateIntervalMinutes {
+    final configured = updateIntervalMinutes;
+    if (configured <= 0) return defaultUpdateIntervalMinutes;
+    if (configured < minimumUpdateIntervalMinutes) {
+      return minimumUpdateIntervalMinutes;
+    }
+    if (configured > maximumUpdateIntervalMinutes) {
+      return maximumUpdateIntervalMinutes;
+    }
+    return configured;
+  }
+
+  bool isAutoUpdateDue(DateTime now) {
+    if (!autoUpdate || !isUrlSubscription) return false;
+    final updated = lastUpdated;
+    return updated == null ||
+        now.difference(updated) >=
+            Duration(minutes: effectiveUpdateIntervalMinutes);
+  }
+
   Subscription copyWith({
     String? name,
     String? url,
     String? userAgent,
     int? updateIntervalMinutes,
+    bool? autoUpdate,
     List<ProxyNode>? nodes,
     DateTime? lastUpdated,
     String? lastError,
@@ -270,6 +297,7 @@ class Subscription {
       userAgent: userAgent ?? this.userAgent,
       updateIntervalMinutes:
           updateIntervalMinutes ?? this.updateIntervalMinutes,
+      autoUpdate: autoUpdate ?? this.autoUpdate,
       lastUpdated: lastUpdated ?? this.lastUpdated,
       lastError: clearError ? null : (lastError ?? this.lastError),
       uploadBytes: uploadBytes,
@@ -292,6 +320,7 @@ class Subscription {
     'url': url,
     'userAgent': userAgent,
     'updateIntervalMinutes': updateIntervalMinutes,
+    'autoUpdate': autoUpdate,
     'lastUpdated': lastUpdated?.toIso8601String(),
     'lastError': lastError,
     'uploadBytes': uploadBytes,
@@ -307,7 +336,10 @@ class Subscription {
     'autoEnabled': autoEnabled,
   };
 
-  factory Subscription.fromJson(Map<String, dynamic> json) {
+  factory Subscription.fromJson(
+    Map<String, dynamic> json, {
+    bool defaultAutoUpdate = true,
+  }) {
     return Subscription(
       id: json['id'] as String? ?? '',
       name: json['name'] as String? ?? '',
@@ -315,6 +347,7 @@ class Subscription {
       userAgent: json['userAgent'] as String? ?? '',
       updateIntervalMinutes:
           (json['updateIntervalMinutes'] as num?)?.toInt() ?? 0,
+      autoUpdate: json['autoUpdate'] as bool? ?? defaultAutoUpdate,
       lastUpdated: DateTime.tryParse(json['lastUpdated'] as String? ?? ''),
       lastError: json['lastError'] as String?,
       uploadBytes: (json['uploadBytes'] as num?)?.toInt(),
@@ -640,6 +673,56 @@ class ProxyOverride {
   }
 }
 
+enum HomeCard {
+  connection,
+  splitMode,
+  traffic,
+  subscription,
+  activity,
+  services,
+}
+
+class HomeLayout {
+  HomeLayout({List<HomeCard>? order, Set<HomeCard>? hidden})
+    : order = <HomeCard>{...?order, ...HomeCard.values}.toList(),
+      hidden = {...?hidden}..remove(HomeCard.connection) {
+    if (order != null && !order.contains(HomeCard.splitMode)) {
+      // Add the shortcut to existing layouts without reordering their cards.
+      this.order.remove(HomeCard.splitMode);
+      this.order.insert(
+        this.order.indexOf(HomeCard.connection) + 1,
+        HomeCard.splitMode,
+      );
+    }
+  }
+
+  final List<HomeCard> order;
+  final Set<HomeCard> hidden;
+
+  Map<String, dynamic> toJson() => {
+    'order': order.map((card) => card.name).toList(),
+    'hidden': hidden.map((card) => card.name).toList(),
+  };
+
+  factory HomeLayout.fromJson(Object? value) {
+    if (value is! Map) return HomeLayout();
+    List<HomeCard> parse(Object? names) => names is List
+        ? names
+              .map(
+                (name) => HomeCard.values
+                    .where((card) => card.name == name)
+                    .firstOrNull,
+              )
+              .whereType<HomeCard>()
+              .toList()
+        : [];
+    return HomeLayout(
+      order: parse(value['order']),
+      hidden: parse(value['hidden']).toSet(),
+    );
+  }
+}
+
 class AppSettings {
   AppSettings({
     this.theme = ThemePreference.system,
@@ -654,14 +737,17 @@ class AppSettings {
     this.autoConnect = false,
     this.startAtLogin = false,
     this.minimizeToTray = true,
-    this.subscriptionAutoUpdate = true,
     this.ruleSetAutoUpdate = true,
     this.dns,
     this.inbound,
     this.tun,
     this.advanced,
     this.proxyOverride,
-  }) : perAppPackages = perAppPackages ?? [];
+    HomeLayout? homeDesktop,
+    HomeLayout? homeMobile,
+  }) : perAppPackages = perAppPackages ?? [],
+       homeDesktop = homeDesktop ?? HomeLayout(),
+       homeMobile = homeMobile ?? HomeLayout();
 
   ThemePreference theme;
   int seedColor;
@@ -675,13 +761,14 @@ class AppSettings {
   bool autoConnect;
   bool startAtLogin;
   bool minimizeToTray;
-  bool subscriptionAutoUpdate;
   bool ruleSetAutoUpdate;
   DnsSettings? dns;
   InboundSettings? inbound;
   TunSettings? tun;
   AdvancedSettings? advanced;
   ProxyOverride? proxyOverride;
+  HomeLayout homeDesktop;
+  HomeLayout homeMobile;
 
   DnsSettings get dnsOrDefault => dns ??= DnsSettings();
   InboundSettings get inboundOrDefault => inbound ??= InboundSettings();
@@ -702,13 +789,14 @@ class AppSettings {
     'autoConnect': autoConnect,
     'startAtLogin': startAtLogin,
     'minimizeToTray': minimizeToTray,
-    'subscriptionAutoUpdate': subscriptionAutoUpdate,
     'ruleSetAutoUpdate': ruleSetAutoUpdate,
     'dns': dnsOrDefault.toJson(),
     'inbound': inboundOrDefault.toJson(),
     'tun': tunOrDefault.toJson(),
     'advanced': advancedOrDefault.toJson(),
     'proxyOverride': proxyOverrideOrDefault.toJson(),
+    'homeDesktop': homeDesktop.toJson(),
+    'homeMobile': homeMobile.toJson(),
   };
 
   factory AppSettings.fromJson(Map<String, dynamic> json) {
@@ -727,6 +815,8 @@ class AppSettings {
         orElse: () => SelectionMode.manual,
       ),
       manualNodeId: json['manualNodeId'] as String?,
+      homeDesktop: HomeLayout.fromJson(json['homeDesktop']),
+      homeMobile: HomeLayout.fromJson(json['homeMobile']),
       perAppMode: PerAppMode.values.firstWhere(
         (e) => e.name == json['perAppMode'],
         orElse: () => PerAppMode.off,
@@ -739,7 +829,6 @@ class AppSettings {
       autoConnect: json['autoConnect'] as bool? ?? false,
       startAtLogin: json['startAtLogin'] as bool? ?? false,
       minimizeToTray: json['minimizeToTray'] as bool? ?? true,
-      subscriptionAutoUpdate: json['subscriptionAutoUpdate'] as bool? ?? true,
       ruleSetAutoUpdate: json['ruleSetAutoUpdate'] as bool? ?? true,
       dns: json['dns'] is Map
           ? DnsSettings.fromJson(Map<String, dynamic>.from(json['dns'] as Map))
@@ -847,13 +936,21 @@ class AppSnapshot {
       throw const FormatException('状态数据结构无效');
     }
 
+    final settingsJson = Map<String, dynamic>.from(json['settings'] as Map);
+    // Older snapshots used one global switch; carry its value into subscriptions
+    // that do not have their own setting yet.
+    final legacyAutoUpdate =
+        settingsJson['subscriptionAutoUpdate'] as bool? ?? true;
     return AppSnapshot(
-      settings: AppSettings.fromJson(
-        Map<String, dynamic>.from(json['settings'] as Map),
-      ),
+      settings: AppSettings.fromJson(settingsJson),
       subscriptions: (json['subscriptions'] as List)
           .cast<Map>()
-          .map((item) => Subscription.fromJson(Map<String, dynamic>.from(item)))
+          .map(
+            (item) => Subscription.fromJson(
+              Map<String, dynamic>.from(item),
+              defaultAutoUpdate: legacyAutoUpdate,
+            ),
+          )
           .toList(),
       rules: (json['rules'] as List)
           .cast<Map>()

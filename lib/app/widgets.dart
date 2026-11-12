@@ -11,6 +11,7 @@ class PageFrame extends StatelessWidget {
     this.scrollable = true,
     this.floatingActionButton,
     this.actions,
+    this.wrapHeader = false,
   });
 
   final String title;
@@ -18,6 +19,7 @@ class PageFrame extends StatelessWidget {
   final bool scrollable;
   final Widget? floatingActionButton;
   final Widget? actions;
+  final bool wrapHeader;
 
   @override
   Widget build(BuildContext context) {
@@ -27,9 +29,7 @@ class PageFrame extends StatelessWidget {
         24,
         22,
         24,
-        scrollable
-            ? (floatingActionButton == null ? 32 : 104)
-            : 0,
+        scrollable ? (floatingActionButton == null ? 32 : 104) : 0,
       ),
       child: Center(
         child: ConstrainedBox(
@@ -37,25 +37,45 @@ class PageFrame extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(
-                height: 48,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.center,
-                  children: [
-                    Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.headlineSmall,
-                      ),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  if (wrapHeader && constraints.maxWidth < 400) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(title, style: theme.textTheme.headlineSmall),
+                        if (actions != null) ...[
+                          const SizedBox(height: 12),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: actions!,
+                          ),
+                        ],
+                      ],
+                    );
+                  }
+                  return SizedBox(
+                    height: 48,
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: theme.textTheme.headlineSmall,
+                          ),
+                        ),
+                        if (actions != null) ...[
+                          const SizedBox(width: 12),
+                          actions!,
+                        ],
+                      ],
                     ),
-                    if (actions != null) ...[
-                      const SizedBox(width: 12),
-                      actions!,
-                    ],
-                  ],
-                ),
+                  );
+                },
               ),
               const SizedBox(height: 20),
               child,
@@ -166,9 +186,7 @@ class SlidingSegmentedControl<T> extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(
-          color: scheme.outlineVariant.withValues(alpha: 0.6),
-        ),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
       ),
       child: Stack(
         children: [

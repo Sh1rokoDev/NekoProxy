@@ -6,9 +6,18 @@ import '../../app/widgets.dart';
 import 'app_update_card.dart';
 
 const _injectedVersion = String.fromEnvironment('NEKO_VERSION');
+const _injectedCoreVersion = String.fromEnvironment('NEKO_CORE_VERSION');
+
+String _coreLabel(String tag) {
+  final version = tag.startsWith('v') ? tag.substring(1) : tag;
+  return version.isEmpty ? 'sing-box' : 'sing-box $version';
+}
 
 class AboutPage extends StatefulWidget {
-  const AboutPage({super.key});
+  const AboutPage({super.key, this.coreVersion = _injectedCoreVersion});
+
+  /// The bundled sing-box release tag injected by the build scripts.
+  final String coreVersion;
 
   @override
   State<AboutPage> createState() => _AboutPageState();
@@ -81,17 +90,17 @@ class _AboutPageState extends State<AboutPage> {
                   AppUpdateCard(currentVersion: updateVersion),
                   const SizedBox(height: 14),
                 ],
-                const SectionCard(
+                SectionCard(
                   title: '技术组件',
                   icon: Icons.memory_rounded,
                   child: Column(
                     children: [
                       KeyValueRow(
                         label: '代理核心',
-                        value: 'sing-box 1.14.4',
+                        value: _coreLabel(widget.coreVersion),
                         expandValue: true,
                       ),
-                      KeyValueRow(
+                      const KeyValueRow(
                         label: '界面',
                         value: 'Flutter · Material 3',
                         expandValue: true,

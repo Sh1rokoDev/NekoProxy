@@ -22,7 +22,7 @@ Invoke-WithLatestNekoRuntime -Root $root -Build {
 
 Push-Location $root
 try {
-    & $Flutter build windows --release "--build-number=$($version.BuildNumber)" "--dart-define=NEKO_VERSION=$($version.Version)"
+    & $Flutter build windows --release "--build-number=$($version.BuildNumber)" "--dart-define=NEKO_VERSION=$($version.Version)" "--dart-define=NEKO_CORE_VERSION=$($NekoCoreVersion)"
     if ($LASTEXITCODE -ne 0) { throw "flutter build windows failed" }
 } finally {
     Pop-Location

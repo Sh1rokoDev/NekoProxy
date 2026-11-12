@@ -23,7 +23,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(800, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      const MaterialApp(home: AboutPage()),
+      const MaterialApp(home: AboutPage(coreVersion: 'v1.14.4')),
       phase: EnginePhase.paint,
     );
     expect(
@@ -121,6 +121,30 @@ void main() {
     await tester.pump(Duration.zero, EnginePhase.paint);
     expect(controller.checks, 3);
   }, skip: !Platform.isWindows && !Platform.isAndroid);
+
+  testWidgets('更新检查出现未知异常时显示兜底提示', (tester) async {
+    PackageInfo.setMockInitialValues(
+      appName: 'NekoProxy',
+      packageName: 'nekoproxy',
+      version: '1.0.0',
+      buildNumber: '1',
+      buildSignature: '',
+    );
+    await tester.binding.setSurfaceSize(const Size(390, 844));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = _FailingUpdateController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      AppScope(
+        controller: controller,
+        child: const MaterialApp(home: AboutPage(coreVersion: 'v1.14.4')),
+      ),
+      phase: EnginePhase.paint,
+    );
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    expect(find.text('更新操作失败，请稍后重试。'), findsOneWidget);
+  }, skip: !Platform.isWindows && !Platform.isAndroid);
 }
 
 class _UpdateController extends AppController {
@@ -145,5 +169,27 @@ class _UpdateService extends AppUpdateService {
   Future<AppUpdate?> check(String currentVersion, UpdatePackageKind kind) {
     controller.checks++;
     return controller.result.future;
+  }
+}
+
+class _FailingUpdateController extends AppController {
+  _FailingUpdateController() {
+    paths = AppPaths.forDirectory(Directory.systemTemp.path);
+  }
+
+  @override
+  AppUpdateService createUpdateService() => _FailingUpdateService();
+}
+
+class _FailingUpdateService extends AppUpdateService {
+  _FailingUpdateService()
+    : super(() => throw StateError('Unexpected HTTP client'));
+
+  @override
+  Future<AppUpdate?> check(
+    String currentVersion,
+    UpdatePackageKind kind,
+  ) async {
+    throw Exception('Unexpected update failure');
   }
 }

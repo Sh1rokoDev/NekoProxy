@@ -1,8 +1,10 @@
+import 'dart:io';
 import 'dart:ui' show PointerDeviceKind;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app_scope.dart';
+import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
@@ -206,4 +208,81 @@ void main() {
     expect(cardColor(), normalColor);
     expect(expandColor(), normalExpandColor);
   });
+
+  testWidgets('编辑订阅可独立设置自动更新开关和周期', (tester) async {
+    final controller = AppController()
+      ..storage = _MemoryStorage()
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(),
+        subscriptions: [
+          Subscription(
+            id: 'subscription',
+            name: '测试订阅',
+            url: 'https://example.com/subscription',
+            autoUpdate: true,
+            updateIntervalMinutes: 6 * 60,
+          ),
+        ],
+      );
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          controller: controller,
+          child: const Scaffold(body: NodesPage()),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    Future<void> openEditor() async {
+      await tester.tap(find.byTooltip('分组设置'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('编辑订阅'));
+      await tester.pumpAndSettle();
+    }
+
+    await openEditor();
+    final intervalField = find.byType(TextFormField).last;
+    expect(tester.widget<TextFormField>(intervalField).controller?.text, '6');
+    await tester.enterText(intervalField, '12');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 5));
+    expect(controller.snapshot.subscriptions.single.autoUpdate, isTrue);
+    expect(
+      controller.snapshot.subscriptions.single.effectiveUpdateIntervalMinutes,
+      12 * 60,
+    );
+
+    await openEditor();
+    final autoUpdateSwitch = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(Switch),
+    );
+    expect(tester.widget<Switch>(autoUpdateSwitch).value, isTrue);
+    await tester.tap(autoUpdateSwitch);
+    await tester.pump();
+    expect(
+      tester.widget<TextFormField>(find.byType(TextFormField).last).enabled,
+      isFalse,
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 5));
+    expect(controller.snapshot.subscriptions.single.autoUpdate, isFalse);
+    expect(
+      controller.snapshot.subscriptions.single.effectiveUpdateIntervalMinutes,
+      12 * 60,
+    );
+  });
+}
+
+class _MemoryStorage extends AppStorage {
+  _MemoryStorage() : super(AppPaths.forDirectory(Directory.systemTemp.path));
+
+  @override
+  Future<void> save(AppSnapshot snapshot) async {}
 }

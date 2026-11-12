@@ -64,6 +64,9 @@ class _AppUpdateCardState extends State<AppUpdateCard> {
       if (mounted) setState(() => _message = '无法读取或保存更新包，请检查剩余空间和目录权限。');
     } on ProcessException {
       if (mounted) setState(() => _message = '无法启动 Windows 安装程序。');
+    } on Exception catch (error) {
+      debugPrint('App update failed: $error');
+      if (mounted) setState(() => _message = '更新操作失败，请稍后重试。');
     } finally {
       if (mounted) {
         setState(() {

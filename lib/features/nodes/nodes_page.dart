@@ -444,94 +444,19 @@ class _NodesPageState extends State<NodesPage> {
     Subscription subscription,
   ) async {
     final isSubscription = subscription.isUrlSubscription;
-    final nameController = TextEditingController(text: subscription.name);
-    final urlController = TextEditingController(text: subscription.url);
-    final uaController = TextEditingController(text: subscription.userAgent);
-    final formKey = GlobalKey<FormState>();
-    final saved = await showDialog<bool>(
+    final result = await showDialog<_EditSubscriptionResult>(
       context: context,
-      builder: (context) => AlertDialog(
-        scrollable: true,
-        title: Text(isSubscription ? '编辑订阅' : '重命名分组'),
-        content: SizedBox(
-          width: 520,
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextFormField(
-                  controller: nameController,
-                  autofocus: !isSubscription,
-                  decoration: const InputDecoration(labelText: '名称'),
-                  validator: (value) =>
-                      (value == null || value.trim().isEmpty) ? '请输入名称' : null,
-                ),
-                if (isSubscription) ...[
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: urlController,
-                    decoration: const InputDecoration(
-                      labelText: '订阅链接',
-                      hintText: 'https://example.com/sub',
-                    ),
-                    validator: (value) {
-                      final text = value?.trim() ?? '';
-                      if (text.isEmpty) return null;
-                      final uri = Uri.tryParse(text);
-                      if (uri == null ||
-                          !(uri.scheme == 'http' || uri.scheme == 'https')) {
-                        return '请输入有效的 http(s) 链接';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: uaController,
-                    decoration: const InputDecoration(
-                      labelText: 'User-Agent（可选）',
-                    ),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () {
-              if (formKey.currentState?.validate() != true) return;
-              Navigator.pop(context, true);
-            },
-            child: const Text('保存'),
-          ),
-        ],
-      ),
+      builder: (context) => _EditSubscriptionDialog(subscription: subscription),
     );
-    if (saved != true) {
-      nameController.dispose();
-      urlController.dispose();
-      uaController.dispose();
-      return;
-    }
-    final name = nameController.text.trim();
-    final url = urlController.text.trim();
-    final userAgent = uaController.text.trim();
-    nameController.dispose();
-    urlController.dispose();
-    uaController.dispose();
+    if (result == null) return;
     try {
       await controller.updateSubscriptionInfo(
         subscription.id,
-        name: name,
-        url: url,
-        userAgent: userAgent,
+        name: result.name,
+        url: result.url,
+        userAgent: result.userAgent,
+        autoUpdate: result.autoUpdate,
+        updateIntervalMinutes: result.updateIntervalMinutes,
       );
     } catch (e) {
       if (context.mounted) {
@@ -545,7 +470,9 @@ class _NodesPageState extends State<NodesPage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(isSubscription ? '订阅信息已保存' : '分组已重命名')),
     );
-    if (isSubscription && url.isNotEmpty && url != subscription.url) {
+    if (isSubscription &&
+        result.url.isNotEmpty &&
+        result.url != subscription.url) {
       await _updateSubscription(controller, subscription);
     }
   }
@@ -1350,6 +1277,21 @@ class _SelectionToggle extends StatelessWidget {
   }
 }
 
+String _updateHoursText(int minutes) {
+  final hours = minutes / 60;
+  if (hours == hours.roundToDouble()) return hours.round().toString();
+  return hours
+      .toStringAsFixed(2)
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
+}
+
+int? _updateMinutesFromHours(String value) {
+  final hours = double.tryParse(value.trim());
+  if (hours == null || !hours.isFinite || hours <= 0) return null;
+  return (hours * 60).round();
+}
+
 String _protocolBadge(String protocol) => switch (protocol.toLowerCase()) {
   'shadowsocks' => 'SS',
   'shadowsocksr' => 'SSR',
@@ -2058,6 +2000,175 @@ class _EmptyGroup extends StatelessWidget {
             ),
         ],
       ),
+    );
+  }
+}
+
+class _EditSubscriptionResult {
+  const _EditSubscriptionResult({
+    required this.name,
+    required this.url,
+    required this.userAgent,
+    required this.autoUpdate,
+    required this.updateIntervalMinutes,
+  });
+
+  final String name;
+  final String url;
+  final String userAgent;
+  final bool? autoUpdate;
+  final int? updateIntervalMinutes;
+}
+
+class _EditSubscriptionDialog extends StatefulWidget {
+  const _EditSubscriptionDialog({required this.subscription});
+
+  final Subscription subscription;
+
+  @override
+  State<_EditSubscriptionDialog> createState() =>
+      _EditSubscriptionDialogState();
+}
+
+class _EditSubscriptionDialogState extends State<_EditSubscriptionDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _name;
+  late final TextEditingController _url;
+  late final TextEditingController _userAgent;
+  late final TextEditingController _updateInterval;
+  late bool _autoUpdate;
+
+  bool get _isSubscription => widget.subscription.isUrlSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    final subscription = widget.subscription;
+    _name = TextEditingController(text: subscription.name);
+    _url = TextEditingController(text: subscription.url);
+    _userAgent = TextEditingController(text: subscription.userAgent);
+    _updateInterval = TextEditingController(
+      text: _updateHoursText(subscription.effectiveUpdateIntervalMinutes),
+    );
+    _autoUpdate = subscription.autoUpdate;
+  }
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _url.dispose();
+    _userAgent.dispose();
+    _updateInterval.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_formKey.currentState?.validate() != true) return;
+    Navigator.of(context).pop(
+      _EditSubscriptionResult(
+        name: _name.text.trim(),
+        url: _isSubscription ? _url.text.trim() : '',
+        userAgent: _isSubscription ? _userAgent.text.trim() : '',
+        autoUpdate: _isSubscription ? _autoUpdate : null,
+        updateIntervalMinutes: _isSubscription && _autoUpdate
+            ? _updateMinutesFromHours(_updateInterval.text)
+            : null,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      scrollable: true,
+      title: Text(_isSubscription ? '编辑订阅' : '重命名分组'),
+      content: SizedBox(
+        width: 520,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                controller: _name,
+                autofocus: !_isSubscription,
+                decoration: const InputDecoration(labelText: '名称'),
+                validator: (value) =>
+                    (value == null || value.trim().isEmpty) ? '请输入名称' : null,
+              ),
+              if (_isSubscription) ...[
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _url,
+                  decoration: const InputDecoration(
+                    labelText: '订阅链接',
+                    hintText: 'https://example.com/sub',
+                  ),
+                  validator: (value) {
+                    final text = value?.trim() ?? '';
+                    if (text.isEmpty) return null;
+                    final uri = Uri.tryParse(text);
+                    if (uri == null ||
+                        !(uri.scheme == 'http' || uri.scheme == 'https')) {
+                      return '请输入有效的 http(s) 链接';
+                    }
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _userAgent,
+                  decoration: const InputDecoration(
+                    labelText: 'User-Agent（可选）',
+                  ),
+                ),
+                const SizedBox(height: 8),
+                SwitchRow(
+                  title: '自动更新',
+                  subtitle: _autoUpdate
+                      ? '按该订阅的周期自动同步节点与用量'
+                      : '仅手动更新，保留上次设置的周期',
+                  icon: Icons.update_rounded,
+                  value: _autoUpdate,
+                  onChanged: (value) => setState(() => _autoUpdate = value),
+                ),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _updateInterval,
+                  enabled: _autoUpdate,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: '更新周期（小时）',
+                    helperText: '支持小数，例如 1.5 表示 90 分钟；最短 0.5 小时',
+                  ),
+                  validator: (value) {
+                    if (!_autoUpdate) return null;
+                    final minutes = _updateMinutesFromHours(value ?? '');
+                    if (minutes == null) return '请输入有效的更新周期';
+                    if (minutes < Subscription.minimumUpdateIntervalMinutes) {
+                      return '更新周期不能短于 30 分钟';
+                    }
+                    if (minutes > Subscription.maximumUpdateIntervalMinutes) {
+                      return '更新周期不能超过 30 天';
+                    }
+                    return null;
+                  },
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('保存')),
+      ],
     );
   }
 }

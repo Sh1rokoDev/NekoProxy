@@ -10,14 +10,16 @@ import 'app_shell.dart';
 import 'theme.dart';
 
 class NekoProxyApp extends StatelessWidget {
-  const NekoProxyApp({super.key, required this.controller});
+  const NekoProxyApp({super.key, required this.controller, this.onExit});
 
   final AppController controller;
+  final Future<void> Function()? onExit;
 
   @override
   Widget build(BuildContext context) {
     return AppScope(
       controller: controller,
+      onExit: onExit,
       child: ValueListenableBuilder<int>(
         valueListenable: controller.appearanceTick,
         builder: (context, _, _) {

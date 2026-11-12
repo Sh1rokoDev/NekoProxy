@@ -37,6 +37,7 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
+!include "FileFunc.nsh"
 
 !define MUI_ABORTWARNING
 !define MUI_ICON "${ROOT}\assets\icons\app_icon.ico"
@@ -64,9 +65,23 @@ Function .onInit
   ; 保留系统级卸载登记，安装文件只释放到 $INSTDIR。
   SetShellVarContext all
 
-  ; 卸载或升级前先确认没有正在运行的实例。
+  ; 应用内更新先启动安装器，再正常退出并恢复系统代理。
+  ${GetParameters} $1
+  ClearErrors
+  ${GetOptions} $1 "/WAITFORNEKO" $2
+  StrCpy $3 0
+  ${IfNot} ${Errors}
+    StrCpy $3 30
+  ${EndIf}
+
+  check_running:
   ExecWait 'cmd /c tasklist /FI "IMAGENAME eq ${APP_EXE}" /FO CSV /NH | findstr /I /C:"${APP_EXE}" >nul' $0
   ${If} $0 == "0"
+    ${If} $3 > 0
+      IntOp $3 $3 - 1
+      Sleep 1000
+      Goto check_running
+    ${EndIf}
     MessageBox MB_OK|MB_ICONSTOP "NekoProxy 正在运行。请先从托盘退出程序，再重新运行安装程序。"
     Abort
   ${EndIf}

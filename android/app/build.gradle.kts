@@ -78,11 +78,22 @@ android {
         }
     }
 
+    val releaseKeystore = providers.environmentVariable("NEKO_ANDROID_KEYSTORE").orNull
+    if (releaseKeystore != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(releaseKeystore)
+                storePassword = providers.environmentVariable("NEKO_ANDROID_STORE_PASSWORD").get()
+                keyAlias = providers.environmentVariable("NEKO_ANDROID_KEY_ALIAS").get()
+                keyPassword = providers.environmentVariable("NEKO_ANDROID_KEY_PASSWORD").get()
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // Keep local release-mode builds usable without release credentials.
+            signingConfig = signingConfigs.getByName(if (releaseKeystore == null) "debug" else "release")
         }
     }
 

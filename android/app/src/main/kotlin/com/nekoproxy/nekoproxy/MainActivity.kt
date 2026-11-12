@@ -36,6 +36,7 @@ class MainActivity : FlutterActivity() {
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
             handleCall(call, result)
         }
+        AppUpdateInstaller.register(this, flutterEngine.dartExecutor.binaryMessenger)
     }
 
     private fun handleCall(call: MethodCall, result: MethodChannel.Result) {

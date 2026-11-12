@@ -259,7 +259,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
         home: const _SplashScreen(),
       );
     }
-    return NekoProxyApp(controller: _controller);
+    return NekoProxyApp(controller: _controller, onExit: _exitApplication);
   }
 }
 

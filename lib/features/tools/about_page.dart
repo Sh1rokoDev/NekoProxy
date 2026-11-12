@@ -1,17 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+import '../../app/app_scope.dart';
 import '../../app/widgets.dart';
+import 'app_update_card.dart';
 
 const _injectedVersion = String.fromEnvironment('NEKO_VERSION');
 
-class AboutPage extends StatelessWidget {
+class AboutPage extends StatefulWidget {
   const AboutPage({super.key});
+
+  @override
+  State<AboutPage> createState() => _AboutPageState();
+}
+
+class _AboutPageState extends State<AboutPage> {
+  late final _package = _injectedVersion.isEmpty
+      ? PackageInfo.fromPlatform()
+      : null;
 
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<PackageInfo>(
-      future: _injectedVersion.isEmpty ? PackageInfo.fromPlatform() : null,
+      future: _package,
       builder: (context, snapshot) {
         final package = snapshot.data;
         final version = _injectedVersion.isNotEmpty
@@ -19,12 +30,20 @@ class AboutPage extends StatelessWidget {
             : package == null
             ? null
             : '${package.version} (${package.buildNumber})';
-        return _buildPage(context, version);
+        return _buildPage(
+          context,
+          version,
+          _injectedVersion.isNotEmpty ? _injectedVersion : package?.version,
+        );
       },
     );
   }
 
-  Widget _buildPage(BuildContext context, String? version) {
+  Widget _buildPage(
+    BuildContext context,
+    String? version,
+    String? updateVersion,
+  ) {
     final theme = Theme.of(context);
     return Scaffold(
       appBar: AppBar(title: const Text('关于 NekoProxy')),
@@ -56,6 +75,12 @@ class AboutPage extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 24),
+                if (updateVersion != null &&
+                    context.getInheritedWidgetOfExactType<AppScope>() !=
+                        null) ...[
+                  AppUpdateCard(currentVersion: updateVersion),
+                  const SizedBox(height: 14),
+                ],
                 const SectionCard(
                   title: '技术组件',
                   icon: Icons.memory_rounded,

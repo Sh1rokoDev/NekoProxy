@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+
+jobs:
+  build:
+    if: ${{ !github.event.deleted }}
+    strategy:
+      matrix:
+        platform: [windows, android]
+    name: Build ${{ matrix.platform }}
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          . ./scripts/version.ps1
+          $version = Get-NekoVersionInfo -Root $env:GITHUB_WORKSPACE
+          if ($env:GITHUB_REF_NAME -cne "v$($version.BaseVersion)") {
+            throw "Release tag must match pubspec.yaml: v$($version.BaseVersion)."
+          }
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: runtime/go.sum
+
+      - name: Set up Flutter
+        shell: pwsh
+        run: |
+          $sdk = Join-Path $env:RUNNER_TEMP 'flutter'
+          git clone --quiet --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git $sdk
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter checkout failed.' }
+          # Flutter plugins use symlinks even when preparing an Android build on Windows.
+          $developerMode = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'
+          New-Item -Path $developerMode -Force | Out-Null
+          New-ItemProperty -Path $developerMode -Name AllowDevelopmentWithoutDevLicense -Value 1 -PropertyType DWord -Force | Out-Null
+          Join-Path $sdk 'bin' | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Set up NSIS
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: choco install nsis --yes --no-progress
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android build tools
+        if: matrix.platform == 'android'
+        shell: pwsh
+        run: |
+          $sdkManager = Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat'
+          & $sdkManager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
+          if ($LASTEXITCODE -ne 0) { throw 'Android SDK setup failed.' }
+          $mobileVersion = 'v0.0.0-20261011034528-197770444867'
+          go install "golang.org/x/mobile/cmd/gomobile@$mobileVersion"
+          if ($LASTEXITCODE -ne 0) { throw 'gomobile setup failed.' }
+          go install "golang.org/x/mobile/cmd/gobind@$mobileVersion"
+          if ($LASTEXITCODE -ne 0) { throw 'gobind setup failed.' }
+
+      - name: Package Windows
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: ./scripts/package-windows.ps1
+
+      - name: Package and verify signed Android APK
+        if: matrix.platform == 'android'
+        shell: pwsh
+        env:
+          NEKO_ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          NEKO_ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          NEKO_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          NEKO_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          foreach ($name in 'NEKO_ANDROID_KEYSTORE_BASE64', 'NEKO_ANDROID_STORE_PASSWORD', 'NEKO_ANDROID_KEY_ALIAS', 'NEKO_ANDROID_KEY_PASSWORD') {
+            if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
+              throw "Missing Android release signing secret: $($name.Substring(5))."
+            }
+          }
+
+          $env:NEKO_ANDROID_KEYSTORE = Join-Path $env:RUNNER_TEMP 'nekoproxy-release.jks'
+          $cert = Join-Path $env:RUNNER_TEMP 'nekoproxy-release.der'
+          try {
+            [IO.File]::WriteAllBytes($env:NEKO_ANDROID_KEYSTORE, [Convert]::FromBase64String($env:NEKO_ANDROID_KEYSTORE_BASE64))
+            Remove-Item Env:NEKO_ANDROID_KEYSTORE_BASE64
+            ./scripts/package-android.ps1
+
+            $apks = @(Get-ChildItem -Path 'dist/*-android-arm64.apk' -File)
+            if ($apks.Count -ne 1) { throw 'Expected exactly one Android APK.' }
+            $keytool = Join-Path $env:JAVA_HOME 'bin/keytool.exe'
+            & $keytool -exportcert -keystore $env:NEKO_ANDROID_KEYSTORE -alias $env:NEKO_ANDROID_KEY_ALIAS -storepass:env NEKO_ANDROID_STORE_PASSWORD -file $cert
+            if ($LASTEXITCODE -ne 0) { throw 'Could not export the release certificate.' }
+            $apksigner = Join-Path $env:ANDROID_HOME 'build-tools/36.0.0/apksigner.bat'
+            $verification = & $apksigner verify --print-certs $apks[0].FullName
+            if ($LASTEXITCODE -ne 0) { throw 'APK signature verification failed.' }
+            $signers = @($verification | Select-String '^Signer #[0-9]+ certificate SHA-256 digest: ([0-9a-f]{64})$')
+            if ($signers.Count -ne 1 -or $signers[0].Matches[0].Groups[1].Value -ne (Get-FileHash -LiteralPath $cert -Algorithm SHA256).Hash) {
+              throw 'APK is not signed with the configured release certificate.'
+            }
+          } finally {
+            foreach ($path in $env:NEKO_ANDROID_KEYSTORE, $cert) {
+              if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force }
+            }
+          }
+
+      - name: Record bundled rule versions
+        shell: pwsh
+        run: Copy-Item -LiteralPath assets/rules/manifest.json -Destination dist/rules-manifest.json
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ matrix.platform }}
+          path: |
+            dist/NekoProxy-*.apk
+            dist/NekoProxy-*.zip
+            dist/NekoProxy-*-setup.exe
+            dist/NekoProxy-*.sha256
+            dist/rules-manifest.json
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          path: release
+
+      - name: Publish Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          shopt -s nullglob
+          apk=(release/android/NekoProxy-*-android-arm64.apk)
+          zip=(release/windows/NekoProxy-*-windows-x64.zip)
+          setup=(release/windows/NekoProxy-*-windows-x64-setup.exe)
+          if (( ${#apk[@]} != 1 || ${#zip[@]} != 1 || ${#setup[@]} != 1 )); then
+            echo 'Expected one APK, one Windows ZIP and one Windows installer.' >&2
+            exit 1
+          fi
+
+          assets=()
+          for file in "${apk[0]}" "${zip[0]}" "${setup[0]}"; do
+            (cd "$(dirname "$file")" && sha256sum --check "$(basename "$file").sha256")
+            assets+=("$file" "$file.sha256")
+          done
+
+          {
+            printf '## 内置规则集\n\n'
+            for platform in windows android; do
+              manifest="release/$platform/rules-manifest.json"
+              geosite=$(jq -er '.releases.geosite.tag | select(type == "string" and length > 0)' "$manifest")
+              geoip=$(jq -er '.releases.geoip.tag | select(type == "string" and length > 0)' "$manifest")
+              printf -- '- %s: GeoSite `%s`, GeoIP `%s`\n' "$platform" "$geosite" "$geoip"
+            done
+          } > release-notes.md
+
+          gh release create "$RELEASE_TAG" --verify-tag --title "NekoProxy $RELEASE_TAG" --notes-file release-notes.md "${assets[@]}"

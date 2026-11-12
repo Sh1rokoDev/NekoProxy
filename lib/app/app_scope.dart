@@ -3,8 +3,17 @@ import 'package:flutter/widgets.dart';
 import '../state/app_controller.dart';
 
 class AppScope extends InheritedNotifier<AppController> {
-  const AppScope({super.key, required AppController controller, required super.child})
-      : super(notifier: controller);
+  const AppScope({
+    super.key,
+    required AppController controller,
+    this.onExit,
+    required super.child,
+  }) : super(notifier: controller);
+
+  final Future<void> Function()? onExit;
+
+  static Future<void> Function()? exitCallback(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<AppScope>()?.onExit;
 
   static AppController of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<AppScope>();

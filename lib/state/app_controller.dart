@@ -14,6 +14,7 @@ import '../domain/models.dart';
 import '../domain/profile_parser.dart';
 import '../runtime/android_runtime.dart';
 import '../runtime/runtime_client.dart';
+import '../services/app_update_service.dart';
 import '../services/backup_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/rule_set_manager.dart';
@@ -176,7 +177,7 @@ class AppController extends ChangeNotifier {
     snapshot = loaded.snapshot;
     ruleSets = RuleSetManager(
       paths: paths,
-      clientFactory: _createRuleSetHttpClient,
+      clientFactory: _createManagedHttpClient,
       // Expert mode can save a copy of the generated paths in its JSON.
       isSnapshotReferenced: (directory) =>
           snapshot.customConfig.contains(directory) ||
@@ -292,7 +293,10 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  HttpClient _createRuleSetHttpClient() {
+  AppUpdateService createUpdateService() =>
+      AppUpdateService(() => IOClient(_createManagedHttpClient()));
+
+  HttpClient _createManagedHttpClient() {
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
     if (running) {

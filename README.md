@@ -75,7 +75,7 @@ go install "golang.org/x/mobile/cmd/gobind@$mobileVersion"
 
 - 打包脚本会自动同步规则集，构建完成的安装包及对应的 SHA-256 校验文件统一输出至 `dist/` 目录。
 - 构建正式发布版本时，请确保工作区处于干净状态（无未提交更改）。
-- Android 构建脚本默认使用调试签名（Debug Key），在公开分发前请配置你自己的正式签名。
+- 本地 Android 构建默认使用调试签名。正式 APK 由 GitHub Actions 签名并随 Windows 安装版和便携版发布，见[发布工作流](.github/workflows/release.yml)。
 
 ## 反馈与贡献
 

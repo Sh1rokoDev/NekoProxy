@@ -353,9 +353,8 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                       1 +
                       (growth * lift + pull.abs() * 0.5) / math.max(span, 1);
                   final crossScale = 1 + 0.045 * lift;
-                  final extent =
-                      (pitch + (navigation ? 4 : 0) + growth * lift) *
-                      (1 + stretch);
+                  // At rest the end segments share the same inset on both axes.
+                  final extent = (pitch + growth * lift) * (1 + stretch);
                   final thickness = math.max(
                     0.0,
                     (cross - 2 * _inset + growth * lift) * (1 - 0.75 * stretch),
@@ -378,11 +377,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                       transformHitTests: false,
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          color: navigation
-                              ? scheme.surfaceContainerHigh
-                              : scheme.surfaceContainerHighest.withValues(
-                                  alpha: 0.55,
-                                ),
+                          color: scheme.surfaceContainerHigh,
                           borderRadius: _pill,
                           border: navigation
                               ? null

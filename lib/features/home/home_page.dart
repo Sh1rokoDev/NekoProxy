@@ -347,7 +347,7 @@ class _NetworkTakeoverActions extends StatelessWidget {
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 3),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
+        color: scheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: scheme.outlineVariant.withValues(alpha: 0.35),

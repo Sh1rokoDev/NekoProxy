@@ -170,6 +170,25 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('手机连接卡的状态、时长和模式在节点名称上方连续排列', (tester) async {
+    final controller = _Controller(android: true)
+      ..settings.splitMode = SplitMode.rule;
+    await showHome(tester, controller, const Size(390, 900));
+    final card = find.byKey(const ValueKey(HomeCard.connection));
+    Finder label(String text) =>
+        find.descendant(of: card, matching: find.text(text));
+
+    final status = tester.getCenter(label('未连接'));
+    var previous = status;
+    for (final text in ['—', '手动选择', '规则分流']) {
+      final center = tester.getCenter(label(text).first);
+      expect(center.dy, closeTo(status.dy, 1));
+      expect(center.dx, greaterThan(previous.dx));
+      previous = center;
+    }
+    expect(status.dy, lessThan(tester.getTopLeft(label('还没有节点')).dy));
+  });
+
   for (final width in [320.0, 360.0, 390.0, 428.0]) {
     testWidgets('$width 宽手机首页先显示服务状态，标题操作保持在右上角', (tester) async {
       final controller = _Controller(android: true);
@@ -324,10 +343,8 @@ void main() {
     expect(find.byTooltip('断开连接'), findsOneWidget);
     expect(tester.getRect(refresh).right, lessThan(tester.getRect(power).left));
     expect(tester.getCenter(refresh).dy, tester.getCenter(power).dy);
-    expect(
-      tester.getTopLeft(mode).dy,
-      greaterThan(tester.getRect(address).bottom),
-    );
+    expect(tester.getCenter(mode).dy, closeTo(tester.getCenter(status).dy, 3));
+    expect(tester.getRect(mode).bottom, lessThan(tester.getTopLeft(title).dy));
     final exit = tester.getTopLeft(inCard('出口 IP'));
     final provider = tester.getTopLeft(inCard('运营商'));
     final latency = tester.getTopLeft(inCard('节点延迟'));
@@ -609,6 +626,15 @@ void main() {
       );
     await showHome(tester, controller, const Size(320, 1000));
     expect(find.text('32ms'), findsOneWidget);
+    final connection = find.byKey(const ValueKey(HomeCard.connection));
+    final selectionMode = find.descendant(
+      of: connection,
+      matching: find.text('手动选择'),
+    );
+    expect(
+      tester.getBottomLeft(selectionMode).dy,
+      lessThan(tester.getTopLeft(find.text(node.name)).dy),
+    );
     final subscriptionCard = find.byKey(const ValueKey(HomeCard.subscription));
     Finder inCard(String text) =>
         find.descendant(of: subscriptionCard, matching: find.text(text));

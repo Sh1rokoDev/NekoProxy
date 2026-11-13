@@ -50,7 +50,7 @@
 
 ### 环境准备
 
-构建前请确保系统已安装 **Flutter 3.47.x**、**Go 1.26+** 与 **PowerShell 7**。在仓库根目录下拉取 Flutter 依赖；直接在 `runtime/` 下开发或运行 Go 测试时，还需初始化仓库固定的 `sing-box` 子模块：
+构建前请确保系统已安装 **Flutter 3.50.0**、**Go 1.26+** 与 **PowerShell 7**。在仓库根目录下拉取 Flutter 依赖；直接在 `runtime/` 下开发或运行 Go 测试时，还需初始化仓库固定的 `sing-box` 子模块：
 
 ```powershell
 git submodule update --init --recursive

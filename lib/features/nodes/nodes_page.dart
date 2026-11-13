@@ -37,6 +37,7 @@ class _NodesPageState extends State<NodesPage> {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
+    final dockInset = MediaQuery.paddingOf(context).bottom;
     final hasNodes = controller.snapshot.allNodes.isNotEmpty;
     final automatic = controller.settings.selectionMode == SelectionMode.auto;
     final highlightedNode = !automatic
@@ -143,16 +144,19 @@ class _NodesPageState extends State<NodesPage> {
         if (groups.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: EmptyState(
-                    icon: _query.isEmpty
-                        ? Icons.hub_outlined
-                        : Icons.search_off_rounded,
-                    title: _query.isEmpty ? '暂无节点' : '没有匹配的节点',
+            child: Padding(
+              padding: EdgeInsets.only(bottom: dockInset),
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: SizedBox(
+                    width: double.infinity,
+                    child: EmptyState(
+                      icon: _query.isEmpty
+                          ? Icons.hub_outlined
+                          : Icons.search_off_rounded,
+                      title: _query.isEmpty ? '暂无节点' : '没有匹配的节点',
+                    ),
                   ),
                 ),
               ),
@@ -160,7 +164,7 @@ class _NodesPageState extends State<NodesPage> {
           )
         else
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 168),
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 168 + dockInset),
             sliver: SliverLayoutBuilder(
               builder: (context, constraints) {
                 final gutter =

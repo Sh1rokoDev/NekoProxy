@@ -46,7 +46,7 @@ jobs:
         shell: pwsh
         run: |
           $sdk = Join-Path $env:RUNNER_TEMP 'flutter'
-          git clone --quiet --depth 1 --branch 3.47.9 https://github.com/flutter/flutter.git $sdk
+          git clone --quiet --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git $sdk
           if ($LASTEXITCODE -ne 0) { throw 'Flutter checkout failed.' }
           # Flutter plugins use symlinks even when preparing an Android build on Windows.
           $developerMode = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock'

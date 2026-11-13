@@ -47,13 +47,6 @@ class _AppShellState extends State<AppShell> {
   String? _lastLoadWarning;
   String? _lastRuleSetError;
 
-  List<Widget> get _pages => [
-    const HomePage(),
-    const NodesPage(),
-    const RulesPage(),
-    const ToolsPage(),
-  ];
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -137,6 +130,14 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Keep the tab widget stable as LayoutBuilder receives new window sizes.
+    final tabContent = Expanded(
+      key: const ValueKey('tab-content'),
+      child: _AnimatedTabStack(
+        index: _index,
+        children: const [HomePage(), NodesPage(), RulesPage(), ToolsPage()],
+      ),
+    );
     return ShellScope(
       switchTab: _selectTab,
       openConnections: _openConnections,
@@ -163,6 +164,7 @@ class _AppShellState extends State<AppShell> {
             ),
             child: Scaffold(
               backgroundColor: Colors.transparent,
+              extendBody: !desktop,
               body: SafeArea(
                 top: false,
                 bottom: desktop,
@@ -174,10 +176,7 @@ class _AppShellState extends State<AppShell> {
                         padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
                         child: Align(child: navigation),
                       ),
-                    Expanded(
-                      key: const ValueKey('tab-content'),
-                      child: _AnimatedTabStack(index: _index, children: _pages),
-                    ),
+                    tabContent,
                   ],
                 ),
               ),

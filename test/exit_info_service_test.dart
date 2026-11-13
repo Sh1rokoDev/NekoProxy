@@ -44,6 +44,7 @@ void main() {
     expect(await pending, {
       '142.251.150.119': (
         region: 'United States · Mountain View',
+        countryCode: 'US',
         provider: 'Google LLC · AS15169',
       ),
     });

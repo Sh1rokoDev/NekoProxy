@@ -7,6 +7,16 @@ import '../../app/widgets.dart';
 import '../../services/connectivity_service.dart';
 import '../../state/app_controller.dart';
 
+const _serviceRowPadding = EdgeInsets.fromLTRB(14, 9, 6, 9);
+const _serviceLogoSize = 40.0;
+const _serviceLogoGap = 12.0;
+const _serviceRefreshSize = 40.0;
+const _statusGap = 8.0;
+const _statusHorizontalPadding = 7.0;
+const _regionGap = 6.0;
+const _serviceNameFlex = 2;
+const _regionFlex = 3;
+
 class ServiceStatusCard extends StatelessWidget {
   const ServiceStatusCard({super.key, required this.controller});
 
@@ -63,9 +73,8 @@ class ServiceStatusCard extends StatelessWidget {
         : const Color(0xFF11633F);
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () => Navigator.of(
-        context,
-      ).push(MaterialPageRoute(builder: (_) => const ServiceStatusPage())),
+      onTap: () => Navigator.of(context)
+          .push(MaterialPageRoute(builder: (_) => const ServiceStatusPage())),
       child: SectionCard(
         title: '服务状态',
         icon: Icons.shield_outlined,
@@ -236,33 +245,45 @@ class ServiceStatusPage extends StatelessWidget {
                   const SizedBox(height: 16),
                   SectionCard(
                     padding: const EdgeInsets.symmetric(vertical: 6),
-                    child: Column(
-                      children: [
-                        for (
-                          var index = 0;
-                          index < connectivityServices.length;
-                          index++
-                        ) ...[
-                          _ServiceRow(
-                            service: connectivityServices[index],
-                            result: controller
-                                .serviceChecks[connectivityServices[index].id],
-                            busy: busy,
-                            onCheck: () => controller.checkServiceStatus(
-                              id: connectivityServices[index].id,
-                            ),
-                          ),
-                          if (index != connectivityServices.length - 1)
-                            Divider(
-                              height: 1,
-                              indent: 66,
-                              endIndent: 16,
-                              color: scheme.outlineVariant.withValues(
-                                alpha: 0.4,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        final abbreviateRegions = _shouldAbbreviateRegions(
+                          context,
+                          constraints.maxWidth,
+                          results,
+                        );
+                        return Column(
+                          children: [
+                            for (
+                              var index = 0;
+                              index < connectivityServices.length;
+                              index++
+                            ) ...[
+                              _ServiceRow(
+                                service: connectivityServices[index],
+                                result:
+                                    controller
+                                        .serviceChecks[connectivityServices[index]
+                                        .id],
+                                busy: busy,
+                                abbreviateRegion: abbreviateRegions,
+                                onCheck: () => controller.checkServiceStatus(
+                                  id: connectivityServices[index].id,
+                                ),
                               ),
-                            ),
-                        ],
-                      ],
+                              if (index != connectivityServices.length - 1)
+                                Divider(
+                                  height: 1,
+                                  indent: 66,
+                                  endIndent: 16,
+                                  color: scheme.outlineVariant.withValues(
+                                    alpha: 0.4,
+                                  ),
+                                ),
+                            ],
+                          ],
+                        );
+                      },
                     ),
                   ),
                 ],
@@ -351,12 +372,14 @@ class _ServiceRow extends StatelessWidget {
     required this.service,
     required this.result,
     required this.busy,
+    required this.abbreviateRegion,
     required this.onCheck,
   });
 
   final ConnectivityService service;
   final ServiceCheckResult? result;
   final bool busy;
+  final bool abbreviateRegion;
   final VoidCallback onCheck;
 
   @override
@@ -371,11 +394,11 @@ class _ServiceRow extends StatelessWidget {
       color: scheme.onSurfaceVariant,
     );
     return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 9, 6, 9),
+      padding: _serviceRowPadding,
       child: Row(
         children: [
-          ServiceLogo(service: service, size: 40),
-          const SizedBox(width: 12),
+          ServiceLogo(service: service, size: _serviceLogoSize),
+          const SizedBox(width: _serviceLogoGap),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -383,7 +406,7 @@ class _ServiceRow extends StatelessWidget {
                 Row(
                   children: [
                     Flexible(
-                      flex: 2,
+                      flex: _serviceNameFlex,
                       child: Text(
                         service.name,
                         maxLines: 1,
@@ -393,15 +416,18 @@ class _ServiceRow extends StatelessWidget {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: _statusGap),
                     _StatusPill(result: result),
                     if (hasAddress)
                       Flexible(
-                        flex: 3,
+                        flex: _regionFlex,
                         child: Padding(
-                          padding: const EdgeInsets.only(left: 6),
+                          padding: const EdgeInsets.only(left: _regionGap),
                           child: RegionBadge(
                             region: addressInfo?.region ?? '未提供',
+                            shortLabel: abbreviateRegion
+                                ? addressInfo?.countryCode ?? '未提供'
+                                : null,
                           ),
                         ),
                       ),
@@ -428,24 +454,27 @@ class _ServiceRow extends StatelessWidget {
               ],
             ),
           ),
-          IconButton(
-            tooltip: '重新检测',
-            visualDensity: VisualDensity.compact,
-            onPressed: busy || checking ? null : onCheck,
-            icon: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: checking
-                  ? const SizedBox(
-                      key: ValueKey('row-checking'),
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(
-                      Icons.refresh_rounded,
-                      key: ValueKey('row-refresh'),
-                      size: 19,
-                    ),
+          SizedBox.square(
+            dimension: _serviceRefreshSize,
+            child: IconButton(
+              tooltip: '重新检测',
+              visualDensity: VisualDensity.compact,
+              onPressed: busy || checking ? null : onCheck,
+              icon: AnimatedSwitcher(
+                duration: const Duration(milliseconds: 180),
+                child: checking
+                    ? const SizedBox(
+                        key: ValueKey('row-checking'),
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(
+                        Icons.refresh_rounded,
+                        key: ValueKey('row-refresh'),
+                        size: 19,
+                      ),
+              ),
             ),
           ),
         ],
@@ -493,7 +522,10 @@ class _StatusPill extends StatelessWidget {
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+        padding: const EdgeInsets.symmetric(
+          horizontal: _statusHorizontalPadding,
+          vertical: 2,
+        ),
         decoration: BoxDecoration(
           color: background,
           borderRadius: BorderRadius.circular(7),
@@ -543,10 +575,8 @@ class _Badge extends StatelessWidget {
           child: Text(
             text,
             key: ValueKey(text),
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: foreground,
-              fontWeight: FontWeight.w600,
-            ),
+            style: Theme.of(context).textTheme.labelSmall
+                ?.copyWith(color: foreground, fontWeight: FontWeight.w600),
           ),
         ),
       ),
@@ -570,9 +600,8 @@ class ServiceLogo extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(size * 0.3),
         border: Border.all(
-          color: Theme.of(
-            context,
-          ).colorScheme.outlineVariant.withValues(alpha: 0.35),
+          color: Theme.of(context).colorScheme.outlineVariant
+              .withValues(alpha: 0.35),
         ),
       ),
       child: SvgPicture.asset(
@@ -609,20 +638,59 @@ String _statusText(ServiceCheckResult? result) {
 String _metaText(ConnectivityService service, ServiceCheckResult? result) {
   if (result == null || result.isPending) return '—';
   if (result.isChecking) return '正在连接 ${service.host}';
-  final time = _formatTime(result.checkedAt);
   if (result.isFailed) {
-    return [result.error ?? '检测失败', time].join(' · ');
+    return result.error ?? '检测失败';
   }
   final address = result.address ?? service.host;
   final latency = result.latencyMs == null
       ? '—'
       : formatLatency(result.latencyMs);
-  return [address, latency, time].join(' · ');
+  return '$address · $latency';
 }
 
-String _formatTime(DateTime? time) {
-  if (time == null) return '—';
-  final local = time.toLocal();
-  String two(int value) => value.toString().padLeft(2, '0');
-  return '${two(local.hour)}:${two(local.minute)}';
+bool _shouldAbbreviateRegions(
+  BuildContext context,
+  double rowWidth,
+  List<ServiceCheckResult?> results,
+) {
+  final labelStyle = Theme.of(context).textTheme.labelSmall
+      ?.copyWith(fontWeight: FontWeight.w700);
+  double textWidth(String text, TextStyle? style) {
+    final painter = TextPainter(
+      text: TextSpan(text: text, style: style),
+      textDirection: Directionality.of(context),
+      textScaler: MediaQuery.textScalerOf(context),
+      maxLines: 1,
+    )..layout();
+    final width = painter.width;
+    painter.dispose();
+    return width;
+  }
+
+  final statusWidth =
+      textWidth(
+        '可用',
+        Theme.of(context).textTheme.labelSmall
+            ?.copyWith(fontWeight: FontWeight.w600),
+      ) +
+      _statusHorizontalPadding * 2;
+  final contentWidth =
+      rowWidth -
+      _serviceRowPadding.horizontal -
+      _serviceLogoSize -
+      _serviceLogoGap -
+      _serviceRefreshSize;
+  // Match the loose flex allocation in each service heading, including gaps.
+  final regionWidth =
+      (contentWidth - _statusGap - statusWidth) *
+          _regionFlex /
+          (_serviceNameFlex + _regionFlex) -
+      _regionGap;
+  return results.any(
+    (result) =>
+        result?.isAvailable == true &&
+        result?.address != null &&
+        textWidth(result?.addressInfo?.region ?? '未提供', labelStyle) + 10 >
+            regionWidth,
+  );
 }

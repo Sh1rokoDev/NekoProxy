@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-typedef IpAttribution = ({String region, String provider});
+typedef IpAttribution = ({String region, String countryCode, String provider});
 
 class ExitInfo {
   const ExitInfo({
@@ -10,10 +10,12 @@ class ExitInfo {
     required this.region,
     required this.provider,
     required this.checkedAt,
+    this.countryCode = '',
   });
 
   final String ip;
   final String region;
+  final String countryCode;
   final String provider;
   final DateTime checkedAt;
 
@@ -36,6 +38,7 @@ class ExitInfo {
     return ExitInfo(
       ip: ip,
       region: fields['loc'] ?? '',
+      countryCode: (fields['loc'] ?? '').toUpperCase(),
       provider: '',
       checkedAt: DateTime.now(),
     );
@@ -116,6 +119,7 @@ ExitInfo parseExitInfo(Uri source, String body) {
   final asnLabel = asn != null && asn > 0 && !geoJsUnknownAsn ? 'AS$asn' : '';
   return ExitInfo(
     ip: ip,
+    countryCode: country.toUpperCase(),
     region: [
       text(location['country']).isNotEmpty &&
               !RegExp(r'^[a-zA-Z]{2}$').hasMatch(text(location['country']))
@@ -154,7 +158,11 @@ Future<Map<String, IpAttribution>> fetchServiceAddressInfo(
         final uri = Uri.https('api.ipquery.io', '/${entry.key}');
         final info = await _fetchIpInfo(client, uri);
         if (!expired && InternetAddress.tryParse(info.ip) == entry.value) {
-          results[entry.key] = (region: info.region, provider: info.provider);
+          results[entry.key] = (
+            region: info.region,
+            countryCode: info.countryCode,
+            provider: info.provider,
+          );
         }
       } on Exception {
         // Attribution is optional; continue looking up the other addresses.
@@ -163,9 +171,8 @@ Future<Map<String, IpAttribution>> fetchServiceAddressInfo(
   }
 
   try {
-    await Future.wait(
-      List.generate(3, (_) => lookup()),
-    ).timeout(const Duration(seconds: 4), onTimeout: () => const <void>[]);
+    await Future.wait(List.generate(3, (_) => lookup()))
+        .timeout(const Duration(seconds: 4), onTimeout: () => const <void>[]);
     return results;
   } finally {
     expired = true;

@@ -72,14 +72,23 @@ class ConnectionCard extends StatelessWidget {
           compact: !wide,
         );
         final meta = <Widget>[
-          _ConnectionStatus(
-            text: statusText,
-            color: statusColor,
-            active: running,
+          Wrap(
+            spacing: 7,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              _ConnectionStatus(
+                text: statusText,
+                color: statusColor,
+                active: running,
+              ),
+              _MetaSeparator(color: scheme.outlineVariant),
+              _ConnectionUptime(value: running ? _uptime(controller) : '—'),
+              _MetaSeparator(color: scheme.outlineVariant),
+              ...modes,
+            ],
           ),
-          _MetaSeparator(color: scheme.outlineVariant),
-          _ConnectionUptime(value: running ? _uptime(controller) : '—'),
-          if (wide) ...[_MetaSeparator(color: scheme.outlineVariant), ...modes],
+          const SizedBox(height: 12),
         ];
 
         return AnimatedContainer(
@@ -109,19 +118,15 @@ class ConnectionCard extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Let the compact header use the space above the buttons.
+                if (!wide) ...meta,
                 Row(
                   children: [
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Wrap(
-                            spacing: 7,
-                            runSpacing: 4,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: meta,
-                          ),
-                          const SizedBox(height: 12),
+                          if (wide) ...meta,
                           _NodeDetails(
                             node: node,
                             hasNodes: hasNodes,
@@ -138,15 +143,6 @@ class ConnectionCard extends StatelessWidget {
                     power,
                   ],
                 ),
-                if (!wide) ...[
-                  const SizedBox(height: 12),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: modes,
-                  ),
-                ],
                 const SizedBox(height: 14),
                 _ConnectionInfoStrip(
                   controller: controller,

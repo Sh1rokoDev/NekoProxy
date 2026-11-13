@@ -12,10 +12,12 @@ class RegionBadge extends StatelessWidget {
     super.key,
     required this.region,
     this.semanticPrefix = '地区',
+    this.shortLabel,
   });
 
   final String region;
   final String semanticPrefix;
+  final String? shortLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +33,9 @@ class RegionBadge extends StatelessWidget {
           borderRadius: BorderRadius.circular(4),
         ),
         child: Text(
-          region,
+          shortLabel ?? region,
+          maxLines: shortLabel == null ? null : 1,
+          overflow: shortLabel == null ? null : TextOverflow.ellipsis,
           style: theme.textTheme.labelSmall?.copyWith(
             color: primary,
             fontWeight: FontWeight.w700,
@@ -70,6 +74,8 @@ class PageFrame extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // Scaffold reports the floating dock's height without shrinking the viewport.
+    final dockInset = MediaQuery.paddingOf(context).bottom;
     final body = CustomScrollView(
       slivers: [
         PinnedHeaderSliver(
@@ -102,7 +108,9 @@ class PageFrame extends StatelessWidget {
                 24,
                 0,
                 24,
-                bottomPadding ?? (floatingActionButton == null ? 32 : 104),
+                dockInset +
+                    (bottomPadding ??
+                        (floatingActionButton == null ? 32 : 104)),
               ),
               child: _constrainWidth(content),
             ),
@@ -113,7 +121,11 @@ class PageFrame extends StatelessWidget {
     return Stack(
       children: [
         Positioned.fill(child: body),
-        Positioned(right: 24, bottom: 24, child: floatingActionButton!),
+        Positioned(
+          right: 24,
+          bottom: 24 + dockInset,
+          child: floatingActionButton!,
+        ),
       ],
     );
   }
@@ -183,6 +195,9 @@ class HeaderIconButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final fill =
+        backgroundColor ??
+        (active ? scheme.primaryContainer : scheme.surfaceContainerHighest);
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
@@ -191,11 +206,8 @@ class HeaderIconButton extends StatelessWidget {
         fixedSize: const Size(42, 42),
         padding: EdgeInsets.zero,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        backgroundColor:
-            backgroundColor ??
-            (active
-                ? scheme.primaryContainer
-                : scheme.surfaceContainerHighest.withValues(alpha: 0.7)),
+        backgroundColor: fill,
+        disabledBackgroundColor: scheme.surfaceContainerHigh,
         foregroundColor:
             foregroundColor ??
             (active ? scheme.onPrimaryContainer : scheme.onSurfaceVariant),
@@ -709,9 +721,8 @@ Future<void> copyText(
 }) async {
   await Clipboard.setData(ClipboardData(text: text));
   if (context.mounted) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 }
 

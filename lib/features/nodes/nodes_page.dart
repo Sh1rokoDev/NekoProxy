@@ -487,13 +487,9 @@ class _NodesPageState extends State<NodesPage> {
     AppController controller,
     Subscription subscription,
   ) async {
-    final includeController = TextEditingController(
-      text: subscription.includeFilter,
-    );
-    final excludeController = TextEditingController(
-      text: subscription.excludeFilter,
-    );
-    final result = await showDialog<String>(
+    var include = subscription.includeFilter;
+    var exclude = subscription.excludeFilter;
+    final result = await showDialog<({String include, String exclude})>(
       context: context,
       builder: (context) => AlertDialog(
         scrollable: true,
@@ -504,8 +500,9 @@ class _NodesPageState extends State<NodesPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              TextField(
-                controller: includeController,
+              TextFormField(
+                initialValue: subscription.includeFilter,
+                onChanged: (value) => include = value,
                 autofocus: true,
                 minLines: 1,
                 maxLines: 3,
@@ -516,8 +513,9 @@ class _NodesPageState extends State<NodesPage> {
                 ),
               ),
               const SizedBox(height: 14),
-              TextField(
-                controller: excludeController,
+              TextFormField(
+                initialValue: subscription.excludeFilter,
+                onChanged: (value) => exclude = value,
                 minLines: 1,
                 maxLines: 3,
                 decoration: const InputDecoration(
@@ -533,7 +531,8 @@ class _NodesPageState extends State<NodesPage> {
           if (subscription.includeFilter.isNotEmpty ||
               subscription.excludeFilter.isNotEmpty)
             TextButton(
-              onPressed: () => Navigator.pop(context, 'clear'),
+              onPressed: () =>
+                  Navigator.pop(context, (include: '', exclude: '')),
               child: const Text('清除过滤'),
             ),
           TextButton(
@@ -541,25 +540,20 @@ class _NodesPageState extends State<NodesPage> {
             child: const Text('取消'),
           ),
           FilledButton(
-            onPressed: () => Navigator.pop(context, 'save'),
+            onPressed: () => Navigator.pop(context, (
+              include: include.trim(),
+              exclude: exclude.trim(),
+            )),
             child: const Text('保存'),
           ),
         ],
       ),
     );
-    if (result == null) {
-      includeController.dispose();
-      excludeController.dispose();
-      return;
-    }
-    final include = includeController.text.trim();
-    final exclude = excludeController.text.trim();
-    includeController.dispose();
-    excludeController.dispose();
+    if (result == null) return;
     await controller.updateGroupPreferences(
       subscription.id,
-      includeFilter: result == 'clear' ? '' : include,
-      excludeFilter: result == 'clear' ? '' : exclude,
+      includeFilter: result.include,
+      excludeFilter: result.exclude,
     );
   }
 
@@ -792,9 +786,9 @@ class _NodesPageState extends State<NodesPage> {
     BuildContext context,
     AppController controller,
   ) async {
-    final nameController = TextEditingController();
     final formKey = GlobalKey<FormState>();
-    final created = await showDialog<bool>(
+    var name = '';
+    final result = await showDialog<String>(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('新建节点分组'),
@@ -803,7 +797,7 @@ class _NodesPageState extends State<NodesPage> {
           child: Form(
             key: formKey,
             child: TextFormField(
-              controller: nameController,
+              onChanged: (value) => name = value,
               autofocus: true,
               decoration: const InputDecoration(
                 labelText: '分组名称',
@@ -816,27 +810,22 @@ class _NodesPageState extends State<NodesPage> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context),
             child: const Text('取消'),
           ),
           FilledButton(
             onPressed: () {
               if (formKey.currentState?.validate() != true) return;
-              Navigator.pop(context, true);
+              Navigator.pop(context, name.trim());
             },
             child: const Text('创建'),
           ),
         ],
       ),
     );
-    if (created != true) {
-      nameController.dispose();
-      return;
-    }
-    final name = nameController.text.trim();
-    nameController.dispose();
+    if (result == null) return;
     try {
-      final group = await controller.createGroup(name);
+      final group = await controller.createGroup(result);
       if (!mounted) return;
       setState(() => _collapsed.remove(group.id));
       ScaffoldMessenger.of(this.context)
@@ -854,68 +843,56 @@ class _NodesPageState extends State<NodesPage> {
     AppController controller, {
     required Subscription group,
   }) async {
-    final linkController = TextEditingController();
+    var link = '';
     final formKey = GlobalKey<FormState>();
-    final added = await showDialog<bool>(
+    final result = await showDialog<String>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          scrollable: true,
-          title: const Text('添加节点'),
-          content: SizedBox(
-            width: 560,
-            child: Form(
-              key: formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextFormField(
-                    controller: linkController,
-                    minLines: 4,
-                    maxLines: 8,
-                    autofocus: true,
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
-                    ),
-                    decoration: const InputDecoration(
-                      hintText: 'ss://…  或  vless://…',
-                    ),
-                    validator: (value) =>
-                        (value == null || value.trim().isEmpty)
-                        ? '请输入节点链接'
-                        : null,
+      builder: (context) => AlertDialog(
+        scrollable: true,
+        title: const Text('添加节点'),
+        content: SizedBox(
+          width: 560,
+          child: Form(
+            key: formKey,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                TextFormField(
+                  onChanged: (value) => link = value,
+                  minLines: 4,
+                  maxLines: 8,
+                  autofocus: true,
+                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                  decoration: const InputDecoration(
+                    hintText: 'ss://…  或  vless://…',
                   ),
-                ],
-              ),
+                  validator: (value) => (value == null || value.trim().isEmpty)
+                      ? '请输入节点链接'
+                      : null,
+                ),
+              ],
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () {
-                if (formKey.currentState?.validate() != true) return;
-                Navigator.pop(context, true);
-              },
-              child: const Text('添加'),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(context, link.trim());
+            },
+            child: const Text('添加'),
+          ),
+        ],
       ),
     );
-    if (added != true || !context.mounted) {
-      linkController.dispose();
-      return;
-    }
+    if (result == null || !context.mounted) return;
     try {
-      final node = await controller.addNodeLink(
-        linkController.text.trim(),
-        groupId: group.id,
-      );
+      final node = await controller.addNodeLink(result, groupId: group.id);
       if (!mounted) return;
       setState(() => _collapsed.remove(node.subscriptionId));
       ScaffoldMessenger.of(this.context)
@@ -925,8 +902,6 @@ class _NodesPageState extends State<NodesPage> {
         ScaffoldMessenger.of(context)
             .showSnackBar(SnackBar(content: Text('$e')));
       }
-    } finally {
-      linkController.dispose();
     }
   }
 
@@ -1054,91 +1029,90 @@ class _NodesPageState extends State<NodesPage> {
     AppController controller,
     ProxyNode node,
   ) async {
-    final nameController = TextEditingController(text: node.name);
-    final jsonController = TextEditingController(
-      text: const JsonEncoder.withIndent('  ').convert(node.outbound),
-    );
+    final initialJson = const JsonEncoder.withIndent('  ')
+        .convert(node.outbound);
+    var name = node.name;
+    var outboundJson = initialJson;
+    String? error;
     final result =
         await showDialog<({String name, Map<String, dynamic> outbound})>(
           context: context,
-          builder: (context) {
-            String? error;
-            return StatefulBuilder(
-              builder: (context, setState) => AlertDialog(
-                scrollable: true,
-                title: Text('编辑 ${node.name}'),
-                content: SizedBox(
-                  width: 640,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      TextField(
-                        controller: nameController,
-                        decoration: const InputDecoration(labelText: '名称'),
+          builder: (context) => StatefulBuilder(
+            builder: (context, setState) => AlertDialog(
+              scrollable: true,
+              title: Text('编辑 ${node.name}'),
+              content: SizedBox(
+                width: 640,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextFormField(
+                      initialValue: node.name,
+                      onChanged: (value) => name = value,
+                      decoration: const InputDecoration(labelText: '名称'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      initialValue: initialJson,
+                      onChanged: (value) => outboundJson = value,
+                      minLines: 10,
+                      maxLines: 16,
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                        height: 1.4,
                       ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: jsonController,
-                        minLines: 10,
-                        maxLines: 16,
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                          height: 1.4,
-                        ),
-                        decoration: const InputDecoration(
-                          labelText: 'sing-box 出站 JSON',
+                      decoration: const InputDecoration(
+                        labelText: 'sing-box 出站 JSON',
+                      ),
+                    ),
+                    if (error != null) ...[
+                      const SizedBox(height: 8),
+                      Text(
+                        error!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
                         ),
                       ),
-                      if (error != null) ...[
-                        const SizedBox(height: 8),
-                        Text(
-                          error!,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ],
                     ],
-                  ),
+                  ],
                 ),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text('取消'),
-                  ),
-                  FilledButton(
-                    onPressed: () {
-                      try {
-                        final decoded = jsonDecode(jsonController.text);
-                        if (decoded is! Map) {
-                          throw const FormatException('出站必须是 JSON 对象');
-                        }
-                        final map = Map<String, dynamic>.from(decoded);
-                        if (map['type'] is! String) {
-                          throw const FormatException('出站缺少 type');
-                        }
-                        if (nameController.text.trim().isEmpty) {
-                          throw const FormatException('名称不能为空');
-                        }
-                        Navigator.pop(context, (
-                          name: nameController.text.trim(),
-                          outbound: map,
-                        ));
-                      } catch (e) {
-                        setState(() => error = 'JSON 无效：$e');
-                      }
-                    },
-                    child: const Text('保存'),
-                  ),
-                ],
               ),
-            );
-          },
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    try {
+                      final decoded = jsonDecode(outboundJson);
+                      if (decoded is! Map) {
+                        throw const FormatException('出站必须是 JSON 对象');
+                      }
+                      final map = Map<String, dynamic>.from(decoded);
+                      if (map['type'] is! String) {
+                        throw const FormatException('出站缺少 type');
+                      }
+                      final trimmedName = name.trim();
+                      if (trimmedName.isEmpty) {
+                        throw const FormatException('名称不能为空');
+                      }
+                      Navigator.pop(context, (
+                        name: trimmedName,
+                        outbound: map,
+                      ));
+                    } catch (e) {
+                      setState(() => error = 'JSON 无效：$e');
+                    }
+                  },
+                  child: const Text('保存'),
+                ),
+              ],
+            ),
+          ),
         );
-    nameController.dispose();
-    jsonController.dispose();
     if (result != null) {
       await controller.updateNode(
         node.id,

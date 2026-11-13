@@ -10,11 +10,18 @@ class ConnectionListCard extends StatelessWidget {
   const ConnectionListCard({
     super.key,
     required this.connection,
+    required this.onClose,
     this.nodeName,
+    this.ruleName,
   });
 
   final RuntimeConnection connection;
+  final VoidCallback onClose;
   final String? nodeName;
+  final String? ruleName;
+
+  static const _actionSize = 42.0;
+  static const _actionGap = 4.0;
 
   static const _blockedOutboundTags = {
     'block',
@@ -29,20 +36,35 @@ class ConnectionListCard extends StatelessWidget {
     final scheme = theme.colorScheme;
     final network = connection.network.trim().toUpperCase();
     final outbound = connection.outbound.trim();
-    final rule = connection.rule.trim();
+    final name = ruleName?.trim();
+    final rule = name != null && name.isNotEmpty
+        ? name
+        : connection.ruleIndex == null && connection.rule.trim().isEmpty
+        ? '未匹配'
+        : null;
     final requestAddress = connection.domain.isNotEmpty
         ? connection.domain
         : connection.destination;
     final resolvedNodeName = nodeName?.trim();
+    final actionStyle = IconButton.styleFrom(
+      fixedSize: const Size.square(_actionSize),
+      minimumSize: const Size.square(_actionSize),
+      padding: EdgeInsets.zero,
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      backgroundColor: scheme.surfaceContainerHighest,
+      foregroundColor: scheme.onSurfaceVariant,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      iconSize: 19,
+    );
 
     return LayoutBuilder(
       builder: (context, constraints) {
         final rightWidth = math.min(
-          205.0,
-          math.max(88.0, constraints.maxWidth * 0.34),
+          164.0,
+          math.max(120.0, constraints.maxWidth * 0.28),
         );
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
             color: scheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(16),
@@ -51,7 +73,7 @@ class ConnectionListCard extends StatelessWidget {
             ),
           ),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
                 child: Column(
@@ -69,14 +91,13 @@ class ConnectionListCard extends StatelessWidget {
                             label: _outboundLabel(outbound, resolvedNodeName),
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        Flexible(
-                          flex: 3,
-                          child: _ConnectionBadge(
-                            label: rule.isEmpty ? '未匹配' : rule,
-                            muted: true,
+                        if (rule != null) ...[
+                          const SizedBox(width: 6),
+                          Flexible(
+                            flex: 3,
+                            child: _ConnectionBadge(label: rule, muted: true),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                     const SizedBox(height: 4),
@@ -90,7 +111,7 @@ class ConnectionListCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${connection.source} → ${connection.destination}',
+                      _nodeLabel,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.bodySmall?.copyWith(
@@ -100,34 +121,51 @@ class ConnectionListCard extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 8),
               SizedBox(
                 width: rightWidth,
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    _ConnectionStat(
-                      icon: Icons.arrow_upward_rounded,
-                      value: formatBytes(connection.uploaded),
-                      color: scheme.primary,
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        Flexible(
+                          child: _ConnectionStat(
+                            icon: Icons.arrow_upward_rounded,
+                            value: formatBytes(connection.uploaded),
+                            color: scheme.primary,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Flexible(
+                          child: _ConnectionStat(
+                            icon: Icons.arrow_downward_rounded,
+                            value: formatBytes(connection.downloaded),
+                            color: scheme.tertiary,
+                          ),
+                        ),
+                      ],
                     ),
-                    _ConnectionStat(
-                      icon: Icons.arrow_downward_rounded,
-                      value: formatBytes(connection.downloaded),
-                      color: scheme.tertiary,
-                    ),
-                    const SizedBox(height: 1),
-                    Text(
-                      resolvedNodeName == null || resolvedNodeName.isEmpty
-                          ? '—'
-                          : resolvedNodeName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      textAlign: TextAlign.end,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w500,
-                      ),
+                    const SizedBox(height: 4),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        IconButton(
+                          tooltip: '查看详情',
+                          onPressed: () => _showDetails(context, rule),
+                          style: actionStyle,
+                          icon: const Icon(Icons.info_outline_rounded),
+                        ),
+                        const SizedBox(width: _actionGap),
+                        IconButton(
+                          tooltip: '关闭连接',
+                          onPressed: onClose,
+                          style: actionStyle,
+                          icon: const Icon(Icons.link_off_rounded),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -136,6 +174,46 @@ class ConnectionListCard extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  String get _nodeLabel {
+    final name = nodeName?.trim();
+    return name == null || name.isEmpty ? 'DIRECT' : name;
+  }
+
+  void _showDetails(BuildContext context, String? rule) {
+    final fields = <String, String>{
+      if (connection.domain.isNotEmpty) '域名': connection.domain,
+      '来源地址': connection.source,
+      '目标地址': connection.destination,
+      '协议': connection.network.toUpperCase(),
+      '节点': _nodeLabel,
+      '规则': ?rule,
+      '上传量': formatBytes(connection.uploaded),
+      '下载量': formatBytes(connection.downloaded),
+      if (connection.createdAt > 0)
+        '建立时间': formatDate(
+          DateTime.fromMillisecondsSinceEpoch(connection.createdAt),
+        ),
+    };
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('连接详情'),
+        scrollable: true,
+        content: SelectableText(
+          fields.entries
+              .map((field) => '${field.key}：${field.value}')
+              .join('\n'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('完成'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -194,7 +272,7 @@ class _ConnectionStat extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, size: 13, color: color),
         const SizedBox(width: 3),

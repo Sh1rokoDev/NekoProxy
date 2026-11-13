@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -52,6 +53,7 @@ class AppController extends ChangeNotifier {
 
   final ValueNotifier<int> liveTick = ValueNotifier<int>(0);
   final ValueNotifier<int> appearanceTick = ValueNotifier<int>(0);
+  final _connections = ValueNotifier<List<RuntimeConnection>>(const []);
 
   AppSnapshot snapshot = AppSnapshot.empty();
   bool initialized = false;
@@ -81,9 +83,34 @@ class AppController extends ChangeNotifier {
   String? loadWarning;
   RuntimeStatus? runtimeStatus;
   RuntimeTraffic traffic = const RuntimeTraffic();
-  List<RuntimeConnection> connections = const [];
-  Map<String, int> latencies = const {};
-  Map<String, String> latencyErrors = const {};
+  List<RuntimeConnection> get connections => _connections.value;
+  set connections(List<RuntimeConnection> value) {
+    _connections.value = value.isEmpty ? const [] : value;
+  }
+
+  ValueListenable<List<RuntimeConnection>> get connectionUpdates =>
+      _connections;
+
+  final _latencies = <String, int>{};
+  late final _latencyView = UnmodifiableMapView(_latencies);
+  Map<String, int> get latencies => _latencyView;
+  set latencies(Map<String, int> values) {
+    final copy = Map.of(values);
+    _latencies
+      ..clear()
+      ..addAll(copy);
+  }
+
+  final _latencyErrors = <String, String>{};
+  late final _latencyErrorView = UnmodifiableMapView(_latencyErrors);
+  Map<String, String> get latencyErrors => _latencyErrorView;
+  set latencyErrors(Map<String, String> values) {
+    final copy = Map.of(values);
+    _latencyErrors
+      ..clear()
+      ..addAll(copy);
+  }
+
   // Replacing a node's configuration also invalidates its offline result.
   final Map<ProxyNode, int> _offlineTestDelays = {};
   String? _offlineTestUrl;
@@ -109,6 +136,7 @@ class AppController extends ChangeNotifier {
   final List<HomeActivity> homeActivities = [];
   CompiledConfig? _compiled;
   Map<String, String> _connectionNodeNames = const {};
+  Map<String, String> _nodeIdsByTag = const {};
   String? _effectiveTag;
   bool _unexpectedStop = false;
   bool _temporaryTestRuntime = false;
@@ -116,6 +144,11 @@ class AppController extends ChangeNotifier {
 
   Timer? _pollTimer;
   Timer? _uiTimer;
+  Timer? _connectionsTimer;
+  int _connectionViewers = 0;
+  Future<void>? _connectionRefresh;
+  Object? _connectionRefreshToken;
+  final _closingConnectionIds = <String>{};
   Timer? _subscriptionTimer;
   Timer? _ruleSetTimer;
   Timer? _ruleSetStartupTimer;
@@ -135,7 +168,7 @@ class AppController extends ChangeNotifier {
   bool get isAndroid => Platform.isAndroid;
   bool get supportsSystemProxy => Platform.isWindows;
   bool get supportsTun => Platform.isWindows || Platform.isAndroid;
-  bool get hasNodes => snapshot.allNodes.isNotEmpty;
+  bool get hasNodes => snapshot.hasNodes;
 
   AppSettings get settings => snapshot.settings;
 
@@ -293,13 +326,8 @@ class AppController extends ChangeNotifier {
   }
 
   ProxyNode? get reportedNode {
-    final tag = _effectiveTag;
-    final compiled = _compiled;
-    if (!running || tag == null || compiled == null) return null;
-    for (final entry in compiled.nodeTags.entries) {
-      if (entry.value == tag) return snapshot.nodeById(entry.key);
-    }
-    return null;
+    if (!running) return null;
+    return snapshot.nodeById(_nodeIdsByTag[_effectiveTag]);
   }
 
   String? nodeNameForOutboundTag(String outboundTag) {
@@ -307,8 +335,11 @@ class AppController extends ChangeNotifier {
     return _connectionNodeNames[outboundTag];
   }
 
+  String? nameForMatchedRule(int? index) => _compiled?.routeRuleNames[index];
+
   ProxyNode? get offlineRecommendedNode {
-    if (snapshot.useCustomConfig ||
+    if (_offlineTestDelays.isEmpty ||
+        snapshot.useCustomConfig ||
         _offlineTestUrl != settings.advancedOrDefault.urlTestUrl) {
       return null;
     }
@@ -540,14 +571,23 @@ class AppController extends ChangeNotifier {
       final compiled = compile();
       await ruleSets.prepareLocalFiles(compiled.localRuleSetPaths);
       _compiled = compiled;
+      final namesById = <String, String>{};
+      for (final subscription in snapshot.subscriptions) {
+        for (final node in subscription.nodes) {
+          namesById.putIfAbsent(node.id, () => node.name);
+        }
+      }
       final connectionNodeNames = <String, String>{};
+      final nodeIdsByTag = <String, String>{};
       for (final entry in compiled.nodeTags.entries) {
-        final node = snapshot.nodeById(entry.key);
-        if (node != null && node.name.isNotEmpty) {
-          connectionNodeNames[entry.value] = node.name;
+        nodeIdsByTag[entry.value] = entry.key;
+        final name = namesById[entry.key];
+        if (name != null && name.isNotEmpty) {
+          connectionNodeNames[entry.value] = name;
         }
       }
       _connectionNodeNames = connectionNodeNames;
+      _nodeIdsByTag = nodeIdsByTag;
       _effectiveTag = null;
       if (compiled.warnings.isNotEmpty) notice = compiled.warnings.first;
       final tunMode =
@@ -618,6 +658,7 @@ class AppController extends ChangeNotifier {
     _uiTimer?.cancel();
     _uiTimer = null;
     _pollGeneration++;
+    _invalidateConnectionRefresh();
     _cancelNodeTests();
     _polling = false;
     _pollFailures = 0;
@@ -626,6 +667,7 @@ class AppController extends ChangeNotifier {
       notifyListeners();
       await runtime.shutdown();
       _connectionNodeNames = const {};
+      _nodeIdsByTag = const {};
       return;
     }
     busy = true;
@@ -643,6 +685,7 @@ class AppController extends ChangeNotifier {
       connections = const [];
       samples = const [];
       _connectionNodeNames = const {};
+      _nodeIdsByTag = const {};
       _effectiveTag = null;
       connectedAt = null;
       if (wasRunning) _recordHomeActivity('代理已断开');
@@ -991,9 +1034,8 @@ class AppController extends ChangeNotifier {
     }
     final run = ++_testGeneration;
     final compiledTags = (testCompiled ?? _compiled)?.nodeTags;
-    final queue = {
-      for (final node in candidates) node.id: node,
-    }.values.toList();
+    final queue = {for (final node in candidates) node.id: node}.values
+        .toList();
     final roundDelays = <String, int?>{};
     final offlineDelays = <ProxyNode, int>{};
     final url = settings.advancedOrDefault.urlTestUrl;
@@ -1089,18 +1131,13 @@ class AppController extends ChangeNotifier {
   ) {
     final delay = result?.delay;
     if (delay != null) {
-      latencies = Map.unmodifiable({...latencies, nodeId: delay});
-      if (latencyErrors.containsKey(nodeId)) {
-        latencyErrors = Map.unmodifiable(Map.of(latencyErrors)..remove(nodeId));
-      }
+      _latencies[nodeId] = delay;
+      _latencyErrors.remove(nodeId);
     } else {
       final message = result?.error?.trim();
-      latencyErrors = Map.unmodifiable({
-        ...latencyErrors,
-        nodeId:
-            requestError ??
-            (message == null || message.isEmpty ? '测速失败' : message),
-      });
+      _latencyErrors[nodeId] =
+          requestError ??
+          (message == null || message.isEmpty ? '测速失败' : message);
     }
   }
 
@@ -1202,21 +1239,94 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> refreshConnections() async {
-    if (!running) return;
+  /// Starts automatic refresh for a mounted connections view.
+  VoidCallback watchConnections() {
+    if (_connectionViewers++ == 0) _startConnectionPolling();
+    var watching = true;
+    return () {
+      if (!watching) return;
+      watching = false;
+      if (--_connectionViewers == 0) _invalidateConnectionRefresh();
+    };
+  }
+
+  void _startConnectionPolling() {
+    if (!running || _disposed || _connectionViewers == 0) return;
+    _connectionsTimer?.cancel();
+    unawaited(refreshConnections());
+    _connectionsTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+      unawaited(refreshConnections());
+    });
+  }
+
+  void _invalidateConnectionRefresh({bool stopTimer = true}) {
+    if (stopTimer) {
+      _connectionsTimer?.cancel();
+      _connectionsTimer = null;
+    }
+    _connectionRefreshToken = null;
+    _connectionRefresh = null;
+  }
+
+  Future<void> refreshConnections() {
+    if (!running || _disposed) return Future<void>.value();
+    final pending = _connectionRefresh;
+    if (pending != null) return pending;
+    final generation = _pollGeneration;
+    final token = _connectionRefreshToken = Object();
+    return _connectionRefresh = _fetchConnections(generation, token);
+  }
+
+  Future<void> _fetchConnections(int generation, Object token) async {
+    try {
+      final nextConnections = await Future.sync(runtime.fetchConnections);
+      if (!running ||
+          generation != _pollGeneration ||
+          !identical(token, _connectionRefreshToken)) {
+        return;
+      }
+      connections = nextConnections;
+    } catch (error) {
+      // Keep the last snapshot on transient failures; the next poll retries.
+      assert(() {
+        debugPrint('Connection refresh failed: ${error.runtimeType}');
+        return true;
+      }());
+    } finally {
+      if (identical(token, _connectionRefreshToken)) {
+        _invalidateConnectionRefresh(stopTimer: false);
+      }
+    }
+  }
+
+  Future<void> closeConnection(String id) async {
+    if (!running || _disposed || !_closingConnectionIds.add(id)) return;
     final generation = _pollGeneration;
     try {
-      final nextConnections = await runtime.fetchConnections();
-      if (!running || generation != _pollGeneration) return;
-      connections = nextConnections;
-      liveTick.value++;
-    } catch (_) {}
+      await runtime.closeConnection(id);
+      if (!running || _disposed || generation != _pollGeneration) return;
+      _invalidateConnectionRefresh(stopTimer: false);
+      connections = [
+        for (final item in connections)
+          if (item.id != id) item,
+      ];
+      await refreshConnections();
+    } catch (error) {
+      if (running && !_disposed && generation == _pollGeneration) {
+        _setError('关闭连接失败：${_friendlyError(error)}');
+      }
+    } finally {
+      _closingConnectionIds.remove(id);
+    }
   }
 
   Future<void> clearConnections() async {
     if (!running) return;
+    final generation = _pollGeneration;
     try {
       await runtime.clearConnections();
+      if (!running || generation != _pollGeneration) return;
+      _invalidateConnectionRefresh(stopTimer: false);
       await refreshConnections();
     } catch (e) {
       _setError(_friendlyError(e));
@@ -1235,7 +1345,7 @@ class AppController extends ChangeNotifier {
     final response = await _fetchSubscription(uri, userAgent: userAgent);
     final headers = SubscriptionHeaders.from(response.headers);
     final id = _newId();
-    final parsed = ProfileParser.parse(
+    final parsed = await ProfileParser.parseInBackground(
       response.body,
       headers: headers,
       subscriptionId: id,
@@ -1268,18 +1378,26 @@ class AppController extends ChangeNotifier {
   }
 
   Future<int> importNodesToGroup(String groupId, String content) async {
-    Subscription? group;
-    for (final item in snapshot.subscriptions) {
-      if (item.id == groupId) {
-        group = item;
-        break;
+    final source = snapshot;
+    Subscription localGroup() {
+      final group = source.subscriptions
+          .where((item) => item.id == groupId)
+          .firstOrNull;
+      if (_disposed || !identical(snapshot, source) || group == null) {
+        throw const ParseException('分组不存在');
       }
+      if (group.isUrlSubscription) {
+        throw const ParseException('订阅分组的节点由订阅维护，请更新订阅或添加到节点集合');
+      }
+      return group;
     }
-    if (group == null) throw const ParseException('分组不存在');
-    if (group.isUrlSubscription) {
-      throw const ParseException('订阅分组的节点由订阅维护，请更新订阅或添加到节点集合');
-    }
-    final parsed = ProfileParser.parse(content, subscriptionId: group.id);
+
+    localGroup();
+    final parsed = await ProfileParser.parseInBackground(
+      content,
+      subscriptionId: groupId,
+    );
+    final group = localGroup();
     final known = {
       for (final node in group.nodes)
         ProfileParser.fingerprintOf(node.outbound),
@@ -1419,7 +1537,8 @@ class AppController extends ChangeNotifier {
     _subscriptionUpdates[id] = request;
 
     Subscription? currentSubscription() {
-      if (!identical(snapshot, sourceSnapshot) ||
+      if (_disposed ||
+          !identical(snapshot, sourceSnapshot) ||
           !identical(_subscriptionUpdates[id], request)) {
         return null;
       }
@@ -1433,8 +1552,9 @@ class AppController extends ChangeNotifier {
         Uri.parse(existing.url),
         userAgent: existing.userAgent,
       );
+      if (currentSubscription() == null) return;
       final headers = SubscriptionHeaders.from(response.headers);
-      final parsed = ProfileParser.parse(
+      final parsed = await ProfileParser.parseInBackground(
         response.body,
         headers: headers,
         subscriptionId: existing.id,
@@ -1702,6 +1822,7 @@ class AppController extends ChangeNotifier {
     _pollTimer?.cancel();
     _uiTimer?.cancel();
     _pollGeneration++;
+    _invalidateConnectionRefresh();
     _cancelNodeTests();
     systemProxy?.disable();
     await runtime.shutdown();
@@ -1710,12 +1831,20 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _subscriptionTimer?.cancel();
+    _pollTimer?.cancel();
+    _uiTimer?.cancel();
+    _pollGeneration++;
+    _invalidateConnectionRefresh();
     for (final client in _serviceAddressClients) {
       client.close(force: true);
     }
     _cancelExitInfo();
     _cancelNodeTests();
     _stopRuleSetUpdates();
+    liveTick.dispose();
+    appearanceTick.dispose();
+    _connections.dispose();
     super.dispose();
   }
 
@@ -1746,6 +1875,7 @@ class AppController extends ChangeNotifier {
     _pollFailures = 0;
     _polling = false;
     final generation = ++_pollGeneration;
+    _startConnectionPolling();
     _pollTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       unawaited(_poll(generation));
     });
@@ -1763,11 +1893,6 @@ class AppController extends ChangeNotifier {
       if (_pollTicks % 2 == 0) {
         await _refreshStatus();
         if (!running || generation != _pollGeneration) return;
-      }
-      if (_pollTicks % 5 == 0) {
-        final nextConnections = await runtime.fetchConnections();
-        if (!running || generation != _pollGeneration) return;
-        connections = nextConnections;
       }
       _pollTicks++;
     } catch (e) {
@@ -1847,6 +1972,7 @@ class AppController extends ChangeNotifier {
     _uiTimer?.cancel();
     _uiTimer = null;
     _pollGeneration++;
+    _invalidateConnectionRefresh();
     _polling = false;
     connectedAt = null;
     error = message;

@@ -91,10 +91,7 @@ class _AdvancedPageState extends State<AdvancedPage> {
                       TextField(
                         controller: _tolerance,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: '容差（毫秒）',
-                          helperText: '只有新节点快于当前节点超过该值时才切换',
-                        ),
+                        decoration: const InputDecoration(labelText: '容差（毫秒）'),
                       ),
                       SwitchRow(
                         title: '切换时中断现有入站连接',

@@ -66,18 +66,12 @@ class _DnsPageState extends State<DnsPage> {
                     children: [
                       TextField(
                         controller: _direct,
-                        decoration: const InputDecoration(
-                          labelText: '直连 DNS',
-                          helperText: '国内域名与节点服务器使用，直连访问',
-                        ),
+                        decoration: const InputDecoration(labelText: '直连 DNS'),
                       ),
                       const SizedBox(height: 14),
                       TextField(
                         controller: _proxy,
-                        decoration: const InputDecoration(
-                          labelText: '代理 DNS',
-                          helperText: '境外域名使用，经代理访问，建议使用境外 DoH',
-                        ),
+                        decoration: const InputDecoration(labelText: '代理 DNS'),
                       ),
                       const SizedBox(height: 14),
                       DropdownButtonFormField<String>(

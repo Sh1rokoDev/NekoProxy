@@ -109,18 +109,6 @@ class RuleSetsPage extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
-                SectionCard(
-                  title: '说明',
-                  icon: Icons.info_outline_rounded,
-                  child: Text(
-                    '内置规则随安装包提供，离线时也能使用。自动更新默认每 24 小时检查一次，'
-                    '可在「工具」页关闭或重新开启。',
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
               ],
             ),
           ),

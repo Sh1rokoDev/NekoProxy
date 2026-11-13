@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+typedef IpAttribution = ({String region, String provider});
+
 class ExitInfo {
   const ExitInfo({
     required this.ip,
@@ -64,11 +66,16 @@ ExitInfo parseExitInfo(Uri source, String body) {
     throw const FormatException('出口检测响应格式无效');
   }
   final ip = decoded['ip'];
-  final location = decoded['location'];
+  final nestedLocation = decoded['location'];
+  final location = source.host == 'api.ipquery.io'
+      ? nestedLocation is Map<String, dynamic>
+            ? nestedLocation
+            : const <String, dynamic>{}
+      : decoded;
   final country = switch (source.host) {
     'ipinfo.io' || 'api.country.is' => decoded['country'],
     'ident.me' => decoded['cc'],
-    'api.ipquery.io' => location is Map ? location['country_code'] : null,
+    'api.ipquery.io' => location['country_code'],
     _ => decoded['country_code'],
   };
   if (ip is! String ||
@@ -110,11 +117,11 @@ ExitInfo parseExitInfo(Uri source, String body) {
   return ExitInfo(
     ip: ip,
     region: [
-      text(decoded['country']).isNotEmpty &&
-              !RegExp(r'^[a-zA-Z]{2}$').hasMatch(text(decoded['country']))
-          ? text(decoded['country'])
+      text(location['country']).isNotEmpty &&
+              !RegExp(r'^[a-zA-Z]{2}$').hasMatch(text(location['country']))
+          ? text(location['country'])
           : country.toUpperCase(),
-      text(decoded['city']),
+      text(location['city']),
     ].where((part) => part.isNotEmpty).toSet().join(' · '),
     provider: [
       provider,
@@ -124,6 +131,80 @@ ExitInfo parseExitInfo(Uri source, String body) {
     ].where((part) => part.isNotEmpty).join(' · '),
     checkedAt: DateTime.now(),
   );
+}
+
+/// Looks up the displayed DNS addresses, with one request per IP per batch.
+/// Missing records are omitted and the client is closed at the shared deadline.
+Future<Map<String, IpAttribution>> fetchServiceAddressInfo(
+  HttpClient client,
+  Iterable<String> addresses,
+) async {
+  final pending = {
+    for (final address in addresses)
+      if (InternetAddress.tryParse(address) case final ip? when _isPublic(ip))
+        address: ip,
+  }.entries.iterator;
+  final results = <String, IpAttribution>{};
+  var expired = false;
+
+  Future<void> lookup() async {
+    while (!expired && pending.moveNext()) {
+      final entry = pending.current;
+      try {
+        final uri = Uri.https('api.ipquery.io', '/${entry.key}');
+        final info = await _fetchIpInfo(client, uri);
+        if (!expired && InternetAddress.tryParse(info.ip) == entry.value) {
+          results[entry.key] = (region: info.region, provider: info.provider);
+        }
+      } on Exception {
+        // Attribution is optional; continue looking up the other addresses.
+      }
+    }
+  }
+
+  try {
+    await Future.wait(
+      List.generate(3, (_) => lookup()),
+    ).timeout(const Duration(seconds: 4), onTimeout: () => const <void>[]);
+    return results;
+  } finally {
+    expired = true;
+    client.close(force: true);
+  }
+}
+
+bool _isPublic(InternetAddress ip) {
+  final bytes = ip.rawAddress;
+  if (ip.type == InternetAddressType.IPv6) {
+    return (bytes[0] & 0xe0) == 0x20;
+  }
+  return switch ((bytes[0], bytes[1])) {
+    (0 || 10 || 127, _) || (169, 254) || (192, 168) => false,
+    (100, >= 64 && <= 127) || (172, >= 16 && <= 31) => false,
+    (198, 18 || 19) => false,
+    (>= 224, _) => false,
+    _ => true,
+  };
+}
+
+Future<ExitInfo> _fetchIpInfo(HttpClient client, Uri uri) async {
+  final request = await client.getUrl(uri);
+  request.headers.set(
+    HttpHeaders.userAgentHeader,
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  );
+  final response = await request.close();
+  if (response.statusCode != HttpStatus.ok) {
+    throw HttpException('IP 查询返回 HTTP ${response.statusCode}');
+  }
+  final bytes = <int>[];
+  await for (final chunk in response) {
+    if (bytes.length + chunk.length > 4096) {
+      throw const FormatException('IP 查询响应过大');
+    }
+    bytes.addAll(chunk);
+  }
+  return parseExitInfo(uri, utf8.decode(bytes));
 }
 
 /// Owns and closes [client] after success, failure, or the shared deadline.
@@ -146,26 +227,6 @@ Future<ExitInfo> fetchExitInfo(HttpClient client) async {
     }
   }
 
-  Future<ExitInfo> probe(Uri uri) async {
-    final request = await client.getUrl(uri);
-    request.headers.set(
-      HttpHeaders.userAgentHeader,
-      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    );
-    final response = await request.close();
-    if (response.statusCode != HttpStatus.ok) {
-      throw HttpException('出口检测返回 HTTP ${response.statusCode}');
-    }
-    final bytes = <int>[];
-    await for (final chunk in response) {
-      if (bytes.length + chunk.length > 4096) {
-        throw const FormatException('出口检测响应过大');
-      }
-      bytes.addAll(chunk);
-    }
-    return parseExitInfo(uri, utf8.decode(bytes));
-  }
-
   void start() {
     if (result.isCompleted || active >= 3 || next >= exitInfoUrls.length) {
       return;
@@ -174,7 +235,7 @@ Future<ExitInfo> fetchExitInfo(HttpClient client) async {
     active++;
     unawaited(() async {
       try {
-        final answer = await probe(uri);
+        final answer = await _fetchIpInfo(client, uri);
         if (result.isCompleted) return;
         final provider = answer.provider;
         if (provider.isNotEmpty && !_asnOnly.hasMatch(provider)) {

@@ -9,6 +9,7 @@ import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/features/home/home_cards.dart';
 import 'package:nekoproxy/features/home/home_page.dart';
+import 'package:nekoproxy/features/status/service_status.dart';
 import 'package:nekoproxy/services/exit_info_service.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
@@ -53,15 +54,6 @@ void main() {
     expect(chart.up, [128]);
     expect(chart.down, [4096]);
     expect(find.byType(TrafficSparkline), findsOneWidget);
-    Rect cardBounds(HomeCard card) =>
-        tester.getRect(find.byKey(ValueKey(card)));
-    final modeBounds = cardBounds(HomeCard.splitMode);
-    final trafficBounds = cardBounds(HomeCard.traffic);
-    final subscriptionBounds = cardBounds(HomeCard.subscription);
-    expect(modeBounds.top, trafficBounds.top);
-    expect(modeBounds.left, greaterThan(trafficBounds.right));
-    expect(modeBounds.width, lessThan(trafficBounds.width));
-    expect(modeBounds.width, subscriptionBounds.width);
     expect(
       find.descendant(
         of: find.byKey(const ValueKey(HomeCard.connection)),
@@ -98,6 +90,62 @@ void main() {
     );
   });
 
+  testWidgets('首页连接卡独占首行，其余卡片等宽并补到较短的一列', (tester) async {
+    final controller = _Controller();
+    for (final layout in [
+      controller.settings.homeDesktop,
+      controller.settings.homeMobile,
+    ]) {
+      layout.hidden.add(HomeCard.services);
+      layout.order
+        ..remove(HomeCard.splitMode)
+        ..insert(2, HomeCard.splitMode);
+    }
+    await showHome(tester, controller, const Size(760, 1000));
+
+    Rect bounds(HomeCard card) => tester.getRect(find.byKey(ValueKey(card)));
+    final connection = bounds(HomeCard.connection);
+    final traffic = bounds(HomeCard.traffic);
+    final mode = bounds(HomeCard.splitMode);
+    final subscription = bounds(HomeCard.subscription);
+    final activity = bounds(HomeCard.activity);
+    expect(find.byKey(const ValueKey(HomeCard.services)), findsNothing);
+    expect(connection.left, traffic.left);
+    expect(connection.right, mode.right);
+    expect(connection.bottom, lessThan(mode.top));
+    expect(traffic.top, mode.top);
+    expect(traffic.right, lessThan(mode.left));
+    expect(subscription.left, mode.left);
+    expect(subscription.top, closeTo(mode.bottom + 16, 0.01));
+    expect(subscription.top, lessThan(traffic.bottom));
+    final shorter = traffic.bottom <= subscription.bottom
+        ? traffic
+        : subscription;
+    expect(activity.left, shorter.left);
+    expect(activity.top, closeTo(shorter.bottom + 16, 0.01));
+    for (final card in [traffic, subscription, activity]) {
+      expect(card.width, mode.width);
+    }
+    expect(tester.takeException(), isNull);
+
+    await tester.binding.setSurfaceSize(const Size(759, 1000));
+    await tester.pumpAndSettle();
+    var previous = bounds(HomeCard.connection);
+    for (final kind in [
+      HomeCard.traffic,
+      HomeCard.splitMode,
+      HomeCard.subscription,
+      HomeCard.activity,
+    ]) {
+      final card = bounds(kind);
+      expect(card.left, previous.left);
+      expect(card.width, previous.width);
+      expect(card.top, greaterThan(previous.bottom));
+      previous = card;
+    }
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('未连接卡片将状态与模式并入顶部信息行，出口提示保持单行且高度紧凑', (tester) async {
     final controller = _Controller();
     await showHome(tester, controller, const Size(1280, 1000));
@@ -111,6 +159,61 @@ void main() {
     );
     expect(find.byKey(const ValueKey('connection-info-strip')), findsOneWidget);
     expect(find.text('连接后检测出口信息'), findsOneWidget);
+    expect(find.byTooltip('刷新出口、运营商和节点延迟'), findsNothing);
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('connection-latency')),
+        matching: find.byType(Text),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final width in [320.0, 360.0, 390.0, 428.0]) {
+    testWidgets('$width 宽手机首页先显示服务状态，标题操作保持在右上角', (tester) async {
+      final controller = _Controller(android: true);
+      await showHome(tester, controller, Size(width, 900));
+
+      final services = tester.getRect(
+        find.byKey(const ValueKey(HomeCard.services)),
+      );
+      final activity = tester.getRect(
+        find.byKey(const ValueKey(HomeCard.activity)),
+      );
+      final title = tester.getRect(find.text('首页'));
+      final edit = tester.getRect(find.byTooltip('编辑首页'));
+
+      expect(services.top, lessThan(activity.top));
+      expect(edit.center.dy, closeTo(title.center.dy, 1));
+      expect(edit.left, greaterThan(title.right));
+      expect(edit.right, closeTo(width - 24, 1));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('实时通知更新流量，并保留其它首页卡片的组件实例', (tester) async {
+    final controller = _Controller();
+    await showHome(tester, controller, const Size(1280, 1000));
+    final subscription = tester.widget(find.byType(HomeSubscriptionCard));
+    final services = tester.widget(find.byType(ServiceStatusCard));
+    final activity = tester.widget(find.byType(HomeActivityCard));
+
+    controller.samples = [TrafficSample(DateTime.now(), 512, 2048)];
+    controller.liveTick.value++;
+    await tester.pump();
+
+    final chart = tester.widget<TrafficSparkline>(
+      find.byType(TrafficSparkline),
+    );
+    expect(chart.up, [512]);
+    expect(chart.down, [2048]);
+    expect(
+      tester.widget(find.byType(HomeSubscriptionCard)),
+      same(subscription),
+    );
+    expect(tester.widget(find.byType(ServiceStatusCard)), same(services));
+    expect(tester.widget(find.byType(HomeActivityCard)), same(activity));
     expect(tester.takeException(), isNull);
   });
 
@@ -122,7 +225,7 @@ void main() {
       outbound: {'server': 'example.net', 'server_port': 10011},
       subscriptionId: 'sub',
     );
-    final controller = _Controller()
+    final controller = _RefreshController()
       ..running = true
       ..connectedAt = DateTime.now().subtract(const Duration(minutes: 6))
       ..settings.selectionMode = SelectionMode.auto
@@ -142,6 +245,7 @@ void main() {
     Finder inCard(String text) =>
         find.descendant(of: connectionCard, matching: find.text(text));
     final power = find.byKey(const ValueKey('connection-power'));
+    final refresh = find.byTooltip('刷新出口、运营商和节点延迟');
     final title = inCard(node.name);
     final mode = inCard('自动选择');
     final status = inCard('已连接');
@@ -185,7 +289,20 @@ void main() {
     expect(inCard('sub.example.net'), findsOneWidget);
     expect(inCard('地区'), findsNothing);
     expect(inCard('断开连接'), findsOneWidget);
-    expect(tester.getTopLeft(title).dy, lessThan(tester.getRect(power).bottom));
+    expect(tester.getSize(power).height, greaterThan(40));
+    expect(tester.getRect(refresh).right, lessThan(tester.getRect(power).left));
+    expect(tester.getCenter(refresh).dy, tester.getCenter(power).dy);
+    expect(
+      tester.getCenter(power).dy,
+      closeTo(
+        (tester.getRect(status).top + tester.getRect(address).bottom) / 2,
+        3,
+      ),
+    );
+    expect(find.byTooltip('复制出口 IP'), findsNothing);
+    expect(find.byTooltip('刷新出口信息'), findsNothing);
+    await tester.tap(refresh);
+    expect(controller.refreshes, 1);
     expect(tester.getCenter(mode).dy, closeTo(tester.getCenter(status).dy, 3));
     final wideHeadingY = tester.getCenter(inCard('出口 IP')).dy;
     for (final title in ['运营商', '节点延迟', '来源']) {
@@ -205,6 +322,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 600));
     expect(inCard('断开连接'), findsNothing);
     expect(find.byTooltip('断开连接'), findsOneWidget);
+    expect(tester.getRect(refresh).right, lessThan(tester.getRect(power).left));
+    expect(tester.getCenter(refresh).dy, tester.getCenter(power).dy);
     expect(
       tester.getTopLeft(mode).dy,
       greaterThan(tester.getRect(address).bottom),
@@ -272,24 +391,102 @@ void main() {
     await showHome(tester, controller, const Size(1280, 1000));
     await tester.tap(find.byTooltip('编辑首页'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
-    final editor = find.ancestor(
-      of: find.text('编辑桌面首页'),
-      matching: find.byType(SectionCard),
-    );
-    final subscriptionRow = find
-        .ancestor(
-          of: find.descendant(of: editor, matching: find.text('订阅用量')),
-          matching: find.byType(Row),
-        )
-        .first;
-    await tester.tap(
-      find.descendant(of: subscriptionRow, matching: find.byType(Checkbox)),
-    );
-    await tester.tap(find.byTooltip('上移订阅用量'));
+    expect(find.byTooltip('移除连接与出口信息'), findsNothing);
+    expect(find.byType(LongPressDraggable<HomeCard>), findsNWidgets(5));
+    await tester.tap(find.byTooltip('移除订阅用量'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump(const Duration(milliseconds: 220));
     expect(find.byType(HomeSubscriptionCard), findsNothing);
+
+    final addCard = find.widgetWithText(TextButton, '添加卡片');
+    Rect bounds(HomeCard kind) => tester.getRect(find.byKey(ValueKey(kind)));
+    final left = bounds(HomeCard.splitMode).left;
+    final cardBounds = [
+      for (final kind in [
+        HomeCard.splitMode,
+        HomeCard.traffic,
+        HomeCard.services,
+        HomeCard.activity,
+      ])
+        bounds(kind),
+    ];
+    final leftBottom = cardBounds
+        .where((rect) => rect.left == left)
+        .map((rect) => rect.bottom)
+        .reduce((a, b) => a > b ? a : b);
+    final rightBottom = cardBounds
+        .where((rect) => rect.left != left)
+        .map((rect) => rect.bottom)
+        .reduce((a, b) => a > b ? a : b);
+    final addBounds = tester.getRect(addCard);
+    expect(addBounds.width, cardBounds.first.width);
+    expect(
+      addBounds.top,
+      (leftBottom <= rightBottom ? leftBottom : rightBottom) + 16,
+    );
+    expect(
+      addBounds.left,
+      leftBottom <= rightBottom ? left : bounds(HomeCard.traffic).left,
+    );
+    await tester.ensureVisible(addCard);
+    await tester.tap(addCard);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.widgetWithText(ListTile, '规则模式'), findsNothing);
+    await tester.tap(find.widgetWithText(ListTile, '订阅用量'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.byType(HomeSubscriptionCard), findsOneWidget);
+
+    final trafficCard = find.byKey(const ValueKey(HomeCard.traffic));
+    await tester.ensureVisible(trafficCard);
+    final trafficContent = find.byType(HomeTrafficCard);
+    final initialTransform = tester
+        .renderObject(trafficContent)
+        .getTransformTo(null);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(
+      tester.renderObject(trafficContent).getTransformTo(null),
+      isNot(initialTransform),
+    );
+    final before = bounds(HomeCard.splitMode);
+    final gesture = await tester.startGesture(tester.getCenter(trafficCard));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(trafficContent, findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 60));
+    expect(trafficContent, findsNWidgets(2));
+    final floatingCard = find.byType(HomeTrafficCard).last;
+    final floatingStart = tester.getRect(floatingCard);
+    expect(floatingStart.size, bounds(HomeCard.traffic).size);
+    final modeContent = find.byType(HomeSplitModeCard);
+    double rotationOf(Finder card) =>
+        tester.renderObject(card).getTransformTo(null).entry(1, 0);
+    final modeRotation = rotationOf(modeContent);
+    await tester.pump(const Duration(milliseconds: 90));
+    expect(rotationOf(modeContent), isNot(modeRotation));
+    expect(rotationOf(floatingCard), closeTo(0, 0.0001));
+    await gesture.moveTo(before.center);
+    await tester.pump();
+    expect(tester.getRect(floatingCard).left, lessThan(floatingStart.left));
+    await tester.pump(const Duration(milliseconds: 70));
+    final moving = bounds(HomeCard.splitMode);
+    expect(moving.left, greaterThan(before.left));
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(bounds(HomeCard.splitMode).left, greaterThan(moving.left));
+    expect(
+      tester.getTopLeft(find.byKey(const ValueKey(HomeCard.traffic))).dx,
+      lessThan(
+        tester.getTopLeft(find.byKey(const ValueKey(HomeCard.splitMode))).dx,
+      ),
+    );
+    expect(storage.saved, isNull);
+    await gesture.up();
+    await tester.pump();
+
+    await tester.ensureVisible(find.byTooltip('移除订阅用量'));
+    await tester.tap(find.byTooltip('移除订阅用量'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 220));
     await tester.tap(find.byTooltip('完成编辑'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
@@ -299,10 +496,11 @@ void main() {
       contains(HomeCard.subscription),
     );
     final order = storage.saved!.settings.homeDesktop.order;
-    expect(
-      order.indexOf(HomeCard.subscription),
-      lessThan(order.indexOf(HomeCard.traffic)),
-    );
+    expect(order.take(3), [
+      HomeCard.connection,
+      HomeCard.traffic,
+      HomeCard.splitMode,
+    ]);
     expect(storage.saved!.settings.homeMobile.hidden, isEmpty);
     await tester.binding.setSurfaceSize(const Size(390, 900));
     await tester.pump();
@@ -322,17 +520,20 @@ void main() {
     await tester.tap(find.byTooltip('编辑首页'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
-    await tester.tap(find.byTooltip('上移订阅用量'));
+    await tester.tap(find.byTooltip('移除订阅用量'));
+    await tester.pump();
     await tester.tap(find.byTooltip('完成编辑'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.text('首页布局保存失败，请重试'), findsOneWidget);
     expect(find.byTooltip('完成编辑'), findsOneWidget);
+    expect(find.byType(HomeSubscriptionCard), findsNothing);
     expect(controller.settings.homeDesktop.order, HomeCard.values);
-    await tester.tap(find.text('取消'));
+    await tester.tap(find.byTooltip('取消编辑'));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.byTooltip('编辑首页'), findsOneWidget);
+    expect(find.byType(HomeSubscriptionCard), findsOneWidget);
     expect(controller.settings.homeDesktop.order, HomeCard.values);
   });
 
@@ -348,6 +549,14 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('编辑手机首页'), findsOneWidget);
+      final addCard = tester.getRect(
+        find.byKey(const ValueKey('add-home-card')),
+      );
+      final activity = tester.getRect(
+        find.byKey(const ValueKey(HomeCard.activity)),
+      );
+      expect(addCard.width, activity.width);
+      expect(addCard.top, activity.bottom + 16);
       expect(tester.takeException(), isNull);
     });
   }
@@ -527,6 +736,13 @@ class _ConnectedModeController extends _Controller {
 
   @override
   Future<void> restartCore() async => restarts++;
+}
+
+class _RefreshController extends _Controller {
+  int refreshes = 0;
+
+  @override
+  Future<void> refreshConnectionInfo() async => refreshes++;
 }
 
 class _Storage extends AppStorage {

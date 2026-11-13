@@ -95,6 +95,7 @@ class AppController extends ChangeNotifier {
   bool _drainingNodeTests = false;
   final Map<String, ServiceCheckResult> serviceChecks = {};
   final Set<String> _servicesChecking = {};
+  final Set<HttpClient> _serviceAddressClients = {};
   final Map<String, Object> _subscriptionUpdates = {};
   List<TrafficSample> samples = const [];
   DateTime? connectedAt;
@@ -103,6 +104,7 @@ class AppController extends ChangeNotifier {
   bool checkingExitInfo = false;
   HttpClient? _exitInfoClient;
   int _exitInfoGeneration = 0;
+  ({String tag, int generation, Object token})? _connectionProbe;
   bool _disposed = false;
   final List<HomeActivity> homeActivities = [];
   CompiledConfig? _compiled;
@@ -179,6 +181,49 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
     }
+  }
+
+  bool get refreshingConnectionInfo =>
+      checkingExitInfo || _connectionProbe?.generation == _pollGeneration;
+
+  Future<void> refreshConnectionInfo() async {
+    if (!running || busy || _disposed || refreshingConnectionInfo) return;
+    await Future.wait([refreshExitInfo(), _refreshConnectionLatency()]);
+  }
+
+  Future<void> _refreshConnectionLatency() async {
+    if (!running || busy || _disposed) return;
+    final node = reportedNode;
+    final tag = _effectiveTag;
+    if (node == null || tag == null) return;
+    final generation = _pollGeneration;
+    final previous = _connectionProbe;
+    if (previous?.generation == generation && previous?.tag == tag) return;
+    final probe = _connectionProbe = (
+      tag: tag,
+      generation: generation,
+      token: Object(),
+    );
+    notifyListeners();
+
+    RuntimeTestResult? result;
+    String? requestError;
+    try {
+      // A probe of the current node only updates its displayed latency.
+      final results = await runtime.test([
+        tag,
+      ], settings.advancedOrDefault.urlTestUrl);
+      result = results[tag];
+    } catch (e) {
+      requestError = _friendlyError(e);
+    }
+    if (_connectionProbe != probe) return;
+    _connectionProbe = null;
+    if (_disposed || !running || generation != _pollGeneration) return;
+    if (identical(snapshot.nodeById(node.id), node)) {
+      _saveNodeLatency(node.id, result, requestError);
+    }
+    notifyListeners();
   }
 
   Future<void> saveHomeLayout(
@@ -543,10 +588,11 @@ class AppController extends ChangeNotifier {
     } finally {
       busy = false;
       notifyListeners();
+      if (running && !checkingExitInfo && exitInfo == null) {
+        unawaited(refreshExitInfo());
+      }
+      unawaited(_refreshConnectionLatency());
       await storage.save(snapshot);
-    }
-    if (running && !checkingExitInfo && exitInfo == null) {
-      unawaited(refreshExitInfo());
     }
   }
 
@@ -664,6 +710,7 @@ class AppController extends ChangeNotifier {
           await runtime.select(tag);
           _effectiveTag = tag;
           unawaited(refreshExitInfo());
+          unawaited(_refreshConnectionLatency());
           await _refreshStatus();
         } catch (e) {
           _setError('切换节点失败：${_friendlyError(e)}');
@@ -931,8 +978,6 @@ class AppController extends ChangeNotifier {
     final queue = {
       for (final node in candidates) node.id: node,
     }.values.toList();
-    final updated = Map<String, int>.from(latencies);
-    final errors = Map<String, String>.from(latencyErrors);
     final roundDelays = <String, int?>{};
     final offlineDelays = <ProxyNode, int>{};
     final url = settings.advancedOrDefault.urlTestUrl;
@@ -978,19 +1023,12 @@ class AppController extends ChangeNotifier {
       if (run != _testGeneration) return;
       final delay = value?.delay;
       if (value != null) roundDelays[tag] = delay;
-      if (delay != null) {
-        updated[node.id] = delay;
-        errors.remove(node.id);
-        if (temporary && (compiledTags?.containsKey(node.id) ?? false)) {
-          offlineDelays[node] = delay;
-        }
-      } else {
-        final message = value?.error?.trim();
-        errors[node.id] =
-            requestError ?? (message?.isNotEmpty == true ? message! : '测速失败');
+      _saveNodeLatency(node.id, value, requestError);
+      if (delay != null &&
+          temporary &&
+          (compiledTags?.containsKey(node.id) ?? false)) {
+        offlineDelays[node] = delay;
       }
-      latencies = Map.unmodifiable(updated);
-      latencyErrors = Map.unmodifiable(errors);
       testCompleted++;
       notifyListeners();
     }
@@ -1028,6 +1066,28 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  void _saveNodeLatency(
+    String nodeId,
+    RuntimeTestResult? result,
+    String? requestError,
+  ) {
+    final delay = result?.delay;
+    if (delay != null) {
+      latencies = Map.unmodifiable({...latencies, nodeId: delay});
+      if (latencyErrors.containsKey(nodeId)) {
+        latencyErrors = Map.unmodifiable(Map.of(latencyErrors)..remove(nodeId));
+      }
+    } else {
+      final message = result?.error?.trim();
+      latencyErrors = Map.unmodifiable({
+        ...latencyErrors,
+        nodeId:
+            requestError ??
+            (message == null || message.isEmpty ? '测速失败' : message),
+      });
+    }
+  }
+
   Future<void> _refreshAutoSelection(Map<String, int?> delays) async {
     final generation = _pollGeneration;
     try {
@@ -1054,6 +1114,7 @@ class AppController extends ChangeNotifier {
   bool get checksViaProxy => running && !checksViaTun;
 
   Future<void> checkServiceStatus({String? id}) async {
+    if (_disposed) return;
     final targets = <ConnectivityService>[];
     if (id == null) {
       targets.addAll(
@@ -1095,11 +1156,34 @@ class AppController extends ChangeNotifier {
         return MapEntry(service.id, result);
       }),
     );
-    for (final entry in results) {
-      _servicesChecking.remove(entry.key);
-      serviceChecks[entry.key] = entry.value;
+    if (_disposed) return;
+    final addresses = results
+        .where((entry) => entry.value.isAvailable)
+        .map((entry) => entry.value.address)
+        .whereType<String>()
+        .toSet();
+    final addressClient = addresses.isEmpty ? null : _createManagedHttpClient();
+    if (addressClient != null) _serviceAddressClients.add(addressClient);
+    try {
+      final info = addressClient == null
+          ? const <String, IpAttribution>{}
+          : await fetchServiceAddressInfo(addressClient, addresses);
+      if (_disposed) return;
+      for (final entry in results) {
+        final attribution = entry.value.isAvailable
+            ? info[entry.value.address]
+            : null;
+        serviceChecks[entry.key] = attribution == null
+            ? entry.value
+            : entry.value.withAddressInfo(attribution);
+      }
+    } finally {
+      if (addressClient != null) _serviceAddressClients.remove(addressClient);
+      for (final entry in results) {
+        _servicesChecking.remove(entry.key);
+      }
+      if (!_disposed) notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> refreshConnections() async {
@@ -1610,6 +1694,9 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    for (final client in _serviceAddressClients) {
+      client.close(force: true);
+    }
     _cancelExitInfo();
     _cancelNodeTests();
     _stopRuleSetUpdates();
@@ -1726,6 +1813,8 @@ class AppController extends ChangeNotifier {
     }
     if (previousTag != _effectiveTag) {
       unawaited(refreshExitInfo());
+      // A node test round already has the measurements it uses to reselect.
+      if (!testingNodes) unawaited(_refreshConnectionLatency());
       liveTick.value++;
       notifyListeners();
     }

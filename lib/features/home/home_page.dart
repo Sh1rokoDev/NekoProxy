@@ -6,7 +6,9 @@ import '../../domain/models.dart';
 import '../../state/app_controller.dart';
 import '../status/service_status.dart';
 import 'connection_card.dart';
+import 'home_card_grid.dart';
 import 'home_cards.dart';
+import 'home_layout_controls.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -15,10 +17,19 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  static const _desktopBreakpoint = 760.0;
+  static const _cardSpacing = 16.0;
+
   HomeLayout? _draft;
   bool _editingDesktop = false;
   bool _saving = false;
+  final _gridKey = GlobalKey();
+  EdgeDraggingAutoScroller? _autoScroller;
+  HomeCard? _dragging;
+  Offset? _dragPosition;
+  Offset? _lastReorderPosition;
+  bool _awaitingDragLayout = false;
 
   String _label(HomeCard card) => switch (card) {
     HomeCard.connection => '连接与出口信息',
@@ -41,6 +52,7 @@ class _HomePageState extends State<HomePage> {
       });
       return;
     }
+    _stopDrag();
     setState(() => _saving = true);
     try {
       await controller.saveHomeLayout(draft, desktop: _editingDesktop);
@@ -56,77 +68,154 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Widget _editor(HomeLayout draft) => SectionCard(
-    title: '编辑${_editingDesktop ? '桌面' : '手机'}首页',
-    icon: Icons.dashboard_customize_outlined,
-    trailing: TextButton(
-      onPressed: _saving ? null : () => setState(() => _draft = null),
-      child: const Text('取消'),
-    ),
-    child: Column(
-      children: [
-        for (var index = 0; index < draft.order.length; index++)
-          Row(
+  void _stopDrag() {
+    _autoScroller?.stopAutoScroll();
+    _autoScroller = null;
+    _dragPosition = _lastReorderPosition = null;
+  }
+
+  @override
+  void dispose() {
+    _stopDrag();
+    super.dispose();
+  }
+
+  bool _canEdit(HomeLayout draft) => identical(_draft, draft) && !_saving;
+
+  void _previewReorder(HomeLayout draft) {
+    final source = _dragging;
+    final position = _dragPosition;
+    if (source == null ||
+        position == null ||
+        !_canEdit(draft) ||
+        _awaitingDragLayout) {
+      return;
+    }
+    final slot = HomeCardGrid.slotAt(_gridKey.currentContext, position);
+    if (slot == null || !slot.bounds.deflate(8).contains(position)) return;
+    final visible = _visibleCards(draft);
+    if (slot.index >= visible.length) return;
+    final target = visible[slot.index];
+    if (target == source) {
+      _lastReorderPosition = null;
+      return;
+    }
+    // A waterfall reflow can move a different card under a stationary finger.
+    final reorderPosition = _lastReorderPosition;
+    if (reorderPosition != null && (position - reorderPosition).distance < 24) {
+      return;
+    }
+    _lastReorderPosition = position;
+    final targetIndex = draft.order.indexOf(target);
+    // Until the next layout, slot indices still describe the previous order.
+    _awaitingDragLayout = true;
+    setState(() {
+      draft.order.remove(source);
+      draft.order.insert(targetIndex, source);
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _awaitingDragLayout = false;
+    });
+  }
+
+  List<HomeCard> _visibleCards(HomeLayout layout) => layout.order
+      .where(
+        (kind) => kind != HomeCard.connection && !layout.hidden.contains(kind),
+      )
+      .toList();
+
+  void _startDrag(HomeLayout draft, HomeCard kind, ScrollableState scrollable) {
+    if (!_canEdit(draft) || _dragging != null) return;
+    setState(() => _dragging = kind);
+    _autoScroller = EdgeDraggingAutoScroller(
+      scrollable,
+      velocityScalar: 8,
+      onScrollViewScrolled: () {
+        if (mounted) _previewReorder(draft);
+      },
+    );
+  }
+
+  void _updateDrag(HomeLayout draft, HomeCard kind, Offset position) {
+    if (_dragging != kind) return;
+    _dragPosition = position;
+    _previewReorder(draft);
+    _autoScroller?.startAutoScrollIfNecessary(
+      Rect.fromCenter(center: position, width: 1, height: 64),
+    );
+  }
+
+  void _endDrag(HomeCard kind) {
+    if (!mounted || _dragging != kind) return;
+    _stopDrag();
+    setState(() => _dragging = null);
+  }
+
+  Future<void> _addCard(HomeLayout draft) async {
+    final available = draft.order.where(draft.hidden.contains).toList();
+    final selected = await showModalBottomSheet<HomeCard>(
+      context: context,
+      showDragHandle: true,
+      useSafeArea: true,
+      isScrollControlled: true,
+      builder: (context) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Checkbox(
-                value: !draft.hidden.contains(draft.order[index]),
-                onChanged: _saving || draft.order[index] == HomeCard.connection
-                    ? null
-                    : (value) => setState(() {
-                        if (value == true) {
-                          draft.hidden.remove(draft.order[index]);
-                        } else {
-                          draft.hidden.add(draft.order[index]);
-                        }
-                      }),
-              ),
-              Expanded(child: Text(_label(draft.order[index]))),
-              IconButton(
-                tooltip: '上移${_label(draft.order[index])}',
-                onPressed: _saving || index == 0
-                    ? null
-                    : () => setState(() {
-                        final card = draft.order.removeAt(index);
-                        draft.order.insert(index - 1, card);
-                      }),
-                icon: const Icon(Icons.arrow_upward_rounded, size: 18),
-              ),
-              IconButton(
-                tooltip: '下移${_label(draft.order[index])}',
-                onPressed: _saving || index == draft.order.length - 1
-                    ? null
-                    : () => setState(() {
-                        final card = draft.order.removeAt(index);
-                        draft.order.insert(index + 1, card);
-                      }),
-                icon: const Icon(Icons.arrow_downward_rounded, size: 18),
-              ),
+              Text('添加卡片', style: Theme.of(context).textTheme.titleLarge),
+              const SizedBox(height: 12),
+              if (available.isEmpty) const Text('所有卡片均已添加'),
+              for (final kind in available)
+                ListTile(
+                  leading: const Icon(Icons.add_rounded),
+                  title: Text(_label(kind)),
+                  onTap: () => Navigator.pop(context, kind),
+                ),
             ],
           ),
-      ],
-    ),
-  );
+        ),
+      ),
+    );
+    if (!mounted || selected == null || !_canEdit(draft)) return;
+    setState(() {
+      draft.hidden.remove(selected);
+      draft.order
+        ..remove(selected)
+        ..add(selected);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     return LayoutBuilder(
       builder: (context, pageConstraints) {
-        final desktop = pageConstraints.maxWidth >= 760;
-        final layout = _draft != null && _editingDesktop == desktop
-            ? _draft!
-            : desktop
-            ? controller.settings.homeDesktop
-            : controller.settings.homeMobile;
-        Widget card(HomeCard kind) => KeyedSubtree(
-          key: ValueKey(kind),
+        final desktop = pageConstraints.maxWidth >= _desktopBreakpoint;
+        final draft = _draft;
+        final layout =
+            draft ??
+            (desktop
+                ? controller.settings.homeDesktop
+                : controller.settings.homeMobile);
+        Widget card(HomeCard kind, {bool keyed = true}) => KeyedSubtree(
+          key: keyed ? ValueKey(kind) : null,
           child: switch (kind) {
-            HomeCard.connection => ConnectionCard(
-              controller: controller,
-              hasNodes: controller.hasNodes,
+            HomeCard.connection => ValueListenableBuilder<int>(
+              valueListenable: controller.liveTick,
+              builder: (context, _, _) => ConnectionCard(
+                controller: controller,
+                hasNodes: controller.hasNodes,
+              ),
             ),
             HomeCard.splitMode => HomeSplitModeCard(controller: controller),
-            HomeCard.traffic => HomeTrafficCard(controller: controller),
+            HomeCard.traffic => ValueListenableBuilder<int>(
+              valueListenable: controller.liveTick,
+              builder: (context, _, _) =>
+                  HomeTrafficCard(controller: controller),
+            ),
             HomeCard.subscription => HomeSubscriptionCard(
               controller: controller,
             ),
@@ -134,84 +223,28 @@ class _HomePageState extends State<HomePage> {
             HomeCard.activity => HomeActivityCard(controller: controller),
           },
         );
-        Widget column(List<HomeCard> cards) => Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (final kind in cards)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: card(kind),
-              ),
-          ],
-        );
-        final visible = layout.order
-            .where((kind) => !layout.hidden.contains(kind))
-            .toList();
-        final sections = <Widget>[];
-        if (_draft case final draft?) {
-          sections.add(
-            Padding(
-              padding: const EdgeInsets.only(bottom: 16),
-              child: _editor(draft),
-            ),
-          );
-        }
-        // The connection card spans both columns.
-        final pending = <HomeCard>[];
-        void flush() {
-          if (pending.isEmpty) return;
-          if (desktop) {
-            final left = <HomeCard>[];
-            final right = <HomeCard>[];
-            var placeLeft = true;
-            for (final kind in pending) {
-              if (kind == HomeCard.splitMode) {
-                // Keep the shortcut in the narrow column without shifting
-                // the alternating placement of the other cards.
-                right.add(kind);
-              } else {
-                (placeLeft ? left : right).add(kind);
-                placeLeft = !placeLeft;
-              }
-            }
-            sections.add(
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Expanded(flex: 7, child: column(left)),
-                  const SizedBox(width: 16),
-                  Expanded(flex: 5, child: column(right)),
-                ],
-              ),
-            );
-          } else {
-            sections.add(column(pending));
-          }
-          pending.clear();
-        }
-
-        for (final kind in visible) {
-          if (kind == HomeCard.connection) {
-            flush();
-            sections.add(
-              Padding(
-                padding: const EdgeInsets.only(bottom: 16),
-                child: card(kind),
-              ),
-            );
-          } else {
-            pending.add(kind);
-          }
-        }
-        flush();
+        final visible = _visibleCards(layout);
+        final canEdit = !_saving && _dragging == null;
         return PageFrame(
-          title: '首页',
+          title: draft == null ? '首页' : '编辑${_editingDesktop ? '桌面' : '手机'}首页',
           scrollable: false,
           wrapHeader: true,
           actions: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _NetworkTakeoverActions(controller: controller),
+              if (draft == null)
+                _NetworkTakeoverActions(controller: controller)
+              else
+                HeaderIconButton(
+                  icon: Icons.close_rounded,
+                  tooltip: '取消编辑',
+                  onPressed: !canEdit
+                      ? null
+                      : () {
+                          _stopDrag();
+                          setState(() => _draft = null);
+                        },
+                ),
               const SizedBox(width: 8),
               HeaderIconButton(
                 icon: _draft == null
@@ -219,7 +252,7 @@ class _HomePageState extends State<HomePage> {
                     : Icons.check_rounded,
                 tooltip: _draft == null ? '编辑首页' : '完成编辑',
                 active: _draft != null,
-                onPressed: _saving ? null : () => _edit(controller, desktop),
+                onPressed: canEdit ? () => _edit(controller, desktop) : null,
               ),
             ],
           ),
@@ -228,7 +261,47 @@ class _HomePageState extends State<HomePage> {
               padding: const EdgeInsets.only(bottom: 20),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: sections,
+                spacing: _cardSpacing,
+                children: [
+                  card(HomeCard.connection),
+                  if (visible.isNotEmpty || draft != null)
+                    HomeCardGrid(
+                      key: _gridKey,
+                      columns: desktop ? 2 : 1,
+                      spacing: _cardSpacing,
+                      animationVsync:
+                          draft != null &&
+                              !MediaQuery.disableAnimationsOf(context)
+                          ? this
+                          : null,
+                      children: [
+                        for (final kind in visible)
+                          if (draft == null)
+                            card(kind)
+                          else
+                            EditableHomeCard(
+                              key: ValueKey(kind),
+                              kind: kind,
+                              label: _label(kind),
+                              enabled: canEdit,
+                              dragging: _dragging == kind,
+                              onRemove: () =>
+                                  setState(() => draft.hidden.add(kind)),
+                              onDragStarted: (scrollable) =>
+                                  _startDrag(draft, kind, scrollable),
+                              onDragUpdate: (position) =>
+                                  _updateDrag(draft, kind, position),
+                              onDragEnd: () => _endDrag(kind),
+                              child: card(kind, keyed: false),
+                            ),
+                        if (draft != null)
+                          AddHomeCardButton(
+                            key: const ValueKey('add-home-card'),
+                            onPressed: canEdit ? () => _addCard(draft) : null,
+                          ),
+                      ],
+                    ),
+                ],
               ),
             ),
           ),

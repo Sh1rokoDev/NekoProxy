@@ -483,6 +483,8 @@ class _SubscriptionDetailRow extends StatelessWidget {
 
 class HomeActivityCard extends StatelessWidget {
   const HomeActivityCard({super.key, required this.controller});
+  static const _maxVisibleActivities = 3;
+
   final AppController controller;
 
   @override
@@ -494,7 +496,9 @@ class HomeActivityCard extends StatelessWidget {
           ? const Text('本次启动暂无活动')
           : Column(
               children: [
-                for (final activity in controller.homeActivities)
+                for (final activity in controller.homeActivities.take(
+                  _maxVisibleActivities,
+                ))
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     child: Row(

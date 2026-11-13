@@ -12,6 +12,57 @@ import 'package:nekoproxy/services/rule_set_manager.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
+  test('连接后只测实际选中节点，统一刷新重测，断开后丢弃迟到结果', () async {
+    final first = _node('first', '节点甲');
+    final second = _node('second', '节点乙');
+    final runtime = _Runtime()..selected = 'node-second';
+    final paths = AppPaths.forDirectory(Directory.systemTemp.path);
+    final controller = _ConnectionInfoController()
+      ..paths = paths
+      ..storage = _Storage(paths)
+      ..runtime = runtime
+      ..ruleSets = RuleSetManager(paths: paths, clientFactory: HttpClient.new)
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(
+          manualNodeId: first.id,
+          selectionMode: SelectionMode.auto,
+          splitMode: SplitMode.global,
+        ),
+        subscriptions: [
+          Subscription(id: 'main', name: '主分组', nodes: [first, second]),
+        ],
+      );
+    addTearDown(controller.dispose);
+    addTearDown(controller.disconnect);
+
+    await controller.connect();
+    expect(controller.exitRefreshes, 1);
+    expect(runtime.probes.keys, ['node-second']);
+    expect(controller.refreshingConnectionInfo, isTrue);
+    runtime.completeProbe(second.id, delay: 48);
+    await _waitUntil(() => !controller.refreshingConnectionInfo);
+    expect(controller.latencies, {second.id: 48});
+
+    runtime.probes.clear();
+    final refresh = controller.refreshConnectionInfo();
+    await controller.refreshConnectionInfo();
+    expect(controller.exitRefreshes, 2);
+    expect(runtime.probes.keys, ['node-second']);
+    runtime.completeProbe(second.id, delay: 65);
+    await refresh;
+    expect(controller.latencies, {second.id: 65});
+    expect(runtime.batchSizes, [1, 1]);
+    expect(runtime.autoRefreshes, isEmpty);
+
+    runtime.probes.clear();
+    final interrupted = controller.refreshConnectionInfo();
+    await controller.disconnect();
+    runtime.completeProbe(second.id, delay: 120);
+    await interrupted;
+    expect(controller.latencies, {second.id: 65});
+    expect(controller.refreshingConnectionInfo, isFalse);
+  });
+
   testWidgets('测速按钮显示排队和完成进度，按点击顺序依次测速', (tester) async {
     final first = _node('first', '节点甲', group: 'first-group');
     final second = _node('second', '节点乙', group: 'second-group');
@@ -420,8 +471,11 @@ void main() {
     expectHighlight('节点甲', false);
     expectHighlight('节点乙', false);
 
+    runtime.probes.clear();
     runtime.selected = 'node-${first.id}';
     await tester.pump(const Duration(seconds: 1));
+    runtime.completeProbe(first.id, delay: 100);
+    await tester.pump();
     expect(selectionStatus, findsNothing);
     expectHighlight('节点甲', true);
     expectHighlight('节点乙', false);
@@ -507,6 +561,15 @@ class _Storage extends AppStorage {
 
   @override
   Future<void> save(AppSnapshot snapshot) async {}
+}
+
+class _ConnectionInfoController extends AppController {
+  int exitRefreshes = 0;
+
+  @override
+  Future<void> refreshExitInfo() async {
+    if (running && !busy) exitRefreshes++;
+  }
 }
 
 class _Runtime extends RuntimeClient {

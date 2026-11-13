@@ -19,17 +19,72 @@ void main() {
       AppSettings(homeDesktop: layout).toJson(),
     );
     expect(restored.homeDesktop.order, [
-      HomeCard.traffic,
       HomeCard.connection,
+      HomeCard.traffic,
       HomeCard.splitMode,
       HomeCard.subscription,
-      HomeCard.activity,
       HomeCard.services,
+      HomeCard.activity,
     ]);
     expect(restored.homeDesktop.hidden, {HomeCard.subscription});
     expect(
       HomeLayout.fromJson({'order': 42, 'hidden': 'invalid'}).order,
       HomeCard.values,
     );
+  });
+
+  test('旧版默认排序迁移为服务状态在最近活动之前', () {
+    final settings = AppSettings.fromJson({
+      'homeMobile': {
+        'order': [
+          'connection',
+          'splitMode',
+          'traffic',
+          'subscription',
+          'activity',
+          'services',
+        ],
+      },
+    });
+
+    expect(settings.homeMobile.order, HomeCard.values);
+  });
+
+  test('缺少规则模式的旧默认布局同样迁移，并保留隐藏卡片', () {
+    final layout = HomeLayout.fromJson({
+      'order': [
+        'connection',
+        'traffic',
+        'subscription',
+        'activity',
+        'services',
+      ],
+      'hidden': ['subscription'],
+    });
+
+    expect(layout.order, HomeCard.values);
+    expect(layout.hidden, {HomeCard.subscription});
+  });
+
+  test('旧版自定义布局将连接卡置顶，并保留其他卡片的相对顺序', () {
+    const order = [
+      'traffic',
+      'subscription',
+      'connection',
+      'activity',
+      'splitMode',
+      'services',
+    ];
+    final layout = HomeLayout.fromJson({'order': order});
+
+    expect(layout.order, [
+      HomeCard.connection,
+      HomeCard.traffic,
+      HomeCard.subscription,
+      HomeCard.activity,
+      HomeCard.splitMode,
+      HomeCard.services,
+    ]);
+    expect(HomeLayout.fromJson(layout.toJson()).order, layout.order);
   });
 }

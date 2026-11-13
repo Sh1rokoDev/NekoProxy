@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'exit_info_service.dart';
+
 enum ServiceCheckStatus { pending, checking, available, failed }
 
 class ConnectivityService {
@@ -64,6 +66,7 @@ class ServiceCheckResult {
     required this.status,
     this.latencyMs,
     this.address,
+    this.addressInfo,
     this.error,
     this.checkedAt,
     this.viaProxy = false,
@@ -73,6 +76,7 @@ class ServiceCheckResult {
   final ServiceCheckStatus status;
   final int? latencyMs;
   final String? address;
+  final IpAttribution? addressInfo;
   final String? error;
   final DateTime? checkedAt;
   final bool viaProxy;
@@ -82,6 +86,17 @@ class ServiceCheckResult {
   bool get isChecking => status == ServiceCheckStatus.checking;
   bool get isAvailable => status == ServiceCheckStatus.available;
   bool get isFailed => status == ServiceCheckStatus.failed;
+
+  ServiceCheckResult withAddressInfo(IpAttribution info) => ServiceCheckResult(
+    status: status,
+    latencyMs: latencyMs,
+    address: address,
+    addressInfo: info,
+    error: error,
+    checkedAt: checkedAt,
+    viaProxy: viaProxy,
+    viaTun: viaTun,
+  );
 }
 
 Future<ServiceCheckResult> probeConnectivityService(

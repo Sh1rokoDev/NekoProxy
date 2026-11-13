@@ -678,9 +678,18 @@ enum HomeCard {
   splitMode,
   traffic,
   subscription,
-  activity,
   services,
+  activity,
 }
+
+const _previousDefaultHomeCardOrder = [
+  HomeCard.connection,
+  HomeCard.splitMode,
+  HomeCard.traffic,
+  HomeCard.subscription,
+  HomeCard.activity,
+  HomeCard.services,
+];
 
 class HomeLayout {
   HomeLayout({List<HomeCard>? order, Set<HomeCard>? hidden})
@@ -694,6 +703,9 @@ class HomeLayout {
         HomeCard.splitMode,
       );
     }
+    // The connection card always occupies the first row on the home page.
+    this.order.remove(HomeCard.connection);
+    this.order.insert(0, HomeCard.connection);
   }
 
   final List<HomeCard> order;
@@ -716,10 +728,23 @@ class HomeLayout {
               .whereType<HomeCard>()
               .toList()
         : [];
-    return HomeLayout(
-      order: parse(value['order']),
+    final savedOrder = parse(value['order']);
+    final layout = HomeLayout(
+      order: savedOrder,
       hidden: parse(value['hidden']).toSet(),
     );
+    final order = layout.order;
+    final wasDefaultOrder =
+        savedOrder.firstOrNull == HomeCard.connection &&
+        order.length == _previousDefaultHomeCardOrder.length &&
+        order.asMap().entries.every(
+          (entry) => entry.value == _previousDefaultHomeCardOrder[entry.key],
+        );
+    if (wasDefaultOrder) {
+      order.remove(HomeCard.services);
+      order.insert(order.indexOf(HomeCard.activity), HomeCard.services);
+    }
+    return layout;
   }
 }
 

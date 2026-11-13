@@ -3,6 +3,41 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+class RegionBadge extends StatelessWidget {
+  const RegionBadge({
+    super.key,
+    required this.region,
+    this.semanticPrefix = '地区',
+  });
+
+  final String region;
+  final String semanticPrefix;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final primary = theme.colorScheme.primary;
+    return Semantics(
+      label: '$semanticPrefix $region',
+      excludeSemantics: true,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        decoration: BoxDecoration(
+          color: primary.withValues(alpha: 0.11),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+          region,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: primary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class PageFrame extends StatelessWidget {
   const PageFrame({
     super.key,
@@ -37,46 +72,42 @@ class PageFrame extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  if (wrapHeader && constraints.maxWidth < 400) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(title, style: theme.textTheme.headlineSmall),
-                        if (actions != null) ...[
-                          const SizedBox(height: 12),
-                          FittedBox(
-                            fit: BoxFit.scaleDown,
-                            alignment: Alignment.centerLeft,
-                            child: actions!,
-                          ),
-                        ],
-                      ],
-                    );
-                  }
-                  return SizedBox(
-                    height: 48,
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.headlineSmall,
-                          ),
+              if (wrapHeader)
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: 48),
+                  child: OverflowBar(
+                    alignment: MainAxisAlignment.spaceBetween,
+                    overflowAlignment: OverflowBarAlignment.end,
+                    spacing: 12,
+                    overflowSpacing: 12,
+                    children: [
+                      Text(title, style: theme.textTheme.headlineSmall),
+                      if (actions != null)
+                        FittedBox(fit: BoxFit.scaleDown, child: actions!),
+                    ],
+                  ),
+                )
+              else
+                SizedBox(
+                  height: 48,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.headlineSmall,
                         ),
-                        if (actions != null) ...[
-                          const SizedBox(width: 12),
-                          actions!,
-                        ],
+                      ),
+                      if (actions != null) ...[
+                        const SizedBox(width: 12),
+                        actions!,
                       ],
-                    ),
-                  );
-                },
-              ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 20),
               child,
             ],

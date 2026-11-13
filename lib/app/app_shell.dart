@@ -12,7 +12,11 @@ const _destinations = <({String label, IconData icon, IconData selectedIcon})>[
   (label: '首页', icon: Icons.home_outlined, selectedIcon: Icons.home_rounded),
   (label: '节点', icon: Icons.dns_outlined, selectedIcon: Icons.dns_rounded),
   (label: '规则', icon: Icons.rule_outlined, selectedIcon: Icons.rule_rounded),
-  (label: '更多', icon: Icons.more_horiz_rounded, selectedIcon: Icons.more_horiz_rounded),
+  (
+    label: '更多',
+    icon: Icons.more_horiz_rounded,
+    selectedIcon: Icons.more_horiz_rounded,
+  ),
 ];
 
 class AppShell extends StatefulWidget {
@@ -31,14 +35,11 @@ class _AppShellState extends State<AppShell> {
   String? _lastRuleSetError;
 
   List<Widget> get _pages => [
-        ValueListenableBuilder<int>(
-          valueListenable: _controller!.liveTick,
-          builder: (_, _, _) => HomePage(),
-        ),
-        const NodesPage(),
-        const RulesPage(),
-        const ToolsPage(),
-      ];
+    const HomePage(),
+    const NodesPage(),
+    const RulesPage(),
+    const ToolsPage(),
+  ];
 
   @override
   void didChangeDependencies() {
@@ -109,7 +110,9 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openConnections() {
-    Navigator.of(context).push(MaterialPageRoute(builder: (_) => const ConnectionsPage()));
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ConnectionsPage()));
   }
 
   void _selectTab(int value) {
@@ -161,10 +164,7 @@ class _AppShellState extends State<AppShell> {
           return Scaffold(
             body: Row(
               children: [
-                _SideBar(
-                  index: _index,
-                  onSelect: _selectTab,
-                ),
+                _SideBar(index: _index, onSelect: _selectTab),
                 const VerticalDivider(width: 1),
                 Expanded(child: content),
               ],
@@ -176,41 +176,89 @@ class _AppShellState extends State<AppShell> {
   }
 }
 
-class _AnimatedTabStack extends StatelessWidget {
+class _AnimatedTabStack extends StatefulWidget {
   const _AnimatedTabStack({required this.index, required this.children});
 
   final int index;
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) {
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        for (var i = 0; i < children.length; i++)
-          AnimatedOpacity(
-            opacity: i == index ? 1 : 0,
+  State<_AnimatedTabStack> createState() => _AnimatedTabStackState();
+}
+
+class _AnimatedTabStackState extends State<_AnimatedTabStack> {
+  final _overlayKey = GlobalKey<OverlayState>();
+  late final List<OverlayEntry> _entries;
+
+  @override
+  void initState() {
+    super.initState();
+    _entries = [
+      for (var i = 0; i < widget.children.length; i++)
+        OverlayEntry(
+          opaque: i == widget.index,
+          maintainState: true,
+          builder: (context) => AnimatedOpacity(
+            opacity: i == widget.index ? 1 : 0,
             duration: const Duration(milliseconds: 220),
             curve: Curves.easeOutCubic,
+            onEnd: () {
+              if (i == widget.index) _entries[i].opaque = true;
+            },
             child: AnimatedScale(
-              scale: i == index ? 1 : 0.99,
+              scale: i == widget.index ? 1 : 0.99,
               duration: const Duration(milliseconds: 220),
               curve: Curves.easeOutCubic,
               child: IgnorePointer(
-                ignoring: i != index,
+                ignoring: i != widget.index,
                 child: ExcludeSemantics(
-                  excluding: i != index,
+                  excluding: i != widget.index,
                   child: TickerMode(
-                    enabled: i == index,
-                    child: RepaintBoundary(child: children[i]),
+                    enabled: i == widget.index,
+                    child: RepaintBoundary(child: widget.children[i]),
                   ),
                 ),
               ),
             ),
           ),
-      ],
-    );
+        ),
+    ];
   }
+
+  List<OverlayEntry> get _orderedEntries => [
+    for (var i = 0; i < _entries.length; i++)
+      if (i != widget.index) _entries[i],
+    _entries[widget.index],
+  ];
+
+  @override
+  void didUpdateWidget(_AnimatedTabStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.index != widget.index) {
+      // Keep entries onstage during the fade, then let Overlay skip layout
+      // of the retained pages below the opaque selected entry.
+      for (final entry in _entries) {
+        entry.opaque = false;
+      }
+      _overlayKey.currentState!.rearrange(_orderedEntries);
+    }
+    for (final entry in _entries) {
+      entry.markNeedsBuild();
+    }
+  }
+
+  @override
+  void dispose() {
+    for (final entry in _entries) {
+      entry.remove();
+      entry.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      Overlay(key: _overlayKey, initialEntries: _orderedEntries);
 }
 
 class _SideBar extends StatelessWidget {
@@ -281,14 +329,18 @@ class _SidebarItem extends StatelessWidget {
                 Icon(
                   selected ? selectedIcon : icon,
                   size: 21,
-                  color: selected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
+                  color: selected
+                      ? scheme.onSecondaryContainer
+                      : scheme.onSurfaceVariant,
                 ),
                 const SizedBox(width: 12),
                 Text(
                   label,
                   style: TextStyle(
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? scheme.onSecondaryContainer : scheme.onSurfaceVariant,
+                    color: selected
+                        ? scheme.onSecondaryContainer
+                        : scheme.onSurfaceVariant,
                   ),
                 ),
               ],

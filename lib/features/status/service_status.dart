@@ -363,6 +363,12 @@ class _ServiceRow extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final checking = result?.isChecking ?? false;
+    final addressInfo = result?.addressInfo;
+    final provider = addressInfo?.provider ?? '';
+    final hasAddress = result?.isAvailable == true && result?.address != null;
+    final detailStyle = theme.textTheme.bodySmall?.copyWith(
+      color: scheme.onSurfaceVariant,
+    );
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 9, 6, 9),
       child: Row(
@@ -376,6 +382,7 @@ class _ServiceRow extends StatelessWidget {
                 Row(
                   children: [
                     Flexible(
+                      flex: 2,
                       child: Text(
                         service.name,
                         maxLines: 1,
@@ -387,6 +394,16 @@ class _ServiceRow extends StatelessWidget {
                     ),
                     const SizedBox(width: 8),
                     _StatusPill(result: result),
+                    if (hasAddress)
+                      Flexible(
+                        flex: 3,
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 6),
+                          child: RegionBadge(
+                            region: addressInfo?.region ?? '未提供',
+                          ),
+                        ),
+                      ),
                   ],
                 ),
                 const SizedBox(height: 3),
@@ -397,11 +414,16 @@ class _ServiceRow extends StatelessWidget {
                     key: ValueKey(_metaText(service, result)),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: detailStyle,
                   ),
                 ),
+                if (hasAddress) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '运营商：${provider.isEmpty ? '未提供' : provider}',
+                    style: detailStyle,
+                  ),
+                ],
               ],
             ),
           ),

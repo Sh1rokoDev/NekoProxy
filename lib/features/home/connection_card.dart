@@ -8,6 +8,7 @@ import '../../state/app_controller.dart';
 
 const _wideCardWidth = 540.0;
 const _infoHeadingHeight = 28.0;
+const _connectionActionSize = 52.0;
 const _fixedWidthFonts = ['Consolas'];
 
 class ConnectionCard extends StatelessWidget {
@@ -109,7 +110,6 @@ class ConnectionCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Expanded(
                       child: Column(
@@ -131,6 +131,10 @@ class ConnectionCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(width: 12),
+                    if (running) ...[
+                      _ConnectionRefreshButton(controller: controller),
+                      const SizedBox(width: 8),
+                    ],
                     power,
                   ],
                 ),
@@ -252,7 +256,10 @@ class _NodeDetails extends StatelessWidget {
                           constraints: BoxConstraints(
                             maxWidth: constraints.maxWidth - reservedWidth,
                           ),
-                          child: _RegionBadge(region: region),
+                          child: RegionBadge(
+                            region: region,
+                            semanticPrefix: '出口地区',
+                          ),
                         ),
                         Flexible(
                           child: Padding(
@@ -345,11 +352,15 @@ class _ConnectionUptime extends StatelessWidget {
               color: scheme.onSurfaceVariant,
             ),
             const SizedBox(width: 4),
-            Text(
-              value,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w500,
+            Flexible(
+              child: Text(
+                value,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
             ),
           ],
@@ -444,15 +455,15 @@ class _ConnectionPowerButton extends StatelessWidget {
     final foreground = running ? scheme.onPrimary : scheme.onPrimaryContainer;
     final icon = controller.busy
         ? SizedBox(
-            width: compact ? 16 : 14,
-            height: compact ? 16 : 14,
+            width: 18,
+            height: 18,
             child: CircularProgressIndicator(strokeWidth: 2, color: foreground),
           )
         : Icon(
             hasNodes || running
                 ? Icons.power_settings_new_rounded
                 : Icons.file_download_outlined,
-            size: compact ? 18 : 16,
+            size: 20,
             color: foreground,
           );
     void onPressed() {
@@ -464,7 +475,7 @@ class _ConnectionPowerButton extends StatelessWidget {
     }
 
     final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(compact ? 13 : 12),
+      borderRadius: BorderRadius.circular(14),
     );
     Widget withShadow(Widget button) {
       if (!running || controller.busy) return button;
@@ -490,7 +501,7 @@ class _ConnectionPowerButton extends StatelessWidget {
           tooltip: label,
           onPressed: controller.busy ? null : onPressed,
           style: IconButton.styleFrom(
-            fixedSize: const Size(40, 40),
+            fixedSize: const Size.square(_connectionActionSize),
             tapTargetSize: MaterialTapTargetSize.shrinkWrap,
             backgroundColor: background,
             foregroundColor: foreground,
@@ -506,13 +517,13 @@ class _ConnectionPowerButton extends StatelessWidget {
         key: const ValueKey('connection-power'),
         onPressed: controller.busy ? null : onPressed,
         style: FilledButton.styleFrom(
-          minimumSize: const Size(0, 40),
-          padding: const EdgeInsets.symmetric(horizontal: 14),
+          minimumSize: const Size(112, _connectionActionSize),
+          padding: const EdgeInsets.symmetric(horizontal: 18),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           backgroundColor: background,
           foregroundColor: foreground,
           shape: shape,
-          textStyle: theme.textTheme.labelMedium?.copyWith(
+          textStyle: theme.textTheme.labelLarge?.copyWith(
             fontWeight: FontWeight.w600,
           ),
         ),
@@ -521,6 +532,34 @@ class _ConnectionPowerButton extends StatelessWidget {
           children: [icon, const SizedBox(width: 6), Text(label)],
         ),
       ),
+    );
+  }
+}
+
+class _ConnectionRefreshButton extends StatelessWidget {
+  const _ConnectionRefreshButton({required this.controller});
+
+  final AppController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final refreshing = controller.refreshingConnectionInfo;
+    return IconButton.filledTonal(
+      tooltip: '刷新出口、运营商和节点延迟',
+      onPressed: controller.busy || refreshing
+          ? null
+          : controller.refreshConnectionInfo,
+      style: IconButton.styleFrom(
+        fixedSize: const Size.square(_connectionActionSize),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+      icon: refreshing
+          ? const SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.refresh_rounded, size: 20),
     );
   }
 }
@@ -546,6 +585,9 @@ class _ConnectionInfoStrip extends StatelessWidget {
     final provider = info?.provider.trim() ?? '';
     final node = controller.currentNode;
     final latency = node == null ? null : controller.latencies[node.id];
+    final latencyError = node == null
+        ? null
+        : controller.latencyErrors[node.id];
     final exitCell = _ExitInfoCell(
       controller: controller,
       info: info,
@@ -565,7 +607,14 @@ class _ConnectionInfoStrip extends StatelessWidget {
       key: const ValueKey('connection-latency'),
       label: '节点延迟',
       padding: EdgeInsets.only(left: wide ? 12 : 0, right: 8),
-      value: _LatencyValue(latency: latency),
+      value: switch ((latency, latencyError)) {
+        (final int delay, _) => _LatencyValue(latency: delay),
+        (_, final String error) => Tooltip(
+          message: error,
+          child: const Text('测速失败'),
+        ),
+        _ => null,
+      },
     );
     final sourceCell = _ConnectionDataCell(
       key: const ValueKey('connection-source'),
@@ -648,39 +697,10 @@ class _ExitInfoCell extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '出口 IP',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: labelStyle,
-                ),
-              ),
-              if (info != null)
-                _CompactIconButton(
-                  tooltip: '复制出口 IP',
-                  icon: const Icon(Icons.content_copy_rounded, size: 13),
-                  onPressed: () => copyText(context, info.ip),
-                ),
-              _CompactIconButton(
-                tooltip: '刷新出口信息',
-                icon: controller.checkingExitInfo
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.refresh_rounded, size: 14),
-                onPressed:
-                    controller.running &&
-                        !controller.busy &&
-                        !controller.checkingExitInfo
-                    ? controller.refreshExitInfo
-                    : null,
-              ),
-            ],
+          Container(
+            constraints: const BoxConstraints(minHeight: _infoHeadingHeight),
+            alignment: Alignment.centerLeft,
+            child: Text('出口 IP', style: labelStyle),
           ),
           const SizedBox(height: 2),
           if (info != null)
@@ -717,37 +737,6 @@ class _ExitInfoCell extends StatelessWidget {
   }
 }
 
-class _RegionBadge extends StatelessWidget {
-  const _RegionBadge({required this.region});
-
-  final String region;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Semantics(
-      label: '出口地区 $region',
-      child: ExcludeSemantics(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-          decoration: BoxDecoration(
-            color: scheme.primary.withValues(alpha: 0.11),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            region,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.primary,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _ConnectionDataCell extends StatelessWidget {
   const _ConnectionDataCell({
     super.key,
@@ -758,7 +747,7 @@ class _ConnectionDataCell extends StatelessWidget {
 
   final String label;
   final EdgeInsets padding;
-  final Widget value;
+  final Widget? value;
 
   @override
   Widget build(BuildContext context) {
@@ -789,7 +778,8 @@ class _ConnectionDataCell extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 2),
-          DefaultTextStyle(style: valueStyle, child: value),
+          if (value case final value?)
+            DefaultTextStyle(style: valueStyle, child: value),
         ],
       ),
     );
@@ -799,12 +789,10 @@ class _ConnectionDataCell extends StatelessWidget {
 class _LatencyValue extends StatelessWidget {
   const _LatencyValue({required this.latency});
 
-  final int? latency;
+  final int latency;
 
   @override
   Widget build(BuildContext context) {
-    final latency = this.latency;
-    if (latency == null) return Text(formatLatency(latency));
     final scheme = Theme.of(context).colorScheme;
     final color = latency < 150
         ? const Color(0xFF1B9E63)
@@ -867,34 +855,6 @@ class _StripDivider extends StatelessWidget {
       width: horizontal ? double.infinity : 1,
       height: horizontal ? 1 : null,
       color: color,
-    );
-  }
-}
-
-class _CompactIconButton extends StatelessWidget {
-  const _CompactIconButton({
-    required this.tooltip,
-    required this.icon,
-    required this.onPressed,
-  });
-
-  final String tooltip;
-  final Widget icon;
-  final VoidCallback? onPressed;
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      style: IconButton.styleFrom(
-        minimumSize: const Size.square(_infoHeadingHeight),
-        visualDensity: VisualDensity.standard,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        padding: EdgeInsets.zero,
-        foregroundColor: Theme.of(context).colorScheme.primary,
-      ),
-      icon: icon,
     );
   }
 }

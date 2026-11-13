@@ -8,6 +8,50 @@ import 'package:nekoproxy/services/exit_info_service.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
+  testWidgets('服务归属按地址去重，拒绝不匹配的记录并保留超时前的结果', (tester) async {
+    final client = _Client()
+      ..addressResponses['/142.251.150.119'] = Future.value(
+        _jsonResponse({
+          'ip': '142.251.150.119',
+          'location': {
+            'country': 'United States',
+            'country_code': 'US',
+            'city': 'Mountain View',
+          },
+          'isp': {'isp': 'Google LLC', 'asn': 'AS15169'},
+        }),
+      )
+      ..addressResponses['/1.1.1.1'] = Future.value(
+        _jsonResponse({
+          'ip': '8.8.8.8',
+          'location': {'country_code': 'US'},
+        }),
+      );
+    final pending = fetchServiceAddressInfo(client, [
+      '142.251.150.119',
+      '142.251.150.119',
+      '1.1.1.1',
+      '2606:4700:4700::1111',
+      '192.168.0.1',
+      'example.com',
+    ]);
+    await tester.pump(const Duration(seconds: 4));
+    expect(client.requests.map((uri) => uri.path), [
+      '/142.251.150.119',
+      '/1.1.1.1',
+      '/2606:4700:4700::1111',
+    ]);
+    expect(await pending, {
+      '142.251.150.119': (
+        region: 'United States · Mountain View',
+        provider: 'Google LLC · AS15169',
+      ),
+    });
+    expect(client.closed, isTrue);
+    client.response.complete(_Response(503, []));
+    await tester.pump();
+  });
+
   testWidgets('每800毫秒增加查询，并发不超过3，成功后停止调度', (tester) async {
     final trace = Completer<HttpClientResponse>();
     final client = _Client()..responses['www.cloudflare.com'] = trace.future;
@@ -286,6 +330,7 @@ class _HttpOverride extends HttpOverrides {
 class _Client implements HttpClient {
   final requests = <Uri>[];
   final responses = <String, Future<HttpClientResponse>>{};
+  final addressResponses = <String, Future<HttpClientResponse>>{};
   Object? primaryError;
   final response = Completer<HttpClientResponse>();
   Uri? uri;
@@ -297,7 +342,9 @@ class _Client implements HttpClient {
     if (url.host == 'www.cloudflare.com' && primaryError != null) {
       throw primaryError!;
     }
-    return _Request(responses[url.host] ?? response.future);
+    return _Request(
+      addressResponses[url.path] ?? responses[url.host] ?? response.future,
+    );
   }
 
   @override

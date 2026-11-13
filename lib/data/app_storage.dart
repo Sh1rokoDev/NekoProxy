@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:math';
 
 import 'package:cryptography/cryptography.dart';
@@ -74,6 +75,27 @@ class LoadResult {
   final String? warning;
 }
 
+Future<LoadResult> _loadSnapshot(List<int> clear) async {
+  // Decoding large states includes constructing every subscription and node.
+  if (clear.length < 128 * 1024) return _decodeSnapshot(clear);
+  return Isolate.run(() => _decodeSnapshot(clear), debugName: 'app state');
+}
+
+LoadResult _decodeSnapshot(List<int> clear) {
+  final snapshotJson = jsonDecode(utf8.decode(clear));
+  if (snapshotJson is! Map) {
+    throw const FormatException('state payload is not an object');
+  }
+  final snapshot = AppSnapshot.fromJson(
+    Map<String, dynamic>.from(snapshotJson),
+  );
+  final duplicates = snapshot.pruneDuplicateNodeIds();
+  return LoadResult(
+    snapshot,
+    warning: duplicates > 0 ? '检测到 $duplicates 个重复节点，已自动清理。' : null,
+  );
+}
+
 class AppStorage {
   AppStorage(this.paths, {FlutterSecureStorage? secureStorage})
     : _secureStorage = secureStorage ?? const FlutterSecureStorage();
@@ -120,20 +142,10 @@ class AppStorage {
         _stateAuthenticationFailed = true;
         rethrow;
       }
-      final snapshotJson = jsonDecode(utf8.decode(clear));
-      if (snapshotJson is! Map) {
-        throw const FormatException('state payload is not an object');
-      }
-      final snapshot = AppSnapshot.fromJson(
-        Map<String, dynamic>.from(snapshotJson),
-      );
-      final duplicates = snapshot.pruneDuplicateNodeIds();
+      final loaded = await _loadSnapshot(clear);
       _stateAuthenticationFailed = false;
       _canBackupState = true;
-      return LoadResult(
-        snapshot,
-        warning: duplicates > 0 ? '检测到 $duplicates 个重复节点，已自动清理。' : null,
-      );
+      return loaded;
     } catch (_) {
       final backup = File(
         '${file.path}.unreadable-${DateTime.now().millisecondsSinceEpoch}',

@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:isolate';
+import 'dart:math';
 
 import 'package:crypto/crypto.dart';
 
@@ -82,6 +84,23 @@ class SubscriptionHeaders {
 }
 
 class ProfileParser {
+  // Large profiles can take several UI frames to parse and deduplicate.
+  static const _backgroundThreshold = 32 * 1024;
+
+  static Future<ParsedProfile> parseInBackground(
+    String content, {
+    SubscriptionHeaders? headers,
+    String? subscriptionId,
+  }) async {
+    if (content.length < _backgroundThreshold) {
+      return parse(content, headers: headers, subscriptionId: subscriptionId);
+    }
+    return Isolate.run(
+      () => parse(content, headers: headers, subscriptionId: subscriptionId),
+      debugName: 'subscription parser',
+    );
+  }
+
   ProfileParser._();
 
   static final _supportedSchemes = {
@@ -109,7 +128,9 @@ class ProfileParser {
     if (trimmed.isEmpty) throw const ParseException('内容为空');
 
     if (_looksLikeClash(trimmed)) {
-      throw const ParseException('不支持 Clash/Mihomo 配置或订阅。请使用 sing-box、节点链接或 Base64 列表。');
+      throw const ParseException(
+        '不支持 Clash/Mihomo 配置或订阅。请使用 sing-box、节点链接或 Base64 列表。',
+      );
     }
 
     ParsedProfile result;
@@ -119,7 +140,9 @@ class ProfileParser {
       final decoded = _tryBase64Text(trimmed);
       if (decoded != null && _containsSupportedLinks(decoded)) {
         result = _parseLinkList(decoded, subscriptionId, format: 'base64');
-      } else if (decoded != null && (decoded.trimLeft().startsWith('{') || decoded.trimLeft().startsWith('['))) {
+      } else if (decoded != null &&
+          (decoded.trimLeft().startsWith('{') ||
+              decoded.trimLeft().startsWith('['))) {
         result = _parseJson(decoded.trim(), subscriptionId);
       } else if (_containsSupportedLinks(trimmed)) {
         result = _parseLinkList(trimmed, subscriptionId);
@@ -130,44 +153,50 @@ class ProfileParser {
 
     final info = headers?.parseUserInfo();
     final interval = int.tryParse(headers?.updateInterval ?? '');
-    final hasUsage = info != null && (info.upload != null || info.download != null || info.total != null);
-    final seen = <String>{};
-    final uniqueNodes = <ProxyNode>[
-      for (final node in result.nodes)
-        if (seen.add(fingerprintOf(node.outbound))) node,
-    ];
+    final hasUsage =
+        info != null &&
+        (info.upload != null || info.download != null || info.total != null);
     return ParsedProfile(
-      nodes: uniqueNodes,
+      nodes: result.nodes,
       usage: hasUsage ? (info.upload ?? 0) + (info.download ?? 0) : null,
       uploadBytes: info?.upload,
       downloadBytes: info?.download,
       totalBytes: info?.total,
       expireAt: info?.expire,
-      updateIntervalMinutes: interval != null && interval > 0 ? interval * 60 : result.updateIntervalMinutes,
+      updateIntervalMinutes: interval != null && interval > 0
+          ? interval * 60
+          : result.updateIntervalMinutes,
       format: result.format,
     );
   }
 
   static bool _looksLikeClash(String text) {
     if (RegExp(r'^\s*proxies\s*:', multiLine: true).hasMatch(text)) return true;
-    if (RegExp(r'^\s*proxy-groups\s*:', multiLine: true).hasMatch(text)) return true;
+    if (RegExp(r'^\s*proxy-groups\s*:', multiLine: true).hasMatch(text)) {
+      return true;
+    }
     if (RegExp(r'^\s*rules\s*:', multiLine: true).hasMatch(text)) return true;
     return text.startsWith('mixed-port:') || text.startsWith('port:');
   }
 
   static bool _containsSupportedLinks(String text) => RegExp(
-        r'^(?:' + _supportedSchemes.map(RegExp.escape).join('|') + r')://',
-        caseSensitive: false,
-        multiLine: true,
-      ).hasMatch(text);
+    r'^(?:' + _supportedSchemes.map(RegExp.escape).join('|') + r')://',
+    caseSensitive: false,
+    multiLine: true,
+  ).hasMatch(text);
 
   static String? _tryBase64Text(String value) {
     final compact = value.replaceAll(RegExp(r'\s+'), '');
-    if (compact.length < 8 || !RegExp(r'^[A-Za-z0-9+/=_-]+$').hasMatch(compact)) return null;
+    if (compact.length < 8 ||
+        !RegExp(r'^[A-Za-z0-9+/=_-]+$').hasMatch(compact)) {
+      return null;
+    }
     try {
       final normalized = base64Url.normalize(compact);
       final decoded = utf8.decode(base64.decode(normalized));
-      return decoded.contains('://') || decoded.trimLeft().startsWith('{') ? decoded : null;
+      return decoded.contains('://') || decoded.trimLeft().startsWith('{')
+          ? decoded
+          : null;
     } catch (_) {
       return null;
     }
@@ -185,7 +214,10 @@ class ProfileParser {
     if (raw is Map) {
       root = Map<String, dynamic>.from(raw);
     } else if (raw is List) {
-      final outbounds = raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      final outbounds = raw
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
       return _profileFromOutbounds(outbounds, subscriptionId, 'sing-box');
     } else {
       throw const ParseException('JSON 根节点必须是对象或数组');
@@ -198,7 +230,9 @@ class ProfileParser {
           .map((e) => Map<String, dynamic>.from(e))
           .where(_isUsableOutbound)
           .toList();
-      if (outbounds.isEmpty) throw const ParseException('sing-box 配置中没有可导入的出站节点');
+      if (outbounds.isEmpty) {
+        throw const ParseException('sing-box 配置中没有可导入的出站节点');
+      }
       return _profileFromOutbounds(outbounds, subscriptionId, 'sing-box');
     }
 
@@ -212,7 +246,13 @@ class ProfileParser {
     final type = outbound['type'];
     final tag = outbound['tag'];
     if (type is! String || tag is! String) return false;
-    return !const {'direct', 'block', 'selector', 'urltest', 'dns'}.contains(type);
+    return !const {
+      'direct',
+      'block',
+      'selector',
+      'urltest',
+      'dns',
+    }.contains(type);
   }
 
   static ParsedProfile _profileFromOutbounds(
@@ -237,28 +277,35 @@ class ProfileParser {
     return ParsedProfile(nodes: _deduplicate(nodes), format: format);
   }
 
-  static Map<String, dynamic> _normalizeOutbound(Map<String, dynamic> outbound) {
+  static Map<String, dynamic> _normalizeOutbound(
+    Map<String, dynamic> outbound,
+  ) {
     final copy = Map<String, dynamic>.from(outbound);
     copy.remove('tag');
     return copy;
   }
 
-  static ParsedProfile _parseLinkList(String text, String? subscriptionId, {String format = 'links'}) {
+  static ParsedProfile _parseLinkList(
+    String text,
+    String? subscriptionId, {
+    String format = 'links',
+  }) {
     final nodes = <ProxyNode>[];
-    final lines = const LineSplitter().convert(text);
-    final errors = <String>[];
-    for (final line in lines) {
+    String? firstError;
+    for (final line in const LineSplitter().convert(text)) {
       final value = line.trim();
       if (value.isEmpty || value.startsWith('#')) continue;
       try {
         final node = parseLink(value, subscriptionId: subscriptionId);
         if (node != null) nodes.add(node);
       } on ParseException catch (e) {
-        errors.add(e.message);
+        firstError ??= e.message;
       }
     }
     if (nodes.isEmpty) {
-      throw ParseException(errors.isEmpty ? '没有可导入的节点链接' : '节点链接均无法解析：${errors.first}');
+      throw ParseException(
+        firstError == null ? '没有可导入的节点链接' : '节点链接均无法解析：$firstError',
+      );
     }
     return ParsedProfile(nodes: _deduplicate(nodes), format: format);
   }
@@ -315,7 +362,9 @@ class ProfileParser {
 
   static String _safeTag(String input) {
     final ascii = input.replaceAll(RegExp(r'[^A-Za-z0-9_-]+'), '-');
-    final cleaned = ascii.replaceAll(RegExp('-+'), '-').replaceAll(RegExp(r'^-|-$'), '');
+    final cleaned = ascii
+        .replaceAll(RegExp('-+'), '-')
+        .replaceAll(RegExp(r'^-|-$'), '');
     if (cleaned.isNotEmpty) return cleaned;
     return '${DateTime.now().microsecondsSinceEpoch}';
   }
@@ -324,8 +373,14 @@ class ProfileParser {
       '${DateTime.now().microsecondsSinceEpoch}-${_counter++}-${_randomSuffix()}';
 
   static int _counter = 0;
+  // Imports may run on separate isolates with independent counters.
+  static final _isolateSeed = Random.secure().nextInt(1 << 32);
+
   static String _randomSuffix() {
-    final seed = DateTime.now().microsecondsSinceEpoch ^ (_counter * 2654435761);
+    final seed =
+        DateTime.now().microsecondsSinceEpoch ^
+        (_counter * 2654435761) ^
+        _isolateSeed;
     return seed.toRadixString(36);
   }
 
@@ -343,7 +398,10 @@ class ProfileParser {
     if (raw.isEmpty) return ('', '');
     final index = raw.indexOf(':');
     if (index < 0) return (Uri.decodeComponent(raw), '');
-    return (Uri.decodeComponent(raw.substring(0, index)), Uri.decodeComponent(raw.substring(index + 1)));
+    return (
+      Uri.decodeComponent(raw.substring(0, index)),
+      Uri.decodeComponent(raw.substring(index + 1)),
+    );
   }
 
   static Map<String, dynamic> _parseShadowsocks(Uri uri) {
@@ -372,7 +430,10 @@ class ProfileParser {
       method = decoded.substring(0, split);
       password = decoded.substring(split + 1);
     }
-    _require(method.isNotEmpty && password.isNotEmpty && host.isNotEmpty && port > 0, 'SS 链接信息不完整');
+    _require(
+      method.isNotEmpty && password.isNotEmpty && host.isNotEmpty && port > 0,
+      'SS 链接信息不完整',
+    );
     _require(!host.contains(' '), 'SS 服务器地址无效');
 
     final outbound = <String, dynamic>{
@@ -429,11 +490,26 @@ class ProfileParser {
       'server': server,
       'server_port': port,
       'uuid': uuid,
-      'security': data['scy']?.toString().isNotEmpty == true ? data['scy'] : 'auto',
+      'security': data['scy']?.toString().isNotEmpty == true
+          ? data['scy']
+          : 'auto',
       'alter_id': int.tryParse(data['aid']?.toString() ?? '0') ?? 0,
     };
-    _applyV2RayTransport(outbound, network: data['net']?.toString() ?? 'tcp', headerType: data['type']?.toString(), host: data['host']?.toString(), path: data['path']?.toString());
-    _applyTls(outbound, security: data['tls']?.toString() ?? '', sni: data['sni']?.toString(), alpn: data['alpn']?.toString(), fingerprint: data['fp']?.toString(), allowInsecure: false);
+    _applyV2RayTransport(
+      outbound,
+      network: data['net']?.toString() ?? 'tcp',
+      headerType: data['type']?.toString(),
+      host: data['host']?.toString(),
+      path: data['path']?.toString(),
+    );
+    _applyTls(
+      outbound,
+      security: data['tls']?.toString() ?? '',
+      sni: data['sni']?.toString(),
+      alpn: data['alpn']?.toString(),
+      fingerprint: data['fp']?.toString(),
+      allowInsecure: false,
+    );
     return outbound;
   }
 
@@ -451,8 +527,26 @@ class ProfileParser {
       'packet_encoding': q['packetEncoding'] ?? q['packet_encoding'],
       'flow': q['flow'],
     }..removeWhere((key, value) => value == null || value == '');
-    _applyV2RayTransport(outbound, network: q['type'] ?? 'tcp', headerType: q['headerType'], host: q['host'], path: q['path'], serviceName: q['serviceName'], earlyDataHeaderName: q['edName'], earlyDataLength: q['edLen']);
-    _applyTls(outbound, security: q['security'] ?? '', sni: q['sni'], alpn: q['alpn'], fingerprint: q['fp'], allowInsecure: q['allowInsecure'] == '1' || q['insecure'] == '1', publicKey: q['pbk'], shortId: q['sid']);
+    _applyV2RayTransport(
+      outbound,
+      network: q['type'] ?? 'tcp',
+      headerType: q['headerType'],
+      host: q['host'],
+      path: q['path'],
+      serviceName: q['serviceName'],
+      earlyDataHeaderName: q['edName'],
+      earlyDataLength: q['edLen'],
+    );
+    _applyTls(
+      outbound,
+      security: q['security'] ?? '',
+      sni: q['sni'],
+      alpn: q['alpn'],
+      fingerprint: q['fp'],
+      allowInsecure: q['allowInsecure'] == '1' || q['insecure'] == '1',
+      publicKey: q['pbk'],
+      shortId: q['sid'],
+    );
     return outbound;
   }
 
@@ -468,8 +562,24 @@ class ProfileParser {
       'server_port': port,
       'password': password,
     };
-    _applyV2RayTransport(outbound, network: q['type'] ?? 'tcp', headerType: q['headerType'], host: q['host'], path: q['path'], serviceName: q['serviceName']);
-    _applyTls(outbound, security: q['security'] ?? 'tls', sni: q['sni'] ?? q['peer'], alpn: q['alpn'], fingerprint: q['fp'], allowInsecure: q['allowInsecure'] == '1' || q['insecure'] == '1', publicKey: q['pbk'], shortId: q['sid']);
+    _applyV2RayTransport(
+      outbound,
+      network: q['type'] ?? 'tcp',
+      headerType: q['headerType'],
+      host: q['host'],
+      path: q['path'],
+      serviceName: q['serviceName'],
+    );
+    _applyTls(
+      outbound,
+      security: q['security'] ?? 'tls',
+      sni: q['sni'] ?? q['peer'],
+      alpn: q['alpn'],
+      fingerprint: q['fp'],
+      allowInsecure: q['allowInsecure'] == '1' || q['insecure'] == '1',
+      publicKey: q['pbk'],
+      shortId: q['sid'],
+    );
     return outbound;
   }
 
@@ -589,7 +699,8 @@ class ProfileParser {
       case 'grpc':
         outbound['transport'] = <String, dynamic>{
           'type': 'grpc',
-          if ((serviceName ?? path)?.isNotEmpty == true) 'service_name': serviceName ?? path,
+          if ((serviceName ?? path)?.isNotEmpty == true)
+            'service_name': serviceName ?? path,
           'idle_timeout': '15s',
           'ping_timeout': '15s',
         };
@@ -654,7 +765,9 @@ class ProfileParser {
 
   static String _decodeBase64(String input) {
     try {
-      final normalized = base64Url.normalize(input.replaceAll(RegExp(r'\s'), ''));
+      final normalized = base64Url.normalize(
+        input.replaceAll(RegExp(r'\s'), ''),
+      );
       final bytes = base64.decode(normalized);
       final text = utf8.decode(bytes);
       return text;
@@ -669,19 +782,14 @@ class ProfileParser {
 
   static List<ProxyNode> _deduplicate(List<ProxyNode> nodes) {
     final seen = <String>{};
-    final result = <ProxyNode>[];
-    for (final node in nodes) {
-      final fingerprint = _fingerprint(node.outbound);
-      if (seen.add(fingerprint)) {
-        result.add(node);
-      } else {
-        result.add(node.copyWith(name: '${node.name} (重复)'));
-      }
-    }
-    return result;
+    return [
+      for (final node in nodes)
+        if (seen.add(fingerprintOf(node.outbound))) node,
+    ];
   }
 
-  static String fingerprintOf(Map<String, dynamic> outbound) => _fingerprint(outbound);
+  static String fingerprintOf(Map<String, dynamic> outbound) =>
+      _fingerprint(outbound);
 
   static String _fingerprint(Map<String, dynamic> outbound) {
     final ordered = _canonical(outbound);

@@ -4,6 +4,30 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/domain/profile_parser.dart';
 
 void main() {
+  test('大订阅后台解析保留元数据、去重顺序和节点归属', () async {
+    final links = List.generate(
+      800,
+      (index) => 'trojan://sample@node-$index.example:443#Node-$index',
+    );
+    final content = [...links, '${links.first}-duplicate'].join('\n');
+    const headers = SubscriptionHeaders(
+      userInfo: 'upload=1024; download=2048; total=8192',
+      updateInterval: '2',
+    );
+    final profile = await ProfileParser.parseInBackground(
+      content,
+      headers: headers,
+      subscriptionId: 'group',
+    );
+    expect(profile.nodes, hasLength(800));
+    expect(profile.nodes.first.name, 'Node-0');
+    expect(profile.nodes.last.name, 'Node-799');
+    expect(profile.nodes.map((node) => node.subscriptionId).toSet(), {'group'});
+    expect(profile.usage, 3072);
+    expect(profile.totalBytes, 8192);
+    expect(profile.updateIntervalMinutes, 120);
+  });
+
   group('ProfileParser links', () {
     test('parses shadowsocks link', () {
       final profile = ProfileParser.parse(
@@ -21,7 +45,8 @@ void main() {
     });
 
     test('parses base64 encoded link list', () {
-      const links = 'trojan://secret@example.org:443?sni=example.org#Node%20A\n'
+      const links =
+          'trojan://secret@example.org:443?sni=example.org#Node%20A\n'
           'vless://00000000-0000-0000-0000-000000000000@example.net:443?security=tls#Node%20B';
       final encoded = base64.encode(utf8.encode(links));
       final profile = ProfileParser.parse(encoded);
@@ -32,20 +57,24 @@ void main() {
     });
 
     test('parses vmess json link', () {
-      final payload = base64.encode(utf8.encode(jsonEncode({
-        'v': '2',
-        'ps': 'VMess Node',
-        'add': 'vm.example.com',
-        'port': '8443',
-        'id': '11111111-2222-3333-4444-555555555555',
-        'aid': '0',
-        'scy': 'auto',
-        'net': 'ws',
-        'host': 'cdn.example.com',
-        'path': '/ws',
-        'tls': 'tls',
-        'sni': 'cdn.example.com',
-      })));
+      final payload = base64.encode(
+        utf8.encode(
+          jsonEncode({
+            'v': '2',
+            'ps': 'VMess Node',
+            'add': 'vm.example.com',
+            'port': '8443',
+            'id': '11111111-2222-3333-4444-555555555555',
+            'aid': '0',
+            'scy': 'auto',
+            'net': 'ws',
+            'host': 'cdn.example.com',
+            'path': '/ws',
+            'tls': 'tls',
+            'sni': 'cdn.example.com',
+          }),
+        ),
+      );
       final profile = ProfileParser.parse('vmess://$payload');
       final outbound = profile.nodes.single.outbound;
       expect(outbound['type'], 'vmess');
@@ -56,7 +85,8 @@ void main() {
     });
 
     test('drops duplicate outbounds from the same subscription', () {
-      const links = 'ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@example.com:8388#Tokyo\n'
+      const links =
+          'ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@example.com:8388#Tokyo\n'
           'ss://YWVzLTI1Ni1nY206cGFzc3dvcmQ@example.com:8388#Tokyo-mirror';
       final profile = ProfileParser.parse(base64.encode(utf8.encode(links)));
       expect(profile.nodes, hasLength(1));
@@ -110,36 +140,46 @@ void main() {
 
   group('ProfileParser sing-box json', () {
     test('imports supported outbounds and skips built-ins', () {
-      final profile = ProfileParser.parse(jsonEncode({
-        'outbounds': [
-          {'type': 'direct', 'tag': 'direct'},
-          {'type': 'selector', 'tag': 'proxy', 'outbounds': ['node-a']},
-          {
-            'type': 'hysteria2',
-            'tag': 'node-a',
-            'server': 'hy.example.com',
-            'server_port': 443,
-            'password': 'pw',
-          },
-        ],
-      }));
+      final profile = ProfileParser.parse(
+        jsonEncode({
+          'outbounds': [
+            {'type': 'direct', 'tag': 'direct'},
+            {
+              'type': 'selector',
+              'tag': 'proxy',
+              'outbounds': ['node-a'],
+            },
+            {
+              'type': 'hysteria2',
+              'tag': 'node-a',
+              'server': 'hy.example.com',
+              'server_port': 443,
+              'password': 'pw',
+            },
+          ],
+        }),
+      );
       expect(profile.nodes, hasLength(1));
       expect(profile.nodes.single.outbound['type'], 'hysteria2');
       expect(profile.nodes.single.outbound.containsKey('tag'), isFalse);
     });
 
     test('imports sing-box json wrapped in base64', () {
-      final payload = base64.encode(utf8.encode(jsonEncode({
-        'outbounds': [
-          {
-            'type': 'trojan',
-            'tag': 'encoded',
-            'server': 'example.com',
-            'server_port': 443,
-            'password': 'pw',
-          },
-        ],
-      })));
+      final payload = base64.encode(
+        utf8.encode(
+          jsonEncode({
+            'outbounds': [
+              {
+                'type': 'trojan',
+                'tag': 'encoded',
+                'server': 'example.com',
+                'server_port': 443,
+                'password': 'pw',
+              },
+            ],
+          }),
+        ),
+      );
       final profile = ProfileParser.parse(payload);
       expect(profile.nodes, hasLength(1));
       expect(profile.nodes.single.outbound['type'], 'trojan');
@@ -147,7 +187,9 @@ void main() {
 
     test('rejects configuration without usable outbounds', () {
       expect(
-        () => ProfileParser.parse('{"outbounds":[{"type":"direct","tag":"direct"}]}'),
+        () => ProfileParser.parse(
+          '{"outbounds":[{"type":"direct","tag":"direct"}]}',
+        ),
         throwsA(isA<ParseException>()),
       );
     });
@@ -161,7 +203,10 @@ void main() {
           isA<ParseException>().having(
             (error) => error.message,
             'message',
-            allOf(contains('JSON 解析失败'), isNot(contains('private-test-password'))),
+            allOf(
+              contains('JSON 解析失败'),
+              isNot(contains('private-test-password')),
+            ),
           ),
         ),
       );
@@ -170,7 +215,9 @@ void main() {
     test('rejects Clash YAML subscriptions', () {
       expect(
         () => ProfileParser.parse('proxies:\n  - name: a\n    type: ss'),
-        throwsA(predicate((e) => e is ParseException && e.message.contains('Clash'))),
+        throwsA(
+          predicate((e) => e is ParseException && e.message.contains('Clash')),
+        ),
       );
     });
 
@@ -178,7 +225,8 @@ void main() {
       final profile = ProfileParser.parse(
         'trojan://pw@example.com:443#Node',
         headers: const SubscriptionHeaders(
-          userInfo: 'upload=1024; download=2048; total=1048576; expire=1893456000',
+          userInfo:
+              'upload=1024; download=2048; total=1048576; expire=1893456000',
           updateInterval: '12',
         ),
       );
@@ -189,8 +237,16 @@ void main() {
     });
 
     test('fingerprint ignores map key order', () {
-      final a = ProfileParser.fingerprintOf({'type': 'ss', 'server': 'a', 'port': 1});
-      final b = ProfileParser.fingerprintOf({'port': 1, 'server': 'a', 'type': 'ss'});
+      final a = ProfileParser.fingerprintOf({
+        'type': 'ss',
+        'server': 'a',
+        'port': 1,
+      });
+      final b = ProfileParser.fingerprintOf({
+        'port': 1,
+        'server': 'a',
+        'type': 'ss',
+      });
       expect(a, b);
     });
   });

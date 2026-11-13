@@ -1,7 +1,9 @@
 import 'models.dart';
 
+final _filterSeparator = RegExp(r'[\n,，]');
+
 List<String> splitFilterKeywords(String raw) => raw
-    .split(RegExp(r'[\n,，]'))
+    .split(_filterSeparator)
     .map((item) => item.trim().toLowerCase())
     .where((item) => item.isNotEmpty)
     .toList();
@@ -10,9 +12,14 @@ bool nodeMatchesFilter(
   ProxyNode node, {
   required String includeFilter,
   required String excludeFilter,
-}) {
-  final include = splitFilterKeywords(includeFilter);
-  final exclude = splitFilterKeywords(excludeFilter);
+}) => _matches(
+  node,
+  splitFilterKeywords(includeFilter),
+  splitFilterKeywords(excludeFilter),
+);
+
+bool _matches(ProxyNode node, List<String> include, List<String> exclude) {
+  if (include.isEmpty && exclude.isEmpty) return true;
   final haystack = '${node.name} ${node.server} ${node.protocol}'.toLowerCase();
   if (include.isNotEmpty && !include.any(haystack.contains)) return false;
   if (exclude.any(haystack.contains)) return false;
@@ -27,15 +34,12 @@ List<ProxyNode> applyNodeView({
   bool sortDescending = false,
   Map<String, int> latencies = const {},
 }) {
-  final visible = [
-    for (final node in nodes)
-      if (nodeMatchesFilter(
-        node,
-        includeFilter: includeFilter,
-        excludeFilter: excludeFilter,
-      ))
-        node,
-  ];
+  final include = splitFilterKeywords(includeFilter);
+  final exclude = splitFilterKeywords(excludeFilter);
+  final visible = include.isEmpty && exclude.isEmpty
+      ? nodes.toList()
+      : nodes.where((node) => _matches(node, include, exclude)).toList();
+  if (sortMode == NodeSortMode.manual && !sortDescending) return visible;
   return sortNodeList(
     visible,
     mode: sortMode,
@@ -50,31 +54,40 @@ List<ProxyNode> sortNodeList(
   required bool descending,
   Map<String, int> latencies = const {},
 }) {
+  if (mode == NodeSortMode.manual) {
+    return descending ? nodes.reversed.toList() : List.of(nodes);
+  }
+  if (mode == NodeSortMode.latency && latencies.isEmpty) {
+    return List.of(nodes);
+  }
+  final sortByName = mode == NodeSortMode.name || mode == NodeSortMode.protocol;
   final indexed = [
-    for (var i = 0; i < nodes.length; i++) (index: i, node: nodes[i]),
+    for (var i = 0; i < nodes.length; i++)
+      (
+        index: i,
+        node: nodes[i],
+        name: sortByName ? nodes[i].name.toLowerCase() : '',
+        protocol: mode == NodeSortMode.protocol
+            ? nodes[i].protocol.toLowerCase()
+            : '',
+        delay: mode == NodeSortMode.latency ? latencies[nodes[i].id] : null,
+      ),
   ];
   indexed.sort((a, b) {
     int primary;
     switch (mode) {
       case NodeSortMode.manual:
-        primary = a.index.compareTo(b.index);
-        return descending ? -primary : primary;
+        return 0; // Handled before building the sort keys.
       case NodeSortMode.name:
-        primary = a.node.name.toLowerCase().compareTo(
-          b.node.name.toLowerCase(),
-        );
+        primary = a.name.compareTo(b.name);
       case NodeSortMode.protocol:
-        primary = a.node.protocol.toLowerCase().compareTo(
-          b.node.protocol.toLowerCase(),
-        );
+        primary = a.protocol.compareTo(b.protocol);
         if (primary == 0) {
-          primary = a.node.name.toLowerCase().compareTo(
-            b.node.name.toLowerCase(),
-          );
+          primary = a.name.compareTo(b.name);
         }
       case NodeSortMode.latency:
-        final left = latencies[a.node.id];
-        final right = latencies[b.node.id];
+        final left = a.delay;
+        final right = b.delay;
         if (left == null && right == null) {
           primary = a.index.compareTo(b.index);
           return primary;

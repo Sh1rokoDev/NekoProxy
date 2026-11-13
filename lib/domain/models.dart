@@ -905,6 +905,8 @@ class AppSnapshot {
     for (final sub in subscriptions) ...sub.nodes,
   ];
 
+  bool get hasNodes => subscriptions.any((group) => group.nodes.isNotEmpty);
+
   int pruneDuplicateNodeIds() {
     final seen = <String>{};
     var removed = 0;
@@ -920,8 +922,10 @@ class AppSnapshot {
 
   ProxyNode? nodeById(String? id) {
     if (id == null) return null;
-    for (final node in allNodes) {
-      if (node.id == id) return node;
+    for (final group in subscriptions) {
+      for (final node in group.nodes) {
+        if (node.id == id) return node;
+      }
     }
     return null;
   }

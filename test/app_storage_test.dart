@@ -97,6 +97,38 @@ void main() {
       expect((await storage.load()).warning, isNull);
       await storage.save(AppSnapshot.empty());
     });
+
+    test('后台读取大状态时保留设置和原有的重复节点清理规则', () async {
+      final nodes = List.generate(
+        1200,
+        (i) => ProxyNode(
+          id: 'node-$i',
+          tag: 'sample',
+          name: '节点 $i',
+          outbound: {'type': 'trojan', 'server': 'node-$i.example'},
+          subscriptionId: 'sample',
+        ),
+      );
+      final snapshot = AppSnapshot.empty()
+        ..subscriptions.add(
+          Subscription(
+            id: 'sample',
+            name: '模拟订阅',
+            nodes: [
+              ...nodes,
+              nodes.first.copyWith(name: '重复节点'),
+            ],
+          ),
+        );
+      snapshot.settings.manualNodeId = nodes.last.id;
+
+      await storage.save(snapshot);
+      final loaded = await storage.load();
+      expect(loaded.warning, contains('1 个重复节点'));
+      expect(loaded.snapshot.allNodes, hasLength(1200));
+      expect(loaded.snapshot.allNodes.first.name, '节点 0');
+      expect(loaded.snapshot.settings.manualNodeId, nodes.last.id);
+    });
   });
 
   test('导出备份保存在 userdata 下，并保留此前导出的文件', () async {

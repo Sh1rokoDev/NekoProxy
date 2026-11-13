@@ -108,6 +108,7 @@ class AppController extends ChangeNotifier {
   bool _disposed = false;
   final List<HomeActivity> homeActivities = [];
   CompiledConfig? _compiled;
+  Map<String, String> _connectionNodeNames = const {};
   String? _effectiveTag;
   bool _unexpectedStop = false;
   bool _temporaryTestRuntime = false;
@@ -299,6 +300,11 @@ class AppController extends ChangeNotifier {
       if (entry.value == tag) return snapshot.nodeById(entry.key);
     }
     return null;
+  }
+
+  String? nodeNameForOutboundTag(String outboundTag) {
+    if (outboundTag.isEmpty) return null;
+    return _connectionNodeNames[outboundTag];
   }
 
   ProxyNode? get offlineRecommendedNode {
@@ -534,6 +540,14 @@ class AppController extends ChangeNotifier {
       final compiled = compile();
       await ruleSets.prepareLocalFiles(compiled.localRuleSetPaths);
       _compiled = compiled;
+      final connectionNodeNames = <String, String>{};
+      for (final entry in compiled.nodeTags.entries) {
+        final node = snapshot.nodeById(entry.key);
+        if (node != null && node.name.isNotEmpty) {
+          connectionNodeNames[entry.value] = node.name;
+        }
+      }
+      _connectionNodeNames = connectionNodeNames;
       _effectiveTag = null;
       if (compiled.warnings.isNotEmpty) notice = compiled.warnings.first;
       final tunMode =
@@ -611,6 +625,7 @@ class AppController extends ChangeNotifier {
     if (!running && !silent) {
       notifyListeners();
       await runtime.shutdown();
+      _connectionNodeNames = const {};
       return;
     }
     busy = true;
@@ -627,6 +642,7 @@ class AppController extends ChangeNotifier {
       traffic = const RuntimeTraffic();
       connections = const [];
       samples = const [];
+      _connectionNodeNames = const {};
       _effectiveTag = null;
       connectedAt = null;
       if (wasRunning) _recordHomeActivity('代理已断开');

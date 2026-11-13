@@ -948,114 +948,14 @@ class _NodesPageState extends State<NodesPage> {
     BuildContext context,
     AppController controller,
   ) async {
-    final urlController = TextEditingController();
-    final nameController = TextEditingController();
-    final uaController = TextEditingController();
-    final formKey = GlobalKey<FormState>();
-    var loading = false;
-    String? error;
     final submitted = await showDialog<bool>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          scrollable: true,
-          title: const Text('新建订阅分组'),
-          content: SizedBox(
-            width: 520,
-            child: Form(
-              key: formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextFormField(
-                    controller: urlController,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      labelText: '订阅 URL',
-                      hintText: 'https://example.com/sub',
-                    ),
-                    validator: (value) {
-                      final uri = Uri.tryParse(value?.trim() ?? '');
-                      if (uri == null ||
-                          !(uri.scheme == 'http' || uri.scheme == 'https')) {
-                        return '请输入有效的 http(s) 链接';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: nameController,
-                    decoration: const InputDecoration(labelText: '名称（可选）'),
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: uaController,
-                    decoration: const InputDecoration(
-                      labelText: 'User-Agent（可选）',
-                      hintText: '留空使用 NekoProxy 默认值',
-                    ),
-                  ),
-                  if (error != null) ...[
-                    const SizedBox(height: 10),
-                    Text(
-                      error!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
-                    ),
-                  ],
-                  if (loading) ...[
-                    const SizedBox(height: 14),
-                    const LinearProgressIndicator(),
-                  ],
-                ],
-              ),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: loading ? null : () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: loading
-                  ? null
-                  : () async {
-                      if (formKey.currentState?.validate() != true) return;
-                      setDialogState(() {
-                        loading = true;
-                        error = null;
-                      });
-                      try {
-                        await controller.importFromUrl(
-                          url: urlController.text.trim(),
-                          name: nameController.text,
-                          userAgent: uaController.text.trim(),
-                        );
-                        if (context.mounted) Navigator.pop(context, true);
-                      } catch (e) {
-                        setDialogState(() {
-                          loading = false;
-                          error = e.toString();
-                        });
-                      }
-                    },
-              child: const Text('导入'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => _SubscriptionImportDialog(controller: controller),
     );
     if (submitted == true && context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('订阅已导入')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('订阅已导入')));
     }
-    urlController.dispose();
-    nameController.dispose();
-    uaController.dispose();
   }
 
   Future<void> _showContentDialog(
@@ -1260,6 +1160,126 @@ class _NodesPageState extends State<NodesPage> {
       );
     }
   }
+}
+
+class _SubscriptionImportDialog extends StatefulWidget {
+  const _SubscriptionImportDialog({required this.controller});
+
+  final AppController controller;
+
+  @override
+  State<_SubscriptionImportDialog> createState() =>
+      _SubscriptionImportDialogState();
+}
+
+class _SubscriptionImportDialogState extends State<_SubscriptionImportDialog> {
+  final _urlController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _uaController = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    _nameController.dispose();
+    _uaController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_loading || _formKey.currentState?.validate() != true) return;
+    final route = ModalRoute.of(context);
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      await widget.controller.importFromUrl(
+        url: _urlController.text.trim(),
+        name: _nameController.text,
+        userAgent: _uaController.text.trim(),
+      );
+    } catch (error) {
+      if (!mounted || route?.isActive != true) return;
+      setState(() {
+        _loading = false;
+        _error = error.toString();
+      });
+      return;
+    }
+    if (mounted && route?.isCurrent == true) Navigator.pop(context, true);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+    scrollable: true,
+    title: const Text('新建订阅分组'),
+    content: SizedBox(
+      width: 520,
+      child: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              controller: _urlController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: '订阅 URL',
+                hintText: 'https://example.com/sub',
+              ),
+              validator: (value) {
+                final uri = Uri.tryParse(value?.trim() ?? '');
+                if (uri == null ||
+                    !(uri.scheme == 'http' || uri.scheme == 'https')) {
+                  return '请输入有效的 http(s) 链接';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _nameController,
+              decoration: const InputDecoration(labelText: '名称（可选）'),
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _uaController,
+              decoration: const InputDecoration(
+                labelText: 'User-Agent（可选）',
+                hintText: '留空使用 NekoProxy 默认值',
+              ),
+            ),
+            if (_error case final error?) ...[
+              const SizedBox(height: 10),
+              Text(
+                error,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
+            if (_loading) ...[
+              const SizedBox(height: 14),
+              const LinearProgressIndicator(),
+            ],
+          ],
+        ),
+      ),
+    ),
+    actions: [
+      TextButton(
+        onPressed: _loading ? null : () => Navigator.pop(context, false),
+        child: const Text('取消'),
+      ),
+      FilledButton(
+        onPressed: _loading ? null : _submit,
+        child: const Text('导入'),
+      ),
+    ],
+  );
 }
 
 class _SelectionToggle extends StatelessWidget {

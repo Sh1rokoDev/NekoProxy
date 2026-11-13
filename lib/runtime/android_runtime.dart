@@ -138,6 +138,11 @@ class AndroidRuntimeClient implements RuntimeClient {
   }
 
   @override
+  Future<void> closeConnection(String id) async {
+    await _invoke<void>('closeConnection', {'connectionId': id});
+  }
+
+  @override
   Future<void> clearConnections() async {
     await _invoke<void>('clear');
   }

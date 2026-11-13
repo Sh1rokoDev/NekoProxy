@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/uuid/v5"
 	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
@@ -73,6 +74,7 @@ type ConnectionInfo struct {
 	Domain      string `json:"domain,omitempty"`
 	Outbound    string `json:"outbound"`
 	Rule        string `json:"rule,omitempty"`
+	RuleIndex   *int   `json:"ruleIndex,omitempty"`
 	Uploaded    int64  `json:"uploaded"`
 	Downloaded  int64  `json:"downloaded"`
 	CreatedAt   int64  `json:"createdAt"`
@@ -84,6 +86,7 @@ type Engine struct {
 	cancel      context.CancelFunc
 	scope       *adapter.Scope
 	traffic     *trafficcontrol.Manager
+	ruleIndices map[adapter.Rule]int
 	startedAt   time.Time
 	lastError   string
 	inboundPort int
@@ -152,6 +155,11 @@ func (e *Engine) StartWithPlatform(configData []byte, platform adapter.PlatformI
 	e.cancel = cancel
 	e.scope = scope
 	e.traffic = manager
+	rules := instance.Router().Rules()
+	e.ruleIndices = make(map[adapter.Rule]int, len(rules))
+	for index, rule := range rules {
+		e.ruleIndices[rule] = index
+	}
 	e.startedAt = time.Now()
 	e.lastError = ""
 	e.inboundPort = findMixedPort(options.Inbounds)
@@ -210,6 +218,7 @@ func (e *Engine) closeLocked() error {
 	traffic := e.traffic
 	e.instance = nil
 	e.traffic = nil
+	e.ruleIndices = nil
 	e.scope = nil
 	startedAt := e.startedAt
 	_ = startedAt
@@ -306,6 +315,7 @@ func (e *Engine) Traffic() Traffic {
 func (e *Engine) Connections() []ConnectionInfo {
 	e.mu.RLock()
 	manager := e.traffic
+	ruleIndices := e.ruleIndices
 	e.mu.RUnlock()
 	if manager == nil {
 		return nil
@@ -315,8 +325,12 @@ func (e *Engine) Connections() []ConnectionInfo {
 	for _, tracker := range trackers {
 		metadata := tracker.Metadata
 		rule := ""
+		var ruleIndex *int
 		if tracker.Rule != nil {
 			rule = tracker.Rule.String()
+			if index, ok := ruleIndices[tracker.Rule]; ok {
+				ruleIndex = &index
+			}
 		}
 		result = append(result, ConnectionInfo{
 			ID:          tracker.ID.String(),
@@ -326,12 +340,29 @@ func (e *Engine) Connections() []ConnectionInfo {
 			Domain:      metadata.Domain,
 			Outbound:    tracker.Outbound,
 			Rule:        rule,
+			RuleIndex:   ruleIndex,
 			Uploaded:    tracker.Upload.Load(),
 			Downloaded:  tracker.Download.Load(),
 			CreatedAt:   tracker.CreatedAt.UnixMilli(),
 		})
 	}
 	return result
+}
+
+func (e *Engine) CloseConnection(id string) error {
+	connectionID, err := uuid.FromString(id)
+	if err != nil {
+		return errors.New("invalid connection ID")
+	}
+	e.mu.RLock()
+	manager := e.traffic
+	e.mu.RUnlock()
+	if manager != nil {
+		if connection := manager.Connection(connectionID); connection != nil {
+			return connection.Close()
+		}
+	}
+	return nil // The connection may have ended before the request arrived.
 }
 
 func (e *Engine) CloseConnections() {

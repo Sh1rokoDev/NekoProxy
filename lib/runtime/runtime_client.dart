@@ -76,6 +76,7 @@ class RuntimeConnection {
     required this.domain,
     required this.outbound,
     required this.rule,
+    this.ruleIndex,
     required this.uploaded,
     required this.downloaded,
     required this.createdAt,
@@ -88,11 +89,13 @@ class RuntimeConnection {
   final String domain;
   final String outbound;
   final String rule;
+  final int? ruleIndex;
   final int uploaded;
   final int downloaded;
   final int createdAt;
 
-  factory RuntimeConnection.fromJson(Map<String, dynamic> json) => RuntimeConnection(
+  factory RuntimeConnection.fromJson(Map<String, dynamic> json) =>
+      RuntimeConnection(
         id: json['id'] as String? ?? '',
         network: json['network'] as String? ?? '',
         source: json['source'] as String? ?? '',
@@ -100,6 +103,7 @@ class RuntimeConnection {
         domain: json['domain'] as String? ?? '',
         outbound: json['outbound'] as String? ?? '',
         rule: json['rule'] as String? ?? '',
+        ruleIndex: json['ruleIndex'] as int?,
         uploaded: (json['uploaded'] as num?)?.toInt() ?? 0,
         downloaded: (json['downloaded'] as num?)?.toInt() ?? 0,
         createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
@@ -146,6 +150,7 @@ abstract class RuntimeClient {
   Future<Map<String, RuntimeTestResult>> test(List<String> tags, String url);
   Future<void> startTest({required String config});
   Future<void> stopTest();
+  Future<void> closeConnection(String id);
   Future<void> clearConnections();
   Future<void> shutdown();
   Future<void> cleanupStale();
@@ -422,6 +427,11 @@ class WindowsRuntimeClient implements RuntimeClient {
 
   @override
   Future<void> stopTest() => shutdown();
+
+  @override
+  Future<void> closeConnection(String id) async {
+    await _request('closeConnection', {'connectionId': id});
+  }
 
   @override
   Future<void> clearConnections() async {

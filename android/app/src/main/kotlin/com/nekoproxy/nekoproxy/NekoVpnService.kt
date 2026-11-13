@@ -149,6 +149,10 @@ class NekoVpnService : VpnService() {
             }
         }
 
+        fun closeConnection(id: String) {
+            engine?.closeConnection(id)
+        }
+
         fun clearConnections() {
             engine?.clearConnections()
         }

@@ -14,12 +14,13 @@ import (
 )
 
 type Request struct {
-	ID     int64              `json:"id"`
-	Cmd    string             `json:"cmd"`
-	Tag    string             `json:"tag,omitempty"`
-	Tags   []string           `json:"tags,omitempty"`
-	URL    string             `json:"url,omitempty"`
-	Delays map[string]*uint16 `json:"delays,omitempty"`
+	ID           int64              `json:"id"`
+	Cmd          string             `json:"cmd"`
+	ConnectionID string             `json:"connectionId,omitempty"`
+	Tag          string             `json:"tag,omitempty"`
+	Tags         []string           `json:"tags,omitempty"`
+	URL          string             `json:"url,omitempty"`
+	Delays       map[string]*uint16 `json:"delays,omitempty"`
 }
 
 type Response struct {
@@ -188,6 +189,11 @@ func (s *Server) execute(ctx context.Context, request Request) Response {
 		ctx, cancel := context.WithTimeout(ctx, 40*time.Second)
 		defer cancel()
 		return Response{OK: true, Data: s.engine.Test(ctx, request.Tags, request.URL)}
+	case "closeConnection":
+		if err := s.engine.CloseConnection(request.ConnectionID); err != nil {
+			return Response{Error: err.Error()}
+		}
+		return Response{OK: true}
 	case "clear":
 		s.engine.CloseConnections()
 		return Response{OK: true}

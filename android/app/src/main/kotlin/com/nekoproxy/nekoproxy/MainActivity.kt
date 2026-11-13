@@ -86,6 +86,10 @@ class MainActivity : FlutterActivity() {
                     TestRuntime.stop()
                     null
                 }
+                "closeConnection" -> runAsync(result) {
+                    NekoVpnService.closeConnection(requireNotNull(call.argument<String>("connectionId")))
+                    null
+                }
                 "clear" -> runAsync(result) {
                     NekoVpnService.clearConnections()
                     null

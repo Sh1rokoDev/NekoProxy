@@ -97,6 +97,10 @@ func (e *Engine) Test(tagsJSON string, url string) string {
 	return marshal(e.inner.Test(context.Background(), tags, url))
 }
 
+func (e *Engine) CloseConnection(id string) error {
+	return e.inner.CloseConnection(id)
+}
+
 func (e *Engine) ClearConnections() {
 	e.inner.CloseConnections()
 }

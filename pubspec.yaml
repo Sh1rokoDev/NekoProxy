@@ -3,7 +3,7 @@ description: A clean, cross-platform sing-box client for Android and Windows.
 publish_to: 'none'
 # 对外版本由构建脚本注入为 <版本>+<git 短哈希>，详见 AGENTS.md。
 # 此处构建号必须保持数字，供 Flutter、Android versionCode 与 Windows 资源版本使用。
-version: 1.5.0+17
+version: 1.5.1+18
 
 environment:
   sdk: '>=3.14.0 <4.0.0'

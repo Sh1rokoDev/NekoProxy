@@ -362,6 +362,21 @@ void main() {
       );
       expect(cn['action'], 'route');
       expect(cn['outbound'], compiled.proxyGroupTag);
+      expect(compiled.routeRuleNames[rules.indexOf(cn)], cnDomain.name);
+
+      snapshot.advancedJson = {
+        'route': {
+          'rules': [
+            {'domain': 'example.com', 'action': 'route', 'outbound': 'direct'},
+          ],
+        },
+      };
+      final overridden = ConfigCompiler.compile(
+        snapshot,
+        target: CompileTarget.android,
+        cachePath: '/tmp/cache.db',
+      );
+      expect(overridden.routeRuleNames, isEmpty);
     });
 
     test('unknown rule sets are skipped with a warning', () {

@@ -28,6 +28,7 @@ class CompiledConfig {
     required this.proxyGroupTag,
     required this.autoGroupTag,
     required this.custom,
+    this.routeRuleNames = const {},
   });
 
   final Map<String, dynamic> json;
@@ -37,6 +38,7 @@ class CompiledConfig {
   final String proxyGroupTag;
   final String autoGroupTag;
   final bool custom;
+  final Map<int, String> routeRuleNames;
 
   Iterable<String> get localRuleSetPaths sync* {
     final route = json['route'];
@@ -132,18 +134,8 @@ class ConfigCompiler {
     }
     final proxyGroupTag = useAuto ? autoTag : proxyTag;
 
-    final nodeTags = <String, String>{};
-    final nodeTagsById = <String, String>{};
-    for (final node in nodes) {
-      var tag = nodeTag(node);
-      var suffix = 2;
-      while (nodeTags.containsValue(tag)) {
-        tag = '${nodeTag(node)}-$suffix';
-        suffix++;
-      }
-      nodeTags[node.id] = tag;
-      nodeTagsById[node.id] = tag;
-    }
+    // IDs are already unique, and nodeTag maps each ID to a unique tag.
+    final nodeTags = {for (final node in nodes) node.id: nodeTag(node)};
 
     final manualNode = snapshot.nodeById(settings.manualNodeId);
     final selectedTag =
@@ -164,7 +156,7 @@ class ConfigCompiler {
     outbounds.add({
       'type': 'selector',
       'tag': proxyTag,
-      'outbounds': [for (final node in nodes) nodeTagsById[node.id]!],
+      'outbounds': [for (final node in nodes) nodeTags[node.id]!],
       'default': selectedTag,
     });
 
@@ -182,7 +174,7 @@ class ConfigCompiler {
       outbounds.add({
         'type': 'urltest',
         'tag': autoTag,
-        'outbounds': [for (final node in autoCandidates) nodeTagsById[node.id]!],
+        'outbounds': [for (final node in autoCandidates) nodeTags[node.id]!],
         'url': settings.advancedOrDefault.urlTestUrl,
         'interval': settings.advancedOrDefault.urlTestInterval,
         'tolerance': settings.advancedOrDefault.urlTestTolerance,
@@ -200,7 +192,7 @@ class ConfigCompiler {
       if (outbound.remove('domain_resolver') != null) {
         warnings.add('节点「${node.name}」的 domain_resolver 引用未包含在订阅中，已忽略。');
       }
-      outbound['tag'] = nodeTagsById[node.id]!;
+      outbound['tag'] = nodeTags[node.id]!;
       outbounds.add(outbound);
     }
 
@@ -224,6 +216,7 @@ class ConfigCompiler {
             systemDns,
             activeRuleSets,
           );
+    final routeRuleNames = <int, String>{};
     final route = testOnly
         ? <String, dynamic>{
             'final': proxyTag,
@@ -240,7 +233,9 @@ class ConfigCompiler {
             availableRuleSets,
             activeRuleSets,
             systemDns,
+            routeRuleNames,
           );
+    final generatedRules = route['rules'];
     final inbounds = <Map<String, dynamic>>[
       if (!testOnly) _buildMixedInbound(snapshot, target),
       if (!testOnly && (settings.tunEnabled || target == CompileTarget.android))
@@ -285,6 +280,7 @@ class ConfigCompiler {
       );
     }
 
+    final effectiveRoute = config['route'];
     return CompiledConfig(
       json: config,
       encoded: const JsonEncoder.withIndent('  ').convert(config),
@@ -293,6 +289,12 @@ class ConfigCompiler {
       proxyGroupTag: proxyGroupTag,
       autoGroupTag: autoTag,
       custom: false,
+      // Advanced JSON can replace the entire rule list, invalidating its indices.
+      routeRuleNames:
+          effectiveRoute is Map &&
+              identical(generatedRules, effectiveRoute['rules'])
+          ? Map.unmodifiable(routeRuleNames)
+          : const {},
     );
   }
 
@@ -565,6 +567,7 @@ class ConfigCompiler {
     Map<String, String> ruleSetPaths,
     Set<String> activeRuleSets,
     String? systemDns,
+    Map<int, String> routeRuleNames,
   ) {
     final settings = snapshot.settings;
     final mode = settings.splitMode;
@@ -592,7 +595,10 @@ class ConfigCompiler {
           warnings,
           activeRuleSets,
         );
-        if (built != null) rules.add(built);
+        if (built != null) {
+          routeRuleNames[rules.length] = rule.name;
+          rules.add(built);
+        }
       }
     }
 

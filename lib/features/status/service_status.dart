@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../services/connectivity_service.dart';
 import '../../state/app_controller.dart';
@@ -175,10 +176,10 @@ class ServiceStatusPage extends StatelessWidget {
         : checked == 0
         ? '$routeLabel · 共 ${connectivityServices.length} 项'
         : '$routeLabel · 已检测 $checked 项';
-    return Scaffold(
-      appBar: AppBar(title: const Text('服务状态')),
-      body: ListView(
-        padding: const EdgeInsets.all(24),
+    return HeaderScaffold(
+      title: const Text('服务状态'),
+      body: (headerInset) => ListView(
+        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         children: [
           Center(
             child: ConstrainedBox(

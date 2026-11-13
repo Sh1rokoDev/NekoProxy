@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../runtime/runtime_client.dart';
@@ -69,24 +70,24 @@ class _AppsPageState extends State<AppsPage> {
             app.packageName.toLowerCase().contains(query))
         .toList();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('分应用代理'),
-        actions: [
-          if (controller.running)
-            Padding(
-              padding: const EdgeInsets.only(right: 12),
-              child: FilledButton.tonalIcon(
-                onPressed: _reconnecting ? null : () => _reconnect(controller),
-                icon: _reconnecting
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.restart_alt_rounded, size: 18),
-                label: const Text('重新连接'),
-              ),
+    return HeaderScaffold(
+      title: const Text('分应用代理'),
+      actions: [
+        if (controller.running)
+          Padding(
+            padding: const EdgeInsets.only(right: 12),
+            child: FilledButton.tonalIcon(
+              onPressed: _reconnecting ? null : () => _reconnect(controller),
+              icon: _reconnecting
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.restart_alt_rounded, size: 18),
+              label: const Text('重新连接'),
             ),
-        ],
-      ),
-      body: Center(
+          ),
+      ],
+      scrollsBehindHeader: false,
+      fadeTail: 12,
+      body: (_) => Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 760),
           child: Column(
@@ -100,15 +101,25 @@ class _AppsPageState extends State<AppsPage> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      SegmentedButton<PerAppMode>(
+                      SlidingSegmentedControl<PerAppMode>(
+                        width: double.infinity,
+                        height: 48,
                         segments: const [
-                          ButtonSegment(value: PerAppMode.off, label: Text('全部应用')),
-                          ButtonSegment(value: PerAppMode.allow, label: Text('仅所选')),
-                          ButtonSegment(value: PerAppMode.block, label: Text('排除所选')),
+                          SlidingSegmentOption(
+                            value: PerAppMode.off,
+                            label: '全部应用',
+                          ),
+                          SlidingSegmentOption(
+                            value: PerAppMode.allow,
+                            label: '仅所选',
+                          ),
+                          SlidingSegmentOption(
+                            value: PerAppMode.block,
+                            label: '排除所选',
+                          ),
                         ],
-                        selected: {mode},
-                        showSelectedIcon: false,
-                        onSelectionChanged: (value) => _setMode(controller, value.first),
+                        selected: mode,
+                        onChanged: (value) => _setMode(controller, value),
                       ),
                       if (mode == PerAppMode.allow && _selected.isEmpty) ...[
                         const SizedBox(height: 10),

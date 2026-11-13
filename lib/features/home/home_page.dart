@@ -227,8 +227,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         final canEdit = !_saving && _dragging == null;
         return PageFrame(
           title: draft == null ? '首页' : '编辑${_editingDesktop ? '桌面' : '手机'}首页',
-          scrollable: false,
           wrapHeader: true,
+          bottomPadding: 20,
           actions: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -256,54 +256,48 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ],
           ),
-          child: Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.only(bottom: 20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                spacing: _cardSpacing,
-                children: [
-                  card(HomeCard.connection),
-                  if (visible.isNotEmpty || draft != null)
-                    HomeCardGrid(
-                      key: _gridKey,
-                      columns: desktop ? 2 : 1,
-                      spacing: _cardSpacing,
-                      animationVsync:
-                          draft != null &&
-                              !MediaQuery.disableAnimationsOf(context)
-                          ? this
-                          : null,
-                      children: [
-                        for (final kind in visible)
-                          if (draft == null)
-                            card(kind)
-                          else
-                            EditableHomeCard(
-                              key: ValueKey(kind),
-                              kind: kind,
-                              label: _label(kind),
-                              enabled: canEdit,
-                              dragging: _dragging == kind,
-                              onRemove: () =>
-                                  setState(() => draft.hidden.add(kind)),
-                              onDragStarted: (scrollable) =>
-                                  _startDrag(draft, kind, scrollable),
-                              onDragUpdate: (position) =>
-                                  _updateDrag(draft, kind, position),
-                              onDragEnd: () => _endDrag(kind),
-                              child: card(kind, keyed: false),
-                            ),
-                        if (draft != null)
-                          AddHomeCardButton(
-                            key: const ValueKey('add-home-card'),
-                            onPressed: canEdit ? () => _addCard(draft) : null,
-                          ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            spacing: _cardSpacing,
+            children: [
+              card(HomeCard.connection),
+              if (visible.isNotEmpty || draft != null)
+                HomeCardGrid(
+                  key: _gridKey,
+                  columns: desktop ? 2 : 1,
+                  spacing: _cardSpacing,
+                  animationVsync:
+                      draft != null && !MediaQuery.disableAnimationsOf(context)
+                      ? this
+                      : null,
+                  children: [
+                    for (final kind in visible)
+                      if (draft == null)
+                        card(kind)
+                      else
+                        EditableHomeCard(
+                          key: ValueKey(kind),
+                          kind: kind,
+                          label: _label(kind),
+                          enabled: canEdit,
+                          dragging: _dragging == kind,
+                          onRemove: () =>
+                              setState(() => draft.hidden.add(kind)),
+                          onDragStarted: (scrollable) =>
+                              _startDrag(draft, kind, scrollable),
+                          onDragUpdate: (position) =>
+                              _updateDrag(draft, kind, position),
+                          onDragEnd: () => _endDrag(kind),
+                          child: card(kind, keyed: false),
+                        ),
+                    if (draft != null)
+                      AddHomeCardButton(
+                        key: const ValueKey('add-home-card'),
+                        onPressed: canEdit ? () => _addCard(draft) : null,
+                      ),
+                  ],
+                ),
+            ],
           ),
         );
       },

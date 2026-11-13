@@ -57,7 +57,6 @@ class _NodesPageState extends State<NodesPage> {
         : '测速';
     return PageFrame(
       title: '节点',
-      scrollable: false,
       actions: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -108,164 +107,173 @@ class _NodesPageState extends State<NodesPage> {
           ),
         ],
       ),
-      child: Expanded(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            AnimatedSize(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: _searchOpen
-                  ? Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: TextField(
-                        controller: _searchController,
-                        focusNode: _searchFocus,
-                        autofocus: true,
-                        textInputAction: TextInputAction.search,
-                        onChanged: (value) =>
-                            setState(() => _query = value.trim()),
-                        decoration: InputDecoration(
-                          hintText: '搜索节点、地址或协议',
-                          prefixIcon: const Icon(Icons.search_rounded),
-                          suffixIcon: _query.isEmpty
-                              ? null
-                              : IconButton(
-                                  tooltip: '清除',
-                                  onPressed: () {
-                                    _searchController.clear();
-                                    setState(() => _query = '');
-                                  },
-                                  icon: const Icon(Icons.close_rounded),
-                                ),
-                          isDense: true,
-                        ),
-                      ),
-                    )
-                  : const SizedBox(width: double.infinity),
-            ),
-            Expanded(
-              child: groups.isEmpty
-                  ? Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 520),
-                        child: SizedBox(
-                          width: double.infinity,
-                          child: EmptyState(
-                            icon: _query.isEmpty
-                                ? Icons.hub_outlined
-                                : Icons.search_off_rounded,
-                            title: _query.isEmpty ? '暂无节点' : '没有匹配的节点',
+      headerBottom: AnimatedSize(
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        alignment: Alignment.topCenter,
+        child: _searchOpen
+            ? Padding(
+                padding: const EdgeInsets.only(top: PageFrame.headerGap),
+                child: TextField(
+                  controller: _searchController,
+                  focusNode: _searchFocus,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  onChanged: (value) => setState(() => _query = value.trim()),
+                  decoration: InputDecoration(
+                    hintText: '搜索节点、地址或协议',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _query.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: '清除',
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _query = '');
+                            },
+                            icon: const Icon(Icons.close_rounded),
                           ),
-                        ),
-                      ),
-                    )
-                  : ReorderableListView(
-                      padding: const EdgeInsets.only(bottom: 168),
-                      buildDefaultDragHandles: false,
-                      proxyDecorator: (child, _, _) => child,
-                      onReorderItem: (oldIndex, newIndex) =>
-                          _reorderSubscriptions(
-                            controller,
-                            groups,
-                            oldIndex,
-                            newIndex,
-                          ),
-                      children: [
-                        for (final (index, group) in groups.indexed)
-                          Padding(
-                            key: ValueKey(group.id),
-                            padding: const EdgeInsets.only(bottom: 12),
-                            child: _GroupCard(
-                              group: group,
-                              controller: controller,
-                              reorderIndex:
-                                  group.subscription?.isUrlSubscription == true
-                                  ? index
-                                  : null,
-                              reorderEnabled: !_savingSubscriptionOrder,
-                              highlightedId: highlightedId,
-                              expanded:
-                                  _query.isNotEmpty ||
-                                  !_collapsed.contains(group.id),
-                              updating: _updating.contains(group.id),
-                              countLabel: _countLabel(group),
-                              onToggleExpanded: () => setState(() {
-                                if (!_collapsed.remove(group.id)) {
-                                  _collapsed.add(group.id);
-                                }
-                              }),
-                              onUpdate:
-                                  group.subscription?.isUrlSubscription == true
-                                  ? () => _updateSubscription(
-                                      controller,
-                                      group.subscription!,
-                                    )
-                                  : null,
-                              onEditGroup: group.subscription == null
-                                  ? null
-                                  : () => _showEditGroup(
-                                      context,
-                                      controller,
-                                      group.subscription!,
-                                    ),
-                              onAddNode:
-                                  group.subscription != null &&
-                                      !group.subscription!.isUrlSubscription
-                                  ? () => _showGroupAddSheet(
-                                      context,
-                                      controller,
-                                      group.subscription!,
-                                    )
-                                  : null,
-                              onDeleteGroup: group.subscription == null
-                                  ? null
-                                  : () => _deleteGroup(
-                                      context,
-                                      controller,
-                                      group.subscription!,
-                                    ),
-                              onFilter: group.subscription == null
-                                  ? null
-                                  : () => _showFilterDialog(
-                                      context,
-                                      controller,
-                                      group.subscription!,
-                                    ),
-                              onSort: group.subscription == null
-                                  ? null
-                                  : () => _showSortDialog(
-                                      context,
-                                      controller,
-                                      group.subscription!,
-                                    ),
-                              onToggleGroupAuto: group.subscription == null
-                                  ? null
-                                  : () => controller.toggleGroupAutoCandidate(
-                                      group.subscription!.id,
-                                    ),
-                              onTest: () => _startNodeTest(
-                                context,
-                                controller,
-                                group.nodes,
-                                groupId: group.id,
-                              ),
-                              onSelectNode: controller.selectNode,
-                              onToggleAuto: controller.toggleAutoCandidate,
-                              onToggleFavorite: controller.toggleFavorite,
-                              onEditNode: (node) =>
-                                  _showEditNode(context, controller, node),
-                              onDeleteNode: (node) =>
-                                  _deleteNode(context, controller, node),
-                            ),
-                          ),
-                      ],
-                    ),
-            ),
-          ],
-        ),
+                    isDense: true,
+                  ),
+                ),
+              )
+            : const SizedBox(width: double.infinity),
       ),
+      slivers: [
+        if (groups.isEmpty)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: EmptyState(
+                    icon: _query.isEmpty
+                        ? Icons.hub_outlined
+                        : Icons.search_off_rounded,
+                    title: _query.isEmpty ? '暂无节点' : '没有匹配的节点',
+                  ),
+                ),
+              ),
+            ),
+          )
+        else
+          SliverPadding(
+            padding: const EdgeInsets.fromLTRB(24, 0, 24, 168),
+            sliver: SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final gutter =
+                    (constraints.crossAxisExtent - PageFrame.maxContentWidth)
+                        .clamp(0.0, double.infinity) /
+                    2;
+                return SliverPadding(
+                  padding: EdgeInsets.symmetric(horizontal: gutter),
+                  sliver: SliverReorderableList(
+                    proxyDecorator: (child, _, _) => child,
+                    onReorderItem: (oldIndex, newIndex) =>
+                        _reorderSubscriptions(
+                          controller,
+                          groups,
+                          oldIndex,
+                          newIndex,
+                        ),
+                    itemCount: groups.length,
+                    itemBuilder: (context, index) {
+                      final group = groups[index];
+                      return Padding(
+                        key: ValueKey(group.id),
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _GroupCard(
+                          group: group,
+                          controller: controller,
+                          reorderIndex:
+                              group.subscription?.isUrlSubscription == true
+                              ? index
+                              : null,
+                          reorderEnabled: !_savingSubscriptionOrder,
+                          highlightedId: highlightedId,
+                          expanded:
+                              _query.isNotEmpty ||
+                              !_collapsed.contains(group.id),
+                          updating: _updating.contains(group.id),
+                          countLabel: _countLabel(group),
+                          onToggleExpanded: () => setState(() {
+                            if (!_collapsed.remove(group.id)) {
+                              _collapsed.add(group.id);
+                            }
+                          }),
+                          onUpdate:
+                              group.subscription?.isUrlSubscription == true
+                              ? () => _updateSubscription(
+                                  controller,
+                                  group.subscription!,
+                                )
+                              : null,
+                          onEditGroup: group.subscription == null
+                              ? null
+                              : () => _showEditGroup(
+                                  context,
+                                  controller,
+                                  group.subscription!,
+                                ),
+                          onAddNode:
+                              group.subscription != null &&
+                                  !group.subscription!.isUrlSubscription
+                              ? () => _showGroupAddSheet(
+                                  context,
+                                  controller,
+                                  group.subscription!,
+                                )
+                              : null,
+                          onDeleteGroup: group.subscription == null
+                              ? null
+                              : () => _deleteGroup(
+                                  context,
+                                  controller,
+                                  group.subscription!,
+                                ),
+                          onFilter: group.subscription == null
+                              ? null
+                              : () => _showFilterDialog(
+                                  context,
+                                  controller,
+                                  group.subscription!,
+                                ),
+                          onSort: group.subscription == null
+                              ? null
+                              : () => _showSortDialog(
+                                  context,
+                                  controller,
+                                  group.subscription!,
+                                ),
+                          onToggleGroupAuto: group.subscription == null
+                              ? null
+                              : () => controller.toggleGroupAutoCandidate(
+                                  group.subscription!.id,
+                                ),
+                          onTest: () => _startNodeTest(
+                            context,
+                            controller,
+                            group.nodes,
+                            groupId: group.id,
+                          ),
+                          onSelectNode: controller.selectNode,
+                          onToggleAuto: controller.toggleAutoCandidate,
+                          onToggleFavorite: controller.toggleFavorite,
+                          onEditNode: (node) =>
+                              _showEditNode(context, controller, node),
+                          onDeleteNode: (node) =>
+                              _deleteNode(context, controller, node),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
     );
   }
 

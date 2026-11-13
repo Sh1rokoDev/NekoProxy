@@ -3,6 +3,10 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'header_fade.dart';
+
+export 'sliding_segmented_control.dart';
+
 class RegionBadge extends StatelessWidget {
   const RegionBadge({
     super.key,
@@ -42,88 +46,118 @@ class PageFrame extends StatelessWidget {
   const PageFrame({
     super.key,
     required this.title,
-    required this.child,
-    this.scrollable = true,
+    this.child,
+    this.slivers,
+    this.headerBottom,
+    this.bottomPadding,
     this.floatingActionButton,
     this.actions,
     this.wrapHeader = false,
-  });
+  }) : assert((child == null) != (slivers == null));
 
   final String title;
-  final Widget child;
-  final bool scrollable;
+  final Widget? child;
+  final List<Widget>? slivers;
+  final Widget? headerBottom;
+  final double? bottomPadding;
   final Widget? floatingActionButton;
   final Widget? actions;
   final bool wrapHeader;
 
+  static const headerGap = 20.0;
+  static const maxContentWidth = 1120.0;
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final content = Padding(
-      padding: EdgeInsets.fromLTRB(
-        24,
-        22,
-        24,
-        scrollable ? (floatingActionButton == null ? 32 : 104) : 0,
-      ),
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1120),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+    final body = CustomScrollView(
+      slivers: [
+        PinnedHeaderSliver(
+          child: Stack(
             children: [
-              if (wrapHeader)
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minHeight: 48),
-                  child: OverflowBar(
-                    alignment: MainAxisAlignment.spaceBetween,
-                    overflowAlignment: OverflowBarAlignment.end,
-                    spacing: 12,
-                    overflowSpacing: 12,
-                    children: [
-                      Text(title, style: theme.textTheme.headlineSmall),
-                      if (actions != null)
-                        FittedBox(fit: BoxFit.scaleDown, child: actions!),
-                    ],
-                  ),
-                )
-              else
-                SizedBox(
-                  height: 48,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: theme.textTheme.headlineSmall,
-                        ),
-                      ),
-                      if (actions != null) ...[
-                        const SizedBox(width: 12),
-                        actions!,
-                      ],
-                    ],
+              const Positioned.fill(child: HeaderFrost()),
+              SafeArea(
+                left: false,
+                right: false,
+                bottom: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 22, 24, headerGap),
+                  child: _constrainWidth(
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [_buildHeader(theme), ?headerBottom],
+                    ),
                   ),
                 ),
-              const SizedBox(height: 20),
-              child,
+              ),
             ],
           ),
         ),
-      ),
+        ...?slivers,
+        if (child case final content?)
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                24,
+                0,
+                24,
+                bottomPadding ?? (floatingActionButton == null ? 32 : 104),
+              ),
+              child: _constrainWidth(content),
+            ),
+          ),
+      ],
     );
-    final Widget body = scrollable
-        ? SingleChildScrollView(child: content)
-        : content;
     if (floatingActionButton == null) return body;
     return Stack(
       children: [
         Positioned.fill(child: body),
         Positioned(right: 24, bottom: 24, child: floatingActionButton!),
       ],
+    );
+  }
+
+  Widget _constrainWidth(Widget child) => Center(
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: maxContentWidth),
+      child: SizedBox(width: double.infinity, child: child),
+    ),
+  );
+
+  Widget _buildHeader(ThemeData theme) {
+    if (wrapHeader) {
+      return ConstrainedBox(
+        constraints: const BoxConstraints(minHeight: 48),
+        child: OverflowBar(
+          alignment: MainAxisAlignment.spaceBetween,
+          overflowAlignment: OverflowBarAlignment.end,
+          spacing: 12,
+          overflowSpacing: 12,
+          children: [
+            Text(title, style: theme.textTheme.headlineSmall),
+            if (actions != null)
+              FittedBox(fit: BoxFit.scaleDown, child: actions!),
+          ],
+        ),
+      );
+    }
+    return SizedBox(
+      height: 48,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.headlineSmall,
+            ),
+          ),
+          if (actions != null) ...[const SizedBox(width: 12), actions!],
+        ],
+      ),
     );
   }
 }
@@ -168,163 +202,6 @@ class HeaderIconButton extends StatelessWidget {
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       icon: Icon(icon, size: 21),
-    );
-  }
-}
-
-class SlidingSegmentOption<T> {
-  const SlidingSegmentOption({
-    required this.value,
-    required this.label,
-    this.icon,
-  });
-
-  final T value;
-  final String label;
-  final IconData? icon;
-}
-
-/// Single-pill segmented control whose selection slides horizontally.
-class SlidingSegmentedControl<T> extends StatelessWidget {
-  const SlidingSegmentedControl({
-    super.key,
-    required this.segments,
-    required this.selected,
-    required this.onChanged,
-    required this.width,
-    this.height = 42,
-  });
-
-  final List<SlidingSegmentOption<T>> segments;
-  final T selected;
-  final ValueChanged<T>? onChanged;
-  final double height;
-  final double width;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final index = segments.indexWhere((segment) => segment.value == selected);
-    final active = index < 0 ? 0 : index;
-    final alignment = segments.length <= 1
-        ? Alignment.center
-        : Alignment(-1 + 2 * active / (segments.length - 1), 0);
-    final control = Container(
-      height: height,
-      padding: const EdgeInsets.all(3),
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.6)),
-      ),
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: AnimatedAlign(
-                alignment: alignment,
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOutCubic,
-                child: FractionallySizedBox(
-                  widthFactor: 1 / segments.length,
-                  heightFactor: 1,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: scheme.secondaryContainer,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final segment in segments)
-                  Expanded(
-                    child: _SlidingSegment(
-                      label: segment.label,
-                      icon: segment.icon,
-                      active: segment.value == selected,
-                      onTap: onChanged == null
-                          ? null
-                          : () => onChanged!(segment.value),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-    return SizedBox(width: width, child: control);
-  }
-}
-
-class _SlidingSegment extends StatelessWidget {
-  const _SlidingSegment({
-    required this.label,
-    required this.icon,
-    required this.active,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData? icon;
-  final bool active;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final foreground = active
-        ? scheme.onSecondaryContainer
-        : scheme.onSurfaceVariant;
-    return Semantics(
-      button: true,
-      selected: active,
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(999),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 6),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null) ...[
-                  Icon(icon, size: 15, color: foreground),
-                  const SizedBox(width: 4),
-                ],
-                Flexible(
-                  child: AnimatedDefaultTextStyle(
-                    duration: const Duration(milliseconds: 200),
-                    curve: Curves.easeOutCubic,
-                    style:
-                        theme.textTheme.labelMedium?.copyWith(
-                          color: foreground,
-                          fontWeight: FontWeight.w600,
-                        ) ??
-                        TextStyle(color: foreground),
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

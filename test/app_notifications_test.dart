@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app.dart';
+import 'package:nekoproxy/app/navigation_dock.dart';
 import 'package:nekoproxy/features/home/home_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
@@ -70,7 +71,7 @@ void main() {
     );
     await tester.tap(
       find.descendant(
-        of: find.byType(NavigationBar),
+        of: find.byType(NavigationDock),
         matching: find.text('更多'),
       ),
     );

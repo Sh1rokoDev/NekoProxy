@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
@@ -61,10 +62,10 @@ class _IngressPageState extends State<IngressPage> {
     final controller = AppScope.of(context);
     final theme = Theme.of(context);
     final windows = Platform.isWindows;
-    return Scaffold(
-      appBar: AppBar(title: const Text('本地监听与 TUN')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+    return HeaderScaffold(
+      title: const Text('本地监听与 TUN'),
+      body: (headerInset) => SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 820),

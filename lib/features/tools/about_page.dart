@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import 'app_update_card.dart';
 
@@ -54,10 +55,10 @@ class _AboutPageState extends State<AboutPage> {
     String? updateVersion,
   ) {
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('关于 NekoProxy')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+    return HeaderScaffold(
+      title: const Text('关于 NekoProxy'),
+      body: (headerInset) => SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),

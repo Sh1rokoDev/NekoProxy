@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../services/backup_service.dart';
 import '../../state/app_controller.dart';
@@ -31,10 +32,10 @@ class _BackupPageState extends State<BackupPage> {
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('备份与恢复')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+    return HeaderScaffold(
+      title: const Text('备份与恢复'),
+      body: (headerInset) => SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),

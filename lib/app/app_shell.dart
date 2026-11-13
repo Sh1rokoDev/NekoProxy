@@ -7,16 +7,29 @@ import '../features/tools/connections_page.dart';
 import '../features/tools/tools_page.dart';
 import '../state/app_controller.dart';
 import 'app_scope.dart';
+import 'navigation_dock.dart';
+import 'widgets.dart';
 
-const _destinations = <({String label, IconData icon, IconData selectedIcon})>[
-  (label: '首页', icon: Icons.home_outlined, selectedIcon: Icons.home_rounded),
-  (label: '节点', icon: Icons.dns_outlined, selectedIcon: Icons.dns_rounded),
-  (label: '规则', icon: Icons.rule_outlined, selectedIcon: Icons.rule_rounded),
-  (
-    label: '更多',
-    icon: Icons.more_horiz_rounded,
-    selectedIcon: Icons.more_horiz_rounded,
+const _destinations = [
+  SlidingSegmentOption(
+    value: 0,
+    label: '首页',
+    icon: Icons.home_outlined,
+    selectedIcon: Icons.home_rounded,
   ),
+  SlidingSegmentOption(
+    value: 1,
+    label: '节点',
+    icon: Icons.dns_outlined,
+    selectedIcon: Icons.dns_rounded,
+  ),
+  SlidingSegmentOption(
+    value: 2,
+    label: '规则',
+    icon: Icons.rule_outlined,
+    selectedIcon: Icons.rule_rounded,
+  ),
+  SlidingSegmentOption(value: 3, label: '更多', icon: Icons.more_horiz_rounded),
 ];
 
 class AppShell extends StatefulWidget {
@@ -130,7 +143,13 @@ class _AppShellState extends State<AppShell> {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final desktop = constraints.maxWidth >= 900;
-          final content = DecoratedBox(
+          final navigation = NavigationDock(
+            axis: desktop ? Axis.vertical : Axis.horizontal,
+            destinations: _destinations,
+            selected: _index,
+            onSelected: _selectTab,
+          );
+          return DecoratedBox(
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -142,32 +161,33 @@ class _AppShellState extends State<AppShell> {
                 ],
               ),
             ),
-            child: _AnimatedTabStack(index: _index, children: _pages),
-          );
-          if (!desktop) {
-            return Scaffold(
-              body: SafeArea(bottom: false, child: content),
-              bottomNavigationBar: NavigationBar(
-                selectedIndex: _index,
-                onDestinationSelected: _selectTab,
-                destinations: [
-                  for (final item in _destinations)
-                    NavigationDestination(
-                      icon: Icon(item.icon),
-                      selectedIcon: Icon(item.selectedIcon),
-                      label: item.label,
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: SafeArea(
+                top: false,
+                bottom: desktop,
+                child: Row(
+                  textDirection: TextDirection.ltr,
+                  children: [
+                    if (desktop)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                        child: Align(child: navigation),
+                      ),
+                    Expanded(
+                      key: const ValueKey('tab-content'),
+                      child: _AnimatedTabStack(index: _index, children: _pages),
                     ),
-                ],
+                  ],
+                ),
               ),
-            );
-          }
-          return Scaffold(
-            body: Row(
-              children: [
-                _SideBar(index: _index, onSelect: _selectTab),
-                const VerticalDivider(width: 1),
-                Expanded(child: content),
-              ],
+              bottomNavigationBar: desktop
+                  ? null
+                  : SafeArea(
+                      top: false,
+                      minimum: const EdgeInsets.fromLTRB(21, 12, 21, 21),
+                      child: Align(heightFactor: 1, child: navigation),
+                    ),
             ),
           );
         },
@@ -259,95 +279,4 @@ class _AnimatedTabStackState extends State<_AnimatedTabStack> {
   @override
   Widget build(BuildContext context) =>
       Overlay(key: _overlayKey, initialEntries: _orderedEntries);
-}
-
-class _SideBar extends StatelessWidget {
-  const _SideBar({required this.index, required this.onSelect});
-
-  final int index;
-  final ValueChanged<int> onSelect;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      width: 236,
-      color: scheme.surfaceContainerLow,
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 18, 14, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (var i = 0; i < _destinations.length; i++)
-                _SidebarItem(
-                  label: _destinations[i].label,
-                  icon: _destinations[i].icon,
-                  selectedIcon: _destinations[i].selectedIcon,
-                  selected: index == i,
-                  onTap: () => onSelect(i),
-                ),
-              const Spacer(),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SidebarItem extends StatelessWidget {
-  const _SidebarItem({
-    required this.label,
-    required this.icon,
-    required this.selectedIcon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final IconData selectedIcon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Material(
-        color: selected ? scheme.secondaryContainer : Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            child: Row(
-              children: [
-                Icon(
-                  selected ? selectedIcon : icon,
-                  size: 21,
-                  color: selected
-                      ? scheme.onSecondaryContainer
-                      : scheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  label,
-                  style: TextStyle(
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected
-                        ? scheme.onSecondaryContainer
-                        : scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

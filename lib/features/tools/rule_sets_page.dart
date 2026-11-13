@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../state/app_controller.dart';
 
@@ -12,10 +13,10 @@ class RuleSetsPage extends StatelessWidget {
     final controller = AppScope.of(context);
     final status = controller.ruleSetStatus;
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('规则集')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
+    return HeaderScaffold(
+      title: const Text('规则集'),
+      body: (headerInset) => SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 820),

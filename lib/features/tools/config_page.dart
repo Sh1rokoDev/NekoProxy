@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../domain/config_policy.dart';
 import '../../state/app_controller.dart';
@@ -47,9 +48,11 @@ class _ConfigPageState extends State<ConfigPage> {
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(title: const Text('高级配置')),
-      body: Column(
+    return HeaderScaffold(
+      title: const Text('高级配置'),
+      scrollsBehindHeader: false,
+      fadeTail: 8,
+      body: (_) => Column(
         children: [
           Container(
             padding: const EdgeInsets.fromLTRB(24, 8, 24, 14),
@@ -59,15 +62,23 @@ class _ConfigPageState extends State<ConfigPage> {
                 child: Row(
                   children: [
                     Expanded(
-                      child: SegmentedButton<int>(
+                      child: SlidingSegmentedControl<int>(
+                        width: double.infinity,
+                        height: 48,
                         segments: const [
-                          ButtonSegment(value: 0, label: Text('JSON 扩展'), icon: Icon(Icons.merge_type_rounded, size: 16)),
-                          ButtonSegment(value: 1, label: Text('自定义配置'), icon: Icon(Icons.data_object_rounded, size: 16)),
+                          SlidingSegmentOption(
+                            value: 0,
+                            label: 'JSON 扩展',
+                            icon: Icons.merge_type_rounded,
+                          ),
+                          SlidingSegmentOption(
+                            value: 1,
+                            label: '自定义配置',
+                            icon: Icons.data_object_rounded,
+                          ),
                         ],
-                        selected: {_tab},
-                        onSelectionChanged: (value) => setState(() => _tab = value.first),
-                        showSelectedIcon: false,
-                        expandedInsets: EdgeInsets.zero,
+                        selected: _tab,
+                        onChanged: (value) => setState(() => _tab = value),
                       ),
                     ),
                     if (_tab == 0) ...[

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 
 class LogsPage extends StatefulWidget {
@@ -86,50 +87,50 @@ class _LogsPageState extends State<LogsPage> {
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     final theme = Theme.of(context);
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('运行日志'),
-        actions: [
-          IconButton(
-            tooltip: _paused ? '继续' : '暂停',
-            onPressed: () => setState(() => _paused = !_paused),
-            icon: Icon(_paused ? Icons.play_arrow_rounded : Icons.pause_rounded),
-          ),
-          IconButton(
-            tooltip: '复制全部',
-            onPressed: _lines.isEmpty ? null : () => copyText(context, _lines.join('\n'), message: '日志已复制'),
-            icon: const Icon(Icons.copy_rounded),
-          ),
-          IconButton(
-            tooltip: '清空文件',
-            onPressed: _lines.isEmpty
-                ? null
-                : () async {
-                    final confirmed = await confirmDialog(
-                      context,
-                      title: '清空日志',
-                      message: '清空当前日志文件？正在运行的核心会在下一次输出时重新写入。',
-                      confirmLabel: '清空',
-                      destructive: true,
-                    );
-                    if (!confirmed) return;
-                    try {
-                      final file = File(_path);
-                      if (await file.exists()) await file.writeAsString('');
-                      setState(() => _lines.clear());
-                      _offset = 0;
-                    } catch (e) {
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('清空失败：$e')));
-                      }
+    return HeaderScaffold(
+      title: const Text('运行日志'),
+      actions: [
+        IconButton(
+          tooltip: _paused ? '继续' : '暂停',
+          onPressed: () => setState(() => _paused = !_paused),
+          icon: Icon(_paused ? Icons.play_arrow_rounded : Icons.pause_rounded),
+        ),
+        IconButton(
+          tooltip: '复制全部',
+          onPressed: _lines.isEmpty ? null : () => copyText(context, _lines.join('\n'), message: '日志已复制'),
+          icon: const Icon(Icons.copy_rounded),
+        ),
+        IconButton(
+          tooltip: '清空文件',
+          onPressed: _lines.isEmpty
+              ? null
+              : () async {
+                  final confirmed = await confirmDialog(
+                    context,
+                    title: '清空日志',
+                    message: '清空当前日志文件？正在运行的核心会在下一次输出时重新写入。',
+                    confirmLabel: '清空',
+                    destructive: true,
+                  );
+                  if (!confirmed) return;
+                  try {
+                    final file = File(_path);
+                    if (await file.exists()) await file.writeAsString('');
+                    setState(() => _lines.clear());
+                    _offset = 0;
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('清空失败：$e')));
                     }
-                  },
-            icon: const Icon(Icons.delete_sweep_outlined),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      body: Column(
+                  }
+                },
+          icon: const Icon(Icons.delete_sweep_outlined),
+        ),
+        const SizedBox(width: 8),
+      ],
+      scrollsBehindHeader: false,
+      fadeTail: 10,
+      body: (_) => Column(
         children: [
           Container(
             width: double.infinity,

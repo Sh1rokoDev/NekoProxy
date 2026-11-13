@@ -1,13 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app.dart';
+import 'package:nekoproxy/app/navigation_dock.dart';
 import 'package:nekoproxy/features/home/home_page.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
   testWidgets('窗口缩放仅布局可见页面，切换标签保留首页滚动位置', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(800, 900));
+    await tester.binding.setSurfaceSize(const Size(800, 600));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = AppController();
     addTearDown(controller.dispose);
@@ -30,39 +31,27 @@ void main() {
     scrollable.position.jumpTo(80);
     await tester.pump(Duration.zero, EnginePhase.paint);
 
-    await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('节点'),
-      ),
-    );
+    await tester.tap(_destination('节点'));
     await _finishTransition(tester);
-    await tester.binding.setSurfaceSize(const Size(850, 900));
+    await tester.binding.setSurfaceSize(const Size(850, 600));
     await tester.pump(Duration.zero, EnginePhase.paint);
 
     expect(nodesBox.hasSize, isTrue);
     expect(nodesBox.constraints.maxWidth, 850);
     expect(homeBox.constraints, homeConstraints);
 
-    await tester.tap(
-      find.descendant(
-        of: find.byType(NavigationBar),
-        matching: find.text('首页'),
-      ),
-    );
+    await tester.tap(_destination('首页'));
     await _finishTransition(tester);
     expect(homeBox.constraints.maxWidth, 850);
     expect(scrollable.position.pixels, 80);
 
     for (var index = 0; index < 6; index++) {
-      tester
-          .widget<NavigationBar>(find.byType(NavigationBar))
-          .onDestinationSelected!((index + 1) % 2);
+      await tester.tap(_destination(index.isEven ? '节点' : '首页'));
       await tester.pump(const Duration(milliseconds: 20), EnginePhase.paint);
     }
     await _finishTransition(tester);
     final nodesConstraints = nodesBox.constraints;
-    await tester.binding.setSurfaceSize(const Size(820, 900));
+    await tester.binding.setSurfaceSize(const Size(820, 600));
     await tester.pump(Duration.zero, EnginePhase.paint);
     expect(homeBox.constraints.maxWidth, 820);
     expect(nodesBox.constraints, nodesConstraints);
@@ -71,18 +60,129 @@ void main() {
     await _finishTransition(tester);
     final desktopHomeBox = tester.renderObject<RenderBox>(home);
     final desktopNodesBox = tester.renderObject<RenderBox>(nodes);
+    expect(desktopHomeBox, same(homeBox));
+    expect(desktopNodesBox, same(nodesBox));
     final desktopHomeWidth = desktopHomeBox.constraints.maxWidth;
-    expect(desktopNodesBox.hasSize, isFalse);
+    expect(desktopNodesBox.constraints, nodesConstraints);
     await tester.binding.setSurfaceSize(const Size(1280, 900));
     await tester.pump(Duration.zero, EnginePhase.paint);
     expect(desktopHomeBox.constraints.maxWidth, desktopHomeWidth + 40);
-    expect(desktopNodesBox.hasSize, isFalse);
+    expect(desktopNodesBox.constraints, nodesConstraints);
 
     await tester.binding.setSurfaceSize(const Size(800, 900));
     await _finishTransition(tester);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('导航在窄屏底部横排、宽屏左侧竖排，拖动松开才换页', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 680));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = AppController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(NekoProxyApp(controller: controller));
+    await _finishTransition(tester);
+
+    int selected() => tester.widget<NavigationDock>(_navigation).selected;
+    final narrow = tester.getRect(_navigation);
+    expect(narrow.bottom, greaterThan(640));
+    expect(narrow.left, greaterThan(0));
+    expect(narrow.right, lessThan(360));
+    final home = tester.getCenter(_destination('首页'));
+    final nodes = tester.getCenter(_destination('节点'));
+    expect(home.dy, nodes.dy);
+    final horizontal = await tester.startGesture(home);
+    await horizontal.moveTo(nodes);
+    await tester.pump();
+    expect(selected(), 0);
+    await horizontal.up();
+    await _finishTransition(tester);
+    expect(selected(), 1);
+
+    await tester.binding.setSurfaceSize(const Size(1024, 680));
+    await _finishTransition(tester);
+    expect(selected(), 1);
+    final wide = tester.getRect(_navigation);
+    expect(wide.left, greaterThan(0));
+    expect(wide.right, lessThan(110));
+    expect(wide.center.dy, closeTo(340, 1));
+    final start = tester.getCenter(_destination('节点'));
+    final end = tester.getCenter(_destination('更多'));
+    expect(start.dx, end.dx);
+    expect(start.dy, lessThan(end.dy));
+    final vertical = await tester.startGesture(start);
+    await vertical.moveTo(end);
+    await tester.pump();
+    expect(selected(), 1);
+    await vertical.up();
+    await _finishTransition(tester);
+    expect(selected(), 3);
+  });
+
+  testWidgets('按住时导航膨胀并预览目标，取消后选中块落回原位', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 750));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = AppController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(NekoProxyApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    final lens = find.descendant(
+      of: _navigation,
+      matching: find.byKey(const ValueKey('segment-highlight')),
+    );
+    final resting = tester.getRect(lens);
+    final target = tester.getCenter(_destination('规则'));
+    final pointer = await tester.startGesture(target);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<NavigationDock>(_navigation).selected, 0);
+    expect(tester.getRect(lens).height, greaterThan(resting.height + 10));
+    expect(tester.getCenter(lens).dx, closeTo(target.dx, 6));
+    await pointer.cancel();
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<NavigationDock>(_navigation).selected, 0);
+    expect(tester.getCenter(lens).dx, closeTo(resting.center.dx, 1));
+    expect(tester.getRect(lens).height, closeTo(resting.height, 1));
+  });
+
+  testWidgets('连续拖动时高亮持续跟随，快速松手可滑入相邻选项', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(390, 750));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = AppController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(NekoProxyApp(controller: controller));
+    await tester.pumpAndSettle();
+
+    final start = tester.getCenter(_destination('首页'));
+    final nodes = tester.getCenter(_destination('节点'));
+    final pitch = nodes.dx - start.dx;
+    final pointer = await tester.startGesture(start);
+    const frame = Duration(milliseconds: 16);
+    for (var step = 1; step <= 10; step++) {
+      await pointer.moveTo(
+        start + Offset(pitch * 0.11 * step, 0),
+        timeStamp: frame * step,
+      );
+      await tester.pump(frame);
+    }
+
+    final lens = find.descendant(
+      of: _navigation,
+      matching: find.byKey(const ValueKey('segment-highlight')),
+    );
+    expect(tester.getCenter(lens).dx, closeTo(nodes.dx, pitch * 0.36));
+    expect(tester.widget<NavigationDock>(_navigation).selected, 0);
+    await pointer.up(timeStamp: frame * 10);
+    await tester.pumpAndSettle();
+    expect(tester.widget<NavigationDock>(_navigation).selected, 2);
+  });
 }
+
+final _navigation = find.byType(NavigationDock);
+
+Finder _destination(String label) =>
+    find.descendant(of: _navigation, matching: find.text(label));
 
 Future<void> _finishTransition(WidgetTester tester) async {
   await tester.pump(Duration.zero, EnginePhase.paint);

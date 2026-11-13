@@ -252,11 +252,20 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
       );
     }
     if (!_ready) {
-      return MaterialApp(
-        debugShowCheckedModeBanner: false,
-        theme: buildAppTheme(Brightness.light, const Color(0xFF0E7490)),
-        darkTheme: buildAppTheme(Brightness.dark, const Color(0xFF0E7490)),
-        home: const _SplashScreen(),
+      return ValueListenableBuilder<int>(
+        valueListenable: _controller.appearanceTick,
+        builder: (context, _, _) {
+          final settings = _controller.settings;
+          final seed = Color(settings.seedColor);
+          return MaterialApp(
+            debugShowCheckedModeBanner: false,
+            theme: buildAppTheme(Brightness.light, seed),
+            darkTheme: buildAppTheme(Brightness.dark, seed),
+            themeMode: appThemeMode(settings.theme),
+            themeAnimationDuration: Duration.zero,
+            home: const _SplashScreen(),
+          );
+        },
       );
     }
     return NekoProxyApp(controller: _controller, onExit: _exitApplication);
@@ -268,47 +277,16 @@ class _SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final dark = Theme.of(context).brightness == Brightness.dark;
     return Scaffold(
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [scheme.surface, scheme.primaryContainer.withValues(alpha: 0.5), scheme.surface],
-          ),
-        ),
-        child: Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 82,
-                height: 82,
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(24),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [scheme.primary, scheme.tertiary],
-                  ),
-                ),
-                child: Icon(Icons.shield_moon_outlined, size: 42, color: scheme.onPrimary),
-              ),
-              const SizedBox(height: 20),
-              Text('NekoProxy', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
-              const SizedBox(height: 6),
-              Text('正在准备 sing-box…',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
-              const SizedBox(height: 22),
-              SizedBox(
-                width: 120,
-                child: LinearProgressIndicator(
-                  borderRadius: BorderRadius.circular(6),
-                  minHeight: 4,
-                ),
-              ),
-            ],
+      backgroundColor: dark ? Colors.black : Colors.white,
+      body: Center(
+        child: SizedBox(
+          width: 120,
+          child: LinearProgressIndicator(
+            borderRadius: BorderRadius.circular(6),
+            minHeight: 4,
+            semanticsLabel: '正在准备 NekoProxy',
           ),
         ),
       ),

@@ -3,7 +3,6 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
-import '../domain/models.dart';
 import '../state/app_controller.dart';
 import 'app_scope.dart';
 import 'app_shell.dart';
@@ -24,17 +23,12 @@ class NekoProxyApp extends StatelessWidget {
         valueListenable: controller.appearanceTick,
         builder: (context, _, _) {
           final seed = Color(controller.settings.seedColor);
-          final mode = switch (controller.settings.theme) {
-            ThemePreference.system => ThemeMode.system,
-            ThemePreference.light => ThemeMode.light,
-            ThemePreference.dark => ThemeMode.dark,
-          };
           return MaterialApp(
             title: 'NekoProxy',
             debugShowCheckedModeBanner: false,
             theme: buildAppTheme(Brightness.light, seed),
             darkTheme: buildAppTheme(Brightness.dark, seed),
-            themeMode: mode,
+            themeMode: appThemeMode(controller.settings.theme),
             themeAnimationDuration: const Duration(milliseconds: 260),
             scrollBehavior: const _AppScrollBehavior(),
             locale: const Locale('zh', 'CN'),

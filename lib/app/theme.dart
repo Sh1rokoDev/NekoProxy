@@ -1,6 +1,14 @@
 import 'package:flutter/cupertino.dart' show CupertinoPageTransitionsBuilder;
 import 'package:flutter/material.dart';
 
+import '../domain/models.dart';
+
+ThemeMode appThemeMode(ThemePreference preference) => switch (preference) {
+  ThemePreference.system => ThemeMode.system,
+  ThemePreference.light => ThemeMode.light,
+  ThemePreference.dark => ThemeMode.dark,
+};
+
 ThemeData buildAppTheme(Brightness brightness, Color seed) {
   final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
   return ThemeData(

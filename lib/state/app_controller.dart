@@ -370,7 +370,9 @@ class AppController extends ChangeNotifier {
     storage = AppStorage(paths);
     systemProxy = Platform.isWindows ? WindowsSystemProxy(paths) : null;
     final loaded = await storage.load();
+    if (_disposed) return;
     snapshot = loaded.snapshot;
+    appearanceTick.value++;
     ruleSets = RuleSetManager(
       paths: paths,
       clientFactory: _createManagedHttpClient,

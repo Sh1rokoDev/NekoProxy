@@ -17,6 +17,8 @@ namespace {
 #endif
 
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
+constexpr UINT_PTR kChildResizeTimer = 0x4E50;
+constexpr UINT kChildResizeIntervalMs = 16;
 
 /// Registry key for app theme preference.
 ///
@@ -180,6 +182,8 @@ Win32Window::MessageHandler(HWND hwnd,
                             LPARAM const lparam) noexcept {
   switch (message) {
     case WM_DESTROY:
+      CancelResizeTimer();
+      in_size_move_ = false;
       window_handle_ = nullptr;
       Destroy();
       if (quit_on_close_) {
@@ -197,15 +201,37 @@ Win32Window::MessageHandler(HWND hwnd,
 
       return 0;
     }
-    case WM_SIZE: {
-      RECT rect = GetClientArea();
-      if (child_content_ != nullptr) {
-        // Size and position the child window.
-        MoveWindow(child_content_, rect.left, rect.top, rect.right - rect.left,
-                   rect.bottom - rect.top, TRUE);
-      }
+    case WM_ENTERSIZEMOVE:
+      in_size_move_ = true;
       return 0;
-    }
+    case WM_EXITSIZEMOVE:
+      in_size_move_ = false;
+      CancelResizeTimer();
+      ResizeChild();
+      return 0;
+    case WM_SIZE:
+      if (in_size_move_ && wparam == SIZE_RESTORED) {
+        // Resizing the Flutter HWND can block this thread until the engine
+        // presents a matching frame. Keep the native frame following input
+        // and let the low-priority timer apply only the latest client size.
+        if (resize_timer_pending_ ||
+            SetTimer(hwnd, kChildResizeTimer, kChildResizeIntervalMs, nullptr)) {
+          resize_timer_pending_ = true;
+          return 0;
+        }
+      }
+      CancelResizeTimer();
+      ResizeChild();
+      return 0;
+    case WM_TIMER:
+      if (wparam == kChildResizeTimer) {
+        if (resize_timer_pending_) {
+          CancelResizeTimer();
+          ResizeChild();
+        }
+        return 0;
+      }
+      break;
 
     case WM_ACTIVATE:
       if (child_content_ != nullptr) {
@@ -222,7 +248,10 @@ Win32Window::MessageHandler(HWND hwnd,
 }
 
 void Win32Window::Destroy() {
+  CancelResizeTimer();
+  in_size_move_ = false;
   OnDestroy();
+  child_content_ = nullptr;
 
   if (window_handle_) {
     DestroyWindow(window_handle_);
@@ -241,16 +270,35 @@ Win32Window* Win32Window::GetThisFromHandle(HWND const window) noexcept {
 void Win32Window::SetChildContent(HWND content) {
   child_content_ = content;
   SetParent(content, window_handle_);
-  RECT frame = GetClientArea();
-
-  MoveWindow(content, frame.left, frame.top, frame.right - frame.left,
-             frame.bottom - frame.top, true);
-
+  ResizeChild();
   SetFocus(child_content_);
 }
 
+void Win32Window::CancelResizeTimer() {
+  if (resize_timer_pending_) {
+    KillTimer(window_handle_, kChildResizeTimer);
+    resize_timer_pending_ = false;
+  }
+}
+
+void Win32Window::ResizeChild() {
+  if (!child_content_) return;
+  const RECT frame = GetClientArea();
+  const int width = frame.right - frame.left;
+  const int height = frame.bottom - frame.top;
+  RECT current{};
+  if (GetClientRect(child_content_, &current) && current.right == width &&
+      current.bottom == height) {
+    return;
+  }
+  // MoveWindow(..., TRUE) calls UpdateWindow synchronously. Let Windows queue
+  // paint normally so WM_SIZE only requests the new viewport.
+  SetWindowPos(child_content_, nullptr, frame.left, frame.top, width, height,
+               SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
 RECT Win32Window::GetClientArea() {
-  RECT frame;
+  RECT frame{};
   GetClientRect(window_handle_, &frame);
   return frame;
 }

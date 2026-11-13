@@ -256,14 +256,14 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
         valueListenable: _controller.appearanceTick,
         builder: (context, _, _) {
           final settings = _controller.settings;
-          final seed = Color(settings.seedColor);
-          return MaterialApp(
-            debugShowCheckedModeBanner: false,
-            theme: buildAppTheme(Brightness.light, seed),
-            darkTheme: buildAppTheme(Brightness.dark, seed),
-            themeMode: appThemeMode(settings.theme),
-            themeAnimationDuration: Duration.zero,
-            home: const _SplashScreen(),
+          final brightness = switch (appThemeMode(settings.theme)) {
+            ThemeMode.system => MediaQuery.platformBrightnessOf(context),
+            ThemeMode.light => Brightness.light,
+            ThemeMode.dark => Brightness.dark,
+          };
+          return _SplashScreen(
+            brightness: brightness,
+            seed: Color(settings.seedColor),
           );
         },
       );
@@ -273,20 +273,30 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
 }
 
 class _SplashScreen extends StatelessWidget {
-  const _SplashScreen();
+  const _SplashScreen({required this.brightness, required this.seed});
+
+  final Brightness brightness;
+  final Color seed;
 
   @override
   Widget build(BuildContext context) {
-    final dark = Theme.of(context).brightness == Brightness.dark;
-    return Scaffold(
-      backgroundColor: dark ? Colors.black : Colors.white,
-      body: Center(
-        child: SizedBox(
-          width: 120,
-          child: LinearProgressIndicator(
-            borderRadius: BorderRadius.circular(6),
-            minHeight: 4,
-            semanticsLabel: '正在准备 NekoProxy',
+    final dark = brightness == Brightness.dark;
+    final colors = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
+    // The preparation screen does not need routing or the full app theme.
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: ColoredBox(
+        color: dark ? Colors.black : Colors.white,
+        child: Center(
+          child: SizedBox(
+            width: 120,
+            child: LinearProgressIndicator(
+              color: colors.primary,
+              backgroundColor: colors.secondaryContainer,
+              borderRadius: BorderRadius.circular(6),
+              minHeight: 4,
+              semanticsLabel: '正在准备 NekoProxy',
+            ),
           ),
         ),
       ),

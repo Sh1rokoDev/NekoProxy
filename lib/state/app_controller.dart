@@ -382,24 +382,16 @@ class AppController extends ChangeNotifier {
           jsonEncode(snapshot.advancedJson).contains(directory),
     );
     loadWarning = loaded.warning;
-    try {
-      await ruleSets.initialize();
-      ruleSetStatus = await ruleSets.readStatus();
-    } catch (e) {
-      loadWarning = [
-        loadWarning,
-        '分流规则目录初始化失败：$e',
-      ].whereType<String>().join('\n');
-    }
     if (Platform.isAndroid) {
       settings.tunEnabled = true;
     }
     runtime = Platform.isAndroid
         ? AndroidRuntimeClient(paths)
         : WindowsRuntimeClient(paths);
-    try {
-      await runtime.cleanupStale();
-    } catch (_) {}
+    // Neither task needs results from the other. Both must finish before
+    // the home page can compile a config or start a new core.
+    await Future.wait([_initializeRuleSets(), _cleanupStaleRuntime()]);
+    if (_disposed) return;
     if (systemProxy != null) {
       final restored = systemProxy!.restoreIfOwned();
       if (!restored.ok) {
@@ -423,6 +415,29 @@ class AppController extends ChangeNotifier {
     });
     if (settings.autoConnect && hasNodes) {
       unawaited(connect());
+    }
+  }
+
+  Future<void> _initializeRuleSets() async {
+    try {
+      await ruleSets.initialize();
+      ruleSetStatus = await ruleSets.readStatus();
+    } catch (e) {
+      loadWarning = [
+        loadWarning,
+        '分流规则目录初始化失败：$e',
+      ].whereType<String>().join('\n');
+    }
+  }
+
+  Future<void> _cleanupStaleRuntime() async {
+    try {
+      await runtime.cleanupStale();
+    } catch (error) {
+      // The previous runtime may already be gone; startup can continue.
+      debugPrint(
+        'Could not clean up the previous runtime: ${error.runtimeType}',
+      );
     }
   }
 

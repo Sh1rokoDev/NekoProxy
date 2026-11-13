@@ -116,9 +116,8 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _openConnections() {
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const ConnectionsPage()));
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => const ConnectionsPage()));
   }
 
   void _selectTab(int value) {
@@ -207,47 +206,48 @@ class _AnimatedTabStack extends StatefulWidget {
 
 class _AnimatedTabStackState extends State<_AnimatedTabStack> {
   final _overlayKey = GlobalKey<OverlayState>();
-  late final List<OverlayEntry> _entries;
+  final _entries = <int, OverlayEntry>{};
 
   @override
   void initState() {
     super.initState();
-    _entries = [
-      for (var i = 0; i < widget.children.length; i++)
-        OverlayEntry(
-          opaque: i == widget.index,
-          maintainState: true,
-          builder: (context) => AnimatedOpacity(
-            opacity: i == widget.index ? 1 : 0,
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            onEnd: () {
-              if (i == widget.index) _entries[i].opaque = true;
-            },
-            child: AnimatedScale(
-              scale: i == widget.index ? 1 : 0.99,
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              child: IgnorePointer(
-                ignoring: i != widget.index,
-                child: ExcludeSemantics(
-                  excluding: i != widget.index,
-                  child: TickerMode(
-                    enabled: i == widget.index,
-                    child: RepaintBoundary(child: widget.children[i]),
-                  ),
-                ),
-              ),
+    _entries[widget.index] = _createEntry(widget.index, initial: true);
+  }
+
+  OverlayEntry _createEntry(int index, {bool initial = false}) => OverlayEntry(
+    opaque: initial,
+    maintainState: true,
+    builder: (context) {
+      final selected = index == widget.index;
+      return TweenAnimationBuilder<double>(
+        tween: Tween(begin: initial ? 1 : 0, end: selected ? 1 : 0),
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        onEnd: () {
+          if (index == widget.index) _entries[index]?.opaque = true;
+        },
+        builder: (context, value, child) => Opacity(
+          opacity: value,
+          child: Transform.scale(scale: 0.99 + 0.01 * value, child: child),
+        ),
+        child: IgnorePointer(
+          ignoring: !selected,
+          child: ExcludeSemantics(
+            excluding: !selected,
+            child: TickerMode(
+              enabled: selected,
+              child: RepaintBoundary(child: widget.children[index]),
             ),
           ),
         ),
-    ];
-  }
+      );
+    },
+  );
 
   List<OverlayEntry> get _orderedEntries => [
-    for (var i = 0; i < _entries.length; i++)
-      if (i != widget.index) _entries[i],
-    _entries[widget.index],
+    for (final entry in _entries.entries)
+      if (entry.key != widget.index) entry.value,
+    _entries[widget.index]!,
   ];
 
   @override
@@ -256,19 +256,20 @@ class _AnimatedTabStackState extends State<_AnimatedTabStack> {
     if (oldWidget.index != widget.index) {
       // Keep entries onstage during the fade, then let Overlay skip layout
       // of the retained pages below the opaque selected entry.
-      for (final entry in _entries) {
+      _entries.putIfAbsent(widget.index, () => _createEntry(widget.index));
+      for (final entry in _entries.values) {
         entry.opaque = false;
       }
       _overlayKey.currentState!.rearrange(_orderedEntries);
     }
-    for (final entry in _entries) {
+    for (final entry in _entries.values) {
       entry.markNeedsBuild();
     }
   }
 
   @override
   void dispose() {
-    for (final entry in _entries) {
+    for (final entry in _entries.values) {
       entry.remove();
       entry.dispose();
     }

@@ -59,9 +59,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       if (mounted) setState(() => _draft = null);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('首页布局保存失败，请重试')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('首页布局保存失败，请重试')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -191,6 +190,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
+    final showLiveTraffic = TickerMode.valuesOf(context).enabled;
     return LayoutBuilder(
       builder: (context, pageConstraints) {
         final desktop = pageConstraints.maxWidth >= _desktopBreakpoint;
@@ -203,19 +203,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         Widget card(HomeCard kind, {bool keyed = true}) => KeyedSubtree(
           key: keyed ? ValueKey(kind) : null,
           child: switch (kind) {
-            HomeCard.connection => ValueListenableBuilder<int>(
-              valueListenable: controller.liveTick,
-              builder: (context, _, _) => ConnectionCard(
-                controller: controller,
-                hasNodes: controller.hasNodes,
-              ),
+            HomeCard.connection => ConnectionCard(
+              controller: controller,
+              hasNodes: controller.hasNodes,
             ),
             HomeCard.splitMode => HomeSplitModeCard(controller: controller),
-            HomeCard.traffic => ValueListenableBuilder<int>(
-              valueListenable: controller.liveTick,
-              builder: (context, _, _) =>
-                  HomeTrafficCard(controller: controller),
-            ),
+            HomeCard.traffic =>
+              showLiveTraffic
+                  ? ValueListenableBuilder<int>(
+                      valueListenable: controller.liveTick,
+                      builder: (context, _, _) =>
+                          HomeTrafficCard(controller: controller),
+                    )
+                  : HomeTrafficCard(controller: controller),
             HomeCard.subscription => HomeSubscriptionCard(
               controller: controller,
             ),
@@ -226,7 +226,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         final visible = _visibleCards(layout);
         final canEdit = !_saving && _dragging == null;
         return PageFrame(
-          title: draft == null ? '首页' : '编辑${_editingDesktop ? '桌面' : '手机'}首页',
+          title: draft == null ? '首页' : '编辑首页',
           wrapHeader: true,
           bottomPadding: 20,
           actions: Row(

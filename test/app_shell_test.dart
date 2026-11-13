@@ -4,6 +4,8 @@ import 'package:nekoproxy/app/app.dart';
 import 'package:nekoproxy/app/navigation_dock.dart';
 import 'package:nekoproxy/features/home/home_page.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
+import 'package:nekoproxy/features/rules/rules_page.dart';
+import 'package:nekoproxy/features/tools/tools_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
@@ -58,9 +60,10 @@ void main() {
     final home = find.byType(HomePage, skipOffstage: false);
     final nodes = find.byType(NodesPage, skipOffstage: false);
     final homeBox = tester.renderObject<RenderBox>(home);
-    final nodesBox = tester.renderObject<RenderBox>(nodes);
     expect(homeBox.hasSize, isTrue);
-    expect(nodesBox.hasSize, isFalse);
+    expect(nodes, findsNothing);
+    expect(find.byType(RulesPage, skipOffstage: false), findsNothing);
+    expect(find.byType(ToolsPage, skipOffstage: false), findsNothing);
     final homeConstraints = homeBox.constraints;
     final scrollable = tester.state<ScrollableState>(
       find.descendant(of: home, matching: find.byType(Scrollable)).first,
@@ -73,6 +76,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(850, 600));
     await tester.pump(Duration.zero, EnginePhase.paint);
 
+    final nodesBox = tester.renderObject<RenderBox>(nodes);
     expect(nodesBox.hasSize, isTrue);
     expect(nodesBox.constraints.maxWidth, 850);
     expect(homeBox.constraints, homeConstraints);

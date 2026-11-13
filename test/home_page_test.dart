@@ -14,6 +14,11 @@ import 'package:nekoproxy/services/exit_info_service.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
+  RenderParagraph paragraphOf(WidgetTester tester, Finder text) =>
+      tester.renderObject<RenderParagraph>(
+        find.descendant(of: text, matching: find.byType(RichText)),
+      );
+
   Future<void> showHome(
     WidgetTester tester,
     AppController controller,
@@ -272,15 +277,14 @@ void main() {
     final address = inCard('example.net:10011');
     final region = inCard('Japan · Tokyo');
     void expectSingleLineIpAndBadgeBeforeAddress() {
-      final editable = tester
-          .state<EditableTextState>(
-            find.descendant(
-              of: connectionCard,
-              matching: find.byType(EditableText),
-            ),
-          )
-          .renderEditable;
-      expect(editable.size.height, closeTo(editable.preferredLineHeight, 1));
+      final ipText = paragraphOf(tester, ip);
+      expect(ipText.didExceedMaxLines, isFalse);
+      for (final value in ['192.0.2.1', '示例运营商', '47ms', 'sub.example.net']) {
+        final paragraph = paragraphOf(tester, inCard(value));
+        expect(paragraph.text.style?.fontSize, ipText.text.style?.fontSize);
+        expect(paragraph.maxLines, 1);
+        expect(paragraph.overflow, TextOverflow.ellipsis);
+      }
       expect(
         tester.getRect(region).right,
         lessThan(tester.getRect(address).left),
@@ -565,7 +569,7 @@ void main() {
       await tester.tap(find.byTooltip('编辑首页'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
-      expect(find.text('编辑手机首页'), findsOneWidget);
+      expect(find.text('编辑首页'), findsOneWidget);
       final addCard = tester.getRect(
         find.byKey(const ValueKey('add-home-card')),
       );
@@ -626,6 +630,8 @@ void main() {
       );
     await showHome(tester, controller, const Size(320, 1000));
     expect(find.text('32ms'), findsOneWidget);
+    final ipv6 = find.text('2001:db8:1234:5678:1234:5678:1234:abcd');
+    expect(paragraphOf(tester, ipv6).didExceedMaxLines, isTrue);
     final connection = find.byKey(const ValueKey(HomeCard.connection));
     final selectionMode = find.descendant(
       of: connection,

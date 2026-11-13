@@ -83,7 +83,14 @@ class ConnectionCard extends StatelessWidget {
                 active: running,
               ),
               _MetaSeparator(color: scheme.outlineVariant),
-              _ConnectionUptime(value: running ? _uptime(controller) : '—'),
+              if (running && TickerMode.valuesOf(context).enabled)
+                ValueListenableBuilder<int>(
+                  valueListenable: controller.liveTick,
+                  builder: (context, _, _) =>
+                      _ConnectionUptime(value: _uptime(controller)),
+                )
+              else
+                _ConnectionUptime(value: running ? _uptime(controller) : '—'),
               _MetaSeparator(color: scheme.outlineVariant),
               ...modes,
             ],
@@ -578,26 +585,40 @@ class _ConnectionInfoStrip extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final dividerColor = scheme.outlineVariant.withValues(alpha: 0.65);
+    final info = this.info;
     final provider = info?.provider.trim() ?? '';
     final node = controller.currentNode;
     final latency = node == null ? null : controller.latencies[node.id];
     final latencyError = node == null
         ? null
         : controller.latencyErrors[node.id];
-    final exitCell = _ExitInfoCell(
-      controller: controller,
-      info: info,
-      wide: wide,
+    final exitError = controller.exitInfoError;
+    final exitCell = _ConnectionDataCell(
+      label: '出口 IP',
+      padding: EdgeInsets.only(right: wide ? 12 : 8, bottom: 3),
+      value: info != null
+          ? SelectionArea(child: Text(info.ip, style: _infoAddressStyle))
+          : Text(
+              exitError ??
+                  (controller.checkingExitInfo
+                      ? '正在检测出口…'
+                      : controller.running
+                      ? '出口信息待检测'
+                      : '连接后检测出口信息'),
+              style: TextStyle(
+                color: exitError != null
+                    ? scheme.error
+                    : controller.checkingExitInfo
+                    ? scheme.primary
+                    : scheme.onSurfaceVariant,
+              ),
+            ),
     );
     final providerCell = _ConnectionDataCell(
       key: const ValueKey('connection-provider'),
       label: '运营商',
       padding: const EdgeInsets.only(left: 12, right: 8),
-      value: Text(
-        provider.isEmpty ? '未提供' : provider,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
+      value: Text(provider.isEmpty ? '未提供' : provider),
     );
     final latencyCell = _ConnectionDataCell(
       key: const ValueKey('connection-latency'),
@@ -616,16 +637,7 @@ class _ConnectionInfoStrip extends StatelessWidget {
       key: const ValueKey('connection-source'),
       label: '来源',
       padding: const EdgeInsets.only(left: 12),
-      value: Text(
-        source ?? '—',
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          fontFamily: 'monospace',
-          fontFamilyFallback: _fixedWidthFonts,
-          letterSpacing: 0,
-        ),
-      ),
+      value: Text(source ?? '—', style: _infoAddressStyle),
     );
 
     Widget row(List<Widget> cells) => IntrinsicHeight(
@@ -660,78 +672,11 @@ class _ConnectionInfoStrip extends StatelessWidget {
   }
 }
 
-class _ExitInfoCell extends StatelessWidget {
-  const _ExitInfoCell({
-    required this.controller,
-    required this.info,
-    required this.wide,
-  });
-
-  final AppController controller;
-  final ExitInfo? info;
-  final bool wide;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final info = this.info;
-    final labelStyle = theme.textTheme.labelSmall?.copyWith(
-      color: scheme.onSurfaceVariant,
-      fontSize: 12,
-    );
-    final message =
-        controller.exitInfoError ??
-        (controller.checkingExitInfo
-            ? '正在检测出口…'
-            : controller.running
-            ? '出口信息待检测'
-            : '连接后检测出口信息');
-    final error = controller.exitInfoError != null;
-    return Padding(
-      padding: EdgeInsets.only(right: wide ? 12 : 8, bottom: 3),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            constraints: const BoxConstraints(minHeight: _infoHeadingHeight),
-            alignment: Alignment.centerLeft,
-            child: Text('出口 IP', style: labelStyle),
-          ),
-          const SizedBox(height: 2),
-          if (info != null)
-            SelectableText(
-              info.ip,
-              // Only reserve a second line when a long address wraps.
-              minLines: 1,
-              maxLines: 2,
-              style: theme.textTheme.bodyMedium?.copyWith(
-                fontSize: 16,
-                height: 1.25,
-                fontWeight: FontWeight.w700,
-                fontFamily: 'monospace',
-                fontFamilyFallback: _fixedWidthFonts,
-                letterSpacing: 0,
-              ),
-            )
-          else
-            Text(
-              message,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: error
-                    ? scheme.error
-                    : controller.checkingExitInfo
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant,
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-}
+const _infoAddressStyle = TextStyle(
+  fontFamily: 'monospace',
+  fontFamilyFallback: _fixedWidthFonts,
+  letterSpacing: 0,
+);
 
 class _ConnectionDataCell extends StatelessWidget {
   const _ConnectionDataCell({
@@ -775,7 +720,12 @@ class _ConnectionDataCell extends StatelessWidget {
           ),
           const SizedBox(height: 2),
           if (value case final value?)
-            DefaultTextStyle(style: valueStyle, child: value),
+            DefaultTextStyle(
+              style: valueStyle,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              child: value,
+            ),
         ],
       ),
     );
@@ -798,15 +748,13 @@ class _LatencyValue extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _LatencyBars(color: color),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            formatLatency(latency),
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-          ),
+        // Match the visible edge of the label, accounting for its glyph inset.
+        Padding(
+          padding: const EdgeInsets.only(left: 1),
+          child: _LatencyBars(color: color),
         ),
+        const SizedBox(width: 4),
+        Flexible(child: Text(formatLatency(latency))),
       ],
     );
   }

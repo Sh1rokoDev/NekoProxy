@@ -38,7 +38,7 @@ class _NodesPageState extends State<NodesPage> {
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     final dockInset = MediaQuery.paddingOf(context).bottom;
-    final hasNodes = controller.snapshot.allNodes.isNotEmpty;
+    final hasNodes = controller.hasNodes;
     final automatic = controller.settings.selectionMode == SelectionMode.auto;
     final highlightedNode = !automatic
         ? controller.currentNode
@@ -84,7 +84,7 @@ class _NodesPageState extends State<NodesPage> {
                   : () => _startNodeTest(
                       context,
                       controller,
-                      controller.snapshot.allNodes.toList(),
+                      controller.snapshot.allNodes,
                     ),
               icon: allTestRequested
                   ? SizedBox(
@@ -325,11 +325,19 @@ class _NodesPageState extends State<NodesPage> {
     String? activeGroupNodeId,
   ) {
     final groups = <_NodeGroup>[];
-    final known = <String>{};
+    final subscriptions = controller.snapshot.subscriptions;
+    final known = {for (final subscription in subscriptions) subscription.id};
+    final query = _query.toLowerCase();
+    final orphans = <ProxyNode>[];
     final sortLatencies = controller.testingNodes
         ? const <String, int>{}
         : controller.latencies;
-    for (final subscription in controller.snapshot.subscriptions) {
+    for (final subscription in subscriptions) {
+      var active = false;
+      for (final node in subscription.nodes) {
+        if (node.id == activeGroupNodeId) active = true;
+        if (!known.contains(node.subscriptionId)) orphans.add(node);
+      }
       final filtered = applyNodeView(
         nodes: subscription.nodes,
         includeFilter: subscription.includeFilter,
@@ -338,11 +346,9 @@ class _NodesPageState extends State<NodesPage> {
         sortDescending: subscription.sortDescending,
         latencies: sortLatencies,
       );
-      final matched = [
-        for (final node in filtered)
-          if (_matchesQuery(node)) node,
-      ];
-      known.add(subscription.id);
+      final matched = query.isEmpty
+          ? filtered
+          : filtered.where((node) => _matchesQuery(node, query)).toList();
       if (subscription.id == 'local' &&
           subscription.nodes.isEmpty &&
           _query.isEmpty) {
@@ -360,22 +366,14 @@ class _NodesPageState extends State<NodesPage> {
               subscription.excludeFilter.trim().isNotEmpty,
           nodes: matched,
           subscription: subscription,
-          active: subscription.nodes.any(
-            (node) => node.id == activeGroupNodeId,
-          ),
+          active: active,
         ),
       );
     }
-    final orphans = [
-      for (final node in controller.snapshot.allNodes)
-        if (node.subscriptionId == null || !known.contains(node.subscriptionId))
-          node,
-    ];
     if (orphans.isNotEmpty) {
-      final matched = [
-        for (final node in orphans)
-          if (_matchesQuery(node)) node,
-      ];
+      final matched = query.isEmpty
+          ? orphans
+          : orphans.where((node) => _matchesQuery(node, query)).toList();
       if (_query.isEmpty || matched.isNotEmpty) {
         groups.add(
           _NodeGroup(
@@ -393,9 +391,7 @@ class _NodesPageState extends State<NodesPage> {
     return groups;
   }
 
-  bool _matchesQuery(ProxyNode node) {
-    if (_query.isEmpty) return true;
-    final query = _query.toLowerCase();
+  bool _matchesQuery(ProxyNode node, String query) {
     return node.name.toLowerCase().contains(query) ||
         node.server.toLowerCase().contains(query) ||
         node.protocol.toLowerCase().contains(query);
@@ -408,15 +404,13 @@ class _NodesPageState extends State<NodesPage> {
     String? groupId,
   }) {
     if (!controller.canQueueNodeTest) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('正在应用设置，请稍候')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('正在应用设置，请稍候')));
       return;
     }
     if (nodes.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('没有可测试的节点')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('没有可测试的节点')));
       return;
     }
     controller.queueNodeTest(nodes, groupId: groupId);
@@ -472,9 +466,8 @@ class _NodesPageState extends State<NodesPage> {
       );
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
       }
       return;
     }
@@ -749,9 +742,8 @@ class _NodesPageState extends State<NodesPage> {
         final text = data?.text?.trim() ?? '';
         if (text.isEmpty) {
           if (context.mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('剪贴板为空')));
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('剪贴板为空')));
           }
           return;
         }
@@ -778,17 +770,15 @@ class _NodesPageState extends State<NodesPage> {
           content = await decodeQrFromImageBytes(await file.readAsBytes());
         } catch (e) {
           if (context.mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('读取图片失败：$e')));
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text('读取图片失败：$e')));
           }
           return;
         }
         if (content == null || content.trim().isEmpty) {
           if (context.mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(const SnackBar(content: Text('图片中没有识别到二维码')));
+            ScaffoldMessenger.of(context)
+                .showSnackBar(const SnackBar(content: Text('图片中没有识别到二维码')));
           }
           return;
         }
@@ -849,14 +839,12 @@ class _NodesPageState extends State<NodesPage> {
       final group = await controller.createGroup(name);
       if (!mounted) return;
       setState(() => _collapsed.remove(group.id));
-      ScaffoldMessenger.of(
-        this.context,
-      ).showSnackBar(SnackBar(content: Text('已创建「${group.name}」')));
+      ScaffoldMessenger.of(this.context)
+          .showSnackBar(SnackBar(content: Text('已创建「${group.name}」')));
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
       }
     }
   }
@@ -930,14 +918,12 @@ class _NodesPageState extends State<NodesPage> {
       );
       if (!mounted) return;
       setState(() => _collapsed.remove(node.subscriptionId));
-      ScaffoldMessenger.of(
-        this.context,
-      ).showSnackBar(SnackBar(content: Text('已添加「${node.name}」')));
+      ScaffoldMessenger.of(this.context)
+          .showSnackBar(SnackBar(content: Text('已添加「${node.name}」')));
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('$e')));
       }
     } finally {
       linkController.dispose();
@@ -989,9 +975,9 @@ class _NodesPageState extends State<NodesPage> {
                   height: 150,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Theme.of(
-                      context,
-                    ).colorScheme.surfaceContainerHighest,
+                    color: Theme.of(context)
+                        .colorScheme
+                        .surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: SingleChildScrollView(
@@ -1042,6 +1028,7 @@ class _NodesPageState extends State<NodesPage> {
                         );
                         if (context.mounted) Navigator.pop(context, count);
                       } catch (e) {
+                        if (!context.mounted) return;
                         setDialogState(() {
                           loading = false;
                           error = e.toString();
@@ -2158,9 +2145,6 @@ class _EditSubscriptionDialogState extends State<_EditSubscriptionDialog> {
                 const SizedBox(height: 8),
                 SwitchRow(
                   title: '自动更新',
-                  subtitle: _autoUpdate
-                      ? '按该订阅的周期自动同步节点与用量'
-                      : '仅手动更新，保留上次设置的周期',
                   icon: Icons.update_rounded,
                   value: _autoUpdate,
                   onChanged: (value) => setState(() => _autoUpdate = value),
@@ -2172,10 +2156,7 @@ class _EditSubscriptionDialogState extends State<_EditSubscriptionDialog> {
                   keyboardType: const TextInputType.numberWithOptions(
                     decimal: true,
                   ),
-                  decoration: const InputDecoration(
-                    labelText: '更新周期（小时）',
-                    helperText: '支持小数，例如 1.5 表示 90 分钟；最短 0.5 小时',
-                  ),
+                  decoration: const InputDecoration(labelText: '更新周期（小时）'),
                   validator: (value) {
                     if (!_autoUpdate) return null;
                     final minutes = _updateMinutesFromHours(value ?? '');

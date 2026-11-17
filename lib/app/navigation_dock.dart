@@ -27,10 +27,10 @@ class NavigationDock extends StatelessWidget {
       MediaQuery.textScalerOf(context).scale(11) - 11,
     );
     return SlidingSegmentedControl<int>(
-      width: vertical ? 66 + textGrowth : 360,
+      width: vertical ? 64 + textGrowth : 360,
       height: vertical
-          ? 264 + textGrowth * destinations.length
-          : 62 + textGrowth,
+          ? 240 + textGrowth * destinations.length
+          : 60 + textGrowth,
       segments: destinations,
       selected: selected,
       onChanged: onSelected,

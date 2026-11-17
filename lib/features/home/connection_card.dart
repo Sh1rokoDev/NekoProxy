@@ -7,8 +7,8 @@ import '../../services/exit_info_service.dart';
 import '../../state/app_controller.dart';
 
 const _wideCardWidth = 540.0;
-const _infoHeadingHeight = 28.0;
-const _connectionActionSize = 52.0;
+const _infoHeadingHeight = 20.0;
+const _connectionActionSize = 48.0;
 const _fixedWidthFonts = ['Consolas'];
 
 class ConnectionCard extends StatelessWidget {
@@ -67,8 +67,8 @@ class ConnectionCard extends StatelessWidget {
       else ...[
         _ConnectionMode(
           icon: controller.settings.selectionMode == SelectionMode.auto
-              ? Icons.auto_awesome_outlined
-              : Icons.pan_tool_alt_rounded,
+              ? Icons.bolt_outlined
+              : Icons.touch_app_outlined,
           label: controller.currentGroupLabel,
         ),
         const _ConnectionModeDot(),
@@ -81,7 +81,7 @@ class ConnectionCard extends StatelessWidget {
         final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
         final wide =
             constraints.maxWidth >= _wideCardWidth * textScale.clamp(1, 2);
-        final horizontalPadding = wide ? 20.0 : 14.0;
+        final horizontalPadding = wide ? 20.0 : 16.0;
         final power = _ConnectionPowerButton(
           controller: controller,
           running: running,
@@ -90,7 +90,7 @@ class ConnectionCard extends StatelessWidget {
         );
         final meta = <Widget>[
           Wrap(
-            spacing: 7,
+            spacing: 8,
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
@@ -115,28 +115,18 @@ class ConnectionCard extends StatelessWidget {
           const SizedBox(height: 12),
         ];
 
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 280),
-          curve: Curves.easeOutCubic,
-          clipBehavior: Clip.antiAlias,
+        return DecoratedBox(
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(24),
+            borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: scheme.outlineVariant.withValues(alpha: 0.65),
             ),
-            color: Color.alphaBlend(
-              scheme.primary.withValues(
-                alpha: theme.brightness == Brightness.light ? 0.02 : 0.035,
-              ),
-              scheme.surface,
-            ),
+            color: scheme.surfaceContainerLow,
           ),
           child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              horizontalPadding,
-              wide ? 15 : 13,
-              horizontalPadding,
-              wide ? 15 : 14,
+            padding: EdgeInsets.symmetric(
+              horizontal: horizontalPadding,
+              vertical: 16,
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -170,7 +160,7 @@ class ConnectionCard extends StatelessWidget {
                     power,
                   ],
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
                 _ConnectionInfoStrip(
                   controller: controller,
                   info: exitInfo,
@@ -233,7 +223,7 @@ class _NodeDetails extends StatelessWidget {
       style: theme.textTheme.bodySmall?.copyWith(
         color: scheme.onSurfaceVariant,
         fontSize: 12,
-        fontFamily: 'monospace',
+        fontFamily: node != null || displayAddress != null ? 'monospace' : null,
         fontFamilyFallback: _fixedWidthFonts,
         letterSpacing: 0,
       ),
@@ -264,10 +254,9 @@ class _NodeDetails extends StatelessWidget {
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleLarge?.copyWith(
-                  fontSize: 19,
+                  fontSize: 20,
                   height: 1.25,
-                  fontWeight: FontWeight.w700,
-                  letterSpacing: -0.4,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               if (upstreamName != null)
@@ -276,7 +265,7 @@ class _NodeDetails extends StatelessWidget {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-              const SizedBox(height: 9),
+              const SizedBox(height: 8),
               if (node != null && region.isNotEmpty)
                 LayoutBuilder(
                   builder: (context, constraints) {
@@ -384,7 +373,7 @@ class _ConnectionUptime extends StatelessWidget {
           children: [
             Icon(
               Icons.schedule_rounded,
-              size: 15,
+              size: 16,
               color: scheme.onSurfaceVariant,
             ),
             const SizedBox(width: 4),
@@ -396,6 +385,7 @@ class _ConnectionUptime extends StatelessWidget {
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: scheme.onSurfaceVariant,
                   fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ),
@@ -430,7 +420,7 @@ class _ConnectionMode extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, size: 16, color: scheme.primary),
+        Icon(icon, size: 16, color: scheme.onSurfaceVariant),
         const SizedBox(width: 4),
         Flexible(
           child: Text(
@@ -486,9 +476,9 @@ class _ConnectionPowerButton extends StatelessWidget {
         ? '断开连接'
         : hasNodes
         ? '连接'
-        : '去导入';
-    final background = running ? scheme.primary : scheme.primaryContainer;
-    final foreground = running ? scheme.onPrimary : scheme.onPrimaryContainer;
+        : '导入节点';
+    final background = running ? scheme.surfaceContainerHigh : scheme.primary;
+    final foreground = running ? scheme.onSurface : scheme.onPrimary;
     final icon = controller.busy
         ? SizedBox(
             width: 18,
@@ -500,7 +490,6 @@ class _ConnectionPowerButton extends StatelessWidget {
                 ? Icons.power_settings_new_rounded
                 : Icons.file_download_outlined,
             size: 20,
-            color: foreground,
           );
     void onPressed() {
       if (!hasNodes && !running) {
@@ -511,62 +500,38 @@ class _ConnectionPowerButton extends StatelessWidget {
     }
 
     final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(10),
     );
-    Widget withShadow(Widget button) {
-      if (!running || controller.busy) return button;
-      return DecoratedBox(
-        decoration: ShapeDecoration(
-          shape: shape,
-          shadows: [
-            BoxShadow(
-              color: scheme.primary.withValues(alpha: 0.17),
-              blurRadius: 14,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: button,
-      );
-    }
-
     if (compact) {
-      return withShadow(
-        IconButton(
-          key: const ValueKey('connection-power'),
-          tooltip: label,
-          onPressed: controller.busy ? null : onPressed,
-          style: IconButton.styleFrom(
-            fixedSize: const Size.square(_connectionActionSize),
-            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            backgroundColor: background,
-            foregroundColor: foreground,
-            shape: shape,
-          ),
-          icon: icon,
-        ),
-      );
-    }
-
-    return withShadow(
-      FilledButton(
+      return IconButton(
         key: const ValueKey('connection-power'),
+        tooltip: label,
         onPressed: controller.busy ? null : onPressed,
-        style: FilledButton.styleFrom(
-          minimumSize: const Size(112, _connectionActionSize),
-          padding: const EdgeInsets.symmetric(horizontal: 18),
+        style: IconButton.styleFrom(
+          fixedSize: const Size.square(_connectionActionSize),
           tapTargetSize: MaterialTapTargetSize.shrinkWrap,
           backgroundColor: background,
           foregroundColor: foreground,
           shape: shape,
-          textStyle: theme.textTheme.labelLarge?.copyWith(
-            fontWeight: FontWeight.w600,
-          ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [icon, const SizedBox(width: 6), Text(label)],
-        ),
+        icon: icon,
+      );
+    }
+
+    return FilledButton(
+      key: const ValueKey('connection-power'),
+      onPressed: controller.busy ? null : onPressed,
+      style: FilledButton.styleFrom(
+        minimumSize: const Size(112, _connectionActionSize),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        backgroundColor: background,
+        foregroundColor: foreground,
+        shape: shape,
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [icon, const SizedBox(width: 8), Text(label)],
       ),
     );
   }
@@ -579,6 +544,7 @@ class _ConnectionRefreshButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     final refreshing = controller.refreshingConnectionInfo;
     return IconButton.filledTonal(
       tooltip: '刷新出口、运营商和节点延迟',
@@ -588,7 +554,10 @@ class _ConnectionRefreshButton extends StatelessWidget {
       style: IconButton.styleFrom(
         fixedSize: const Size.square(_connectionActionSize),
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        backgroundColor: scheme.surfaceContainerLow,
+        foregroundColor: scheme.onSurfaceVariant,
+        side: BorderSide(color: scheme.outlineVariant),
       ),
       icon: refreshing
           ? const SizedBox.square(
@@ -628,7 +597,7 @@ class _ConnectionInfoStrip extends StatelessWidget {
     final exitError = controller.exitInfoError;
     final exitCell = _ConnectionDataCell(
       label: '出口 IP',
-      padding: EdgeInsets.only(right: wide ? 12 : 8, bottom: 3),
+      padding: EdgeInsets.only(right: wide ? 12 : 8, bottom: 4),
       value: info != null
           ? SelectionArea(child: Text(info.ip, style: _infoAddressStyle))
           : Text(
@@ -670,7 +639,7 @@ class _ConnectionInfoStrip extends StatelessWidget {
       key: const ValueKey('connection-source'),
       label: '来源',
       padding: const EdgeInsets.only(left: 12),
-      value: Text(source ?? '—', style: _infoAddressStyle),
+      value: Text(source ?? '—'),
     );
 
     Widget row(List<Widget> cells) => IntrinsicHeight(
@@ -695,9 +664,9 @@ class _ConnectionInfoStrip extends StatelessWidget {
           row([exitCell, providerCell, latencyCell, sourceCell])
         else ...[
           row([exitCell, providerCell]),
-          const SizedBox(height: 5),
+          const SizedBox(height: 4),
           _StripDivider(color: dividerColor, horizontal: true),
-          const SizedBox(height: 5),
+          const SizedBox(height: 4),
           row([latencyCell, sourceCell]),
         ],
       ],
@@ -732,7 +701,8 @@ class _ConnectionDataCell extends StatelessWidget {
           color: scheme.onSurface,
           fontSize: 13,
           height: 1.5,
-          fontWeight: FontWeight.w600,
+          fontWeight: FontWeight.w500,
+          fontFeatures: const [FontFeature.tabularFigures()],
         );
     return Padding(
       padding: padding,

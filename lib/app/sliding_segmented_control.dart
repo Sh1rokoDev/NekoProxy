@@ -51,7 +51,8 @@ class SlidingSegmentedControl<T> extends StatefulWidget {
 class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
     with TickerProviderStateMixin {
   static const _inset = 4.0;
-  static const _pill = BorderRadius.all(Radius.circular(999));
+  static const _trackRadius = BorderRadius.all(Radius.circular(16));
+  static const _selectionRadius = BorderRadius.all(Radius.circular(12));
   static final _travel = SpringDescription.withDurationAndBounce(
     duration: const Duration(milliseconds: 400),
     bounce: 0.15,
@@ -378,25 +379,12 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                       child: DecoratedBox(
                         decoration: BoxDecoration(
                           color: scheme.surfaceContainerHigh,
-                          borderRadius: _pill,
-                          border: navigation
-                              ? null
-                              : Border.all(
-                                  color: scheme.outlineVariant.withValues(
-                                    alpha: 0.6,
-                                  ),
-                                ),
-                          boxShadow: navigation
-                              ? [
-                                  BoxShadow(
-                                    color: scheme.shadow.withValues(
-                                      alpha: 0.13,
-                                    ),
-                                    blurRadius: 24,
-                                    offset: const Offset(0, 8),
-                                  ),
-                                ]
-                              : null,
+                          borderRadius: _trackRadius,
+                          border: Border.all(
+                            color: scheme.outlineVariant.withValues(
+                              alpha: 0.65,
+                            ),
+                          ),
                         ),
                         child: Stack(
                           fit: StackFit.expand,
@@ -414,16 +402,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                                           scheme.secondaryContainer,
                                           lift.clamp(0.0, 1.0) * 0.45,
                                         ),
-                                  borderRadius: _pill,
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: scheme.shadow.withValues(
-                                        alpha: 0.14 * lift,
-                                      ),
-                                      blurRadius: 8 * lift,
-                                      offset: Offset(0, 3 * lift),
-                                    ),
-                                  ],
+                                  borderRadius: _selectionRadius,
                                 ),
                               ),
                             ),
@@ -522,7 +501,8 @@ class _SegmentLabelState extends State<_SegmentLabel> {
         onTap: widget.onActivate,
         child: DecoratedBox(
           decoration: ShapeDecoration(
-            shape: StadiumBorder(
+            shape: RoundedRectangleBorder(
+              borderRadius: _SlidingSegmentedControlState._selectionRadius,
               side: _focused
                   ? BorderSide(color: scheme.primary, width: 2)
                   : BorderSide.none,
@@ -539,11 +519,13 @@ class _SegmentLabelState extends State<_SegmentLabel> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Icon(
-                            destination.selectedIcon ?? destination.icon,
-                            size: 28,
+                            widget.selected
+                                ? destination.selectedIcon ?? destination.icon
+                                : destination.icon,
+                            size: 20,
                             color: color,
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 4),
                           Text(
                             destination.label,
                             style: theme.textTheme.labelSmall?.copyWith(

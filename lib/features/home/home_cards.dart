@@ -41,7 +41,8 @@ class HomeTrafficCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final up = [for (final sample in controller.samples) sample.up];
     final down = [for (final sample in controller.samples) sample.down];
     Widget metric(String label, Color color, List<double> values, int total) {
@@ -51,9 +52,14 @@ class HomeTrafficCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Container(width: 16, height: 3, color: color),
-                const SizedBox(width: 6),
-                Text(label),
+                Container(width: 16, height: 2, color: color),
+                const SizedBox(width: 8),
+                Text(
+                  label,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 8),
@@ -61,7 +67,10 @@ class HomeTrafficCard extends StatelessWidget {
               fit: BoxFit.scaleDown,
               child: Text(
                 formatSpeed(values.lastOrNull ?? 0),
-                style: Theme.of(context).textTheme.headlineSmall,
+                style: theme.textTheme.headlineSmall?.copyWith(
+                  fontWeight: FontWeight.w500,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
               ),
             ),
             const SizedBox(height: 4),
@@ -96,17 +105,22 @@ class HomeTrafficCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              metric('上传', scheme.primary, up, controller.traffic.uploaded),
+              metric(
+                '上传',
+                TrafficSparkline.uploadColor(scheme),
+                up,
+                controller.traffic.uploaded,
+              ),
               const SizedBox(width: 12),
               metric(
                 '下载',
-                scheme.tertiary,
+                TrafficSparkline.downloadColor(scheme),
                 down,
                 controller.traffic.downloaded,
               ),
             ],
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
           Semantics(
             label: '上传和下载速率趋势，使用相同刻度',
             child: TrafficSparkline(up: up, down: down, height: 140),
@@ -149,9 +163,8 @@ class _HomeSubscriptionCardState extends State<HomeSubscriptionCard> {
       await controller.updateSubscription(subscription.id);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('订阅更新失败，请重试')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('订阅更新失败，请重试')));
       }
     } finally {
       if (mounted) setState(() => _updating = false);
@@ -257,7 +270,7 @@ class _SubscriptionOverview extends StatelessWidget {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
                   const SizedBox(height: 3),
@@ -289,7 +302,7 @@ class _SubscriptionOverview extends StatelessWidget {
                   '${(progress * 100).toStringAsFixed(progress < 0.1 ? 1 : 0)}%',
                   style: theme.textTheme.labelLarge?.copyWith(
                     color: progressColor,
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
             ],
@@ -314,7 +327,7 @@ class _SubscriptionOverview extends StatelessWidget {
           ],
           const SizedBox(height: 14),
           Container(
-            padding: const EdgeInsets.symmetric(vertical: 10),
+            padding: const EdgeInsets.symmetric(vertical: 12),
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
               borderRadius: BorderRadius.circular(12),
@@ -402,7 +415,7 @@ class _UsageMetric extends StatelessWidget {
     final scheme = theme.colorScheme;
     return Expanded(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -449,7 +462,7 @@ class _SubscriptionDetailRow extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Padding(
-      padding: const EdgeInsets.only(top: 10),
+      padding: const EdgeInsets.only(top: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

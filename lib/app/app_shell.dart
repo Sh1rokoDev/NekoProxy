@@ -128,7 +128,6 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     // Keep the tab widget stable as LayoutBuilder receives new window sizes.
     final tabContent = Expanded(
       key: const ValueKey('tab-content'),
@@ -149,44 +148,30 @@ class _AppShellState extends State<AppShell> {
             selected: _index,
             onSelected: _selectTab,
           );
-          return DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  theme.colorScheme.surface,
-                  theme.colorScheme.surfaceContainerLowest,
-                  theme.colorScheme.surface,
+          return Scaffold(
+            extendBody: !desktop,
+            body: SafeArea(
+              top: false,
+              bottom: desktop,
+              child: Row(
+                textDirection: TextDirection.ltr,
+                children: [
+                  if (desktop)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                      child: Align(child: navigation),
+                    ),
+                  tabContent,
                 ],
               ),
             ),
-            child: Scaffold(
-              backgroundColor: Colors.transparent,
-              extendBody: !desktop,
-              body: SafeArea(
-                top: false,
-                bottom: desktop,
-                child: Row(
-                  textDirection: TextDirection.ltr,
-                  children: [
-                    if (desktop)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-                        child: Align(child: navigation),
-                      ),
-                    tabContent,
-                  ],
-                ),
-              ),
-              bottomNavigationBar: desktop
-                  ? null
-                  : SafeArea(
-                      top: false,
-                      minimum: const EdgeInsets.fromLTRB(21, 12, 21, 21),
-                      child: Align(heightFactor: 1, child: navigation),
-                    ),
-            ),
+            bottomNavigationBar: desktop
+                ? null
+                : SafeArea(
+                    top: false,
+                    minimum: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                    child: Align(heightFactor: 1, child: navigation),
+                  ),
           );
         },
       ),
@@ -221,15 +206,15 @@ class _AnimatedTabStackState extends State<_AnimatedTabStack> {
       final selected = index == widget.index;
       return TweenAnimationBuilder<double>(
         tween: Tween(begin: initial ? 1 : 0, end: selected ? 1 : 0),
-        duration: const Duration(milliseconds: 220),
+        duration: MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
         onEnd: () {
           if (index == widget.index) _entries[index]?.opaque = true;
         },
-        builder: (context, value, child) => Opacity(
-          opacity: value,
-          child: Transform.scale(scale: 0.99 + 0.01 * value, child: child),
-        ),
+        builder: (context, value, child) =>
+            Opacity(opacity: value, child: child),
         child: IgnorePointer(
           ignoring: !selected,
           child: ExcludeSemantics(

@@ -78,12 +78,10 @@ class _NodesPageState extends State<NodesPage> {
                 ),
               ),
             ),
-            const SizedBox(width: 4),
+            const SizedBox(width: 8),
           ],
-          IconButton(
-            icon: Icon(
-              _searchOpen ? Icons.close_rounded : Icons.search_rounded,
-            ),
+          HeaderIconButton(
+            icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
             tooltip: _searchOpen ? '关闭搜索' : '搜索节点',
             onPressed: _searchOpen || hasNodes ? _toggleSearch : null,
           ),

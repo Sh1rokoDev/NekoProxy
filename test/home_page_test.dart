@@ -468,7 +468,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     expect(
       tester.renderObject(trafficContent).getTransformTo(null),
-      isNot(initialTransform),
+      initialTransform,
     );
     final before = bounds(HomeCard.splitMode);
     final gesture = await tester.startGesture(tester.getCenter(trafficCard));
@@ -479,13 +479,6 @@ void main() {
     final floatingCard = find.byType(HomeTrafficCard).last;
     final floatingStart = tester.getRect(floatingCard);
     expect(floatingStart.size, bounds(HomeCard.traffic).size);
-    final modeContent = find.byType(HomeSplitModeCard);
-    double rotationOf(Finder card) =>
-        tester.renderObject(card).getTransformTo(null).entry(1, 0);
-    final modeRotation = rotationOf(modeContent);
-    await tester.pump(const Duration(milliseconds: 90));
-    expect(rotationOf(modeContent), isNot(modeRotation));
-    expect(rotationOf(floatingCard), closeTo(0, 0.0001));
     await gesture.moveTo(before.center);
     await tester.pump();
     expect(tester.getRect(floatingCard).left, lessThan(floatingStart.left));

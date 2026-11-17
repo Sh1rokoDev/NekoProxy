@@ -22,14 +22,14 @@ class RegionBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final primary = theme.colorScheme.primary;
+    final colors = theme.colorScheme;
     return Semantics(
       label: '$semanticPrefix $region',
       excludeSemantics: true,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         decoration: BoxDecoration(
-          color: primary.withValues(alpha: 0.11),
+          color: colors.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(4),
         ),
         child: Text(
@@ -37,8 +37,8 @@ class RegionBadge extends StatelessWidget {
           maxLines: shortLabel == null ? null : 1,
           overflow: shortLabel == null ? null : TextOverflow.ellipsis,
           style: theme.textTheme.labelSmall?.copyWith(
-            color: primary,
-            fontWeight: FontWeight.w700,
+            color: colors.onSurfaceVariant,
+            fontWeight: FontWeight.w500,
           ),
         ),
       ),
@@ -89,7 +89,7 @@ class PageFrame extends StatelessWidget {
                 right: false,
                 bottom: false,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 22, 24, headerGap),
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, headerGap),
                   child: _constrainWidth(
                     Column(
                       mainAxisSize: MainAxisSize.min,
@@ -215,7 +215,7 @@ class HeaderIconButton extends StatelessWidget {
         foregroundColor:
             foregroundColor ??
             (active ? scheme.onPrimaryContainer : scheme.onSurfaceVariant),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
       icon: Icon(icon, size: 21),
     );
@@ -249,9 +249,9 @@ class SectionCard extends StatelessWidget {
       curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
         color: color ?? theme.colorScheme.surfaceContainerLow,
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.35),
+          color: theme.colorScheme.outlineVariant.withValues(alpha: 0.65),
         ),
       ),
       child: Column(
@@ -259,12 +259,16 @@ class SectionCard extends StatelessWidget {
         children: [
           if (hasHeader)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 16),
               child: Row(
                 children: [
                   if (icon != null) ...[
-                    Icon(icon, size: 20, color: theme.colorScheme.primary),
-                    const SizedBox(width: 10),
+                    Icon(
+                      icon,
+                      size: 18,
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 8),
                   ],
                   Expanded(
                     child: Text(
@@ -363,6 +367,10 @@ class TrafficSparkline extends StatelessWidget {
   final double height;
   final bool showGrid;
 
+  // Downloads lead the chart; uploads stay distinct on the same scale.
+  static Color uploadColor(ColorScheme scheme) => scheme.outline;
+  static Color downloadColor(ColorScheme scheme) => scheme.primary;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -372,8 +380,8 @@ class TrafficSparkline extends StatelessWidget {
         painter: _SparklinePainter(
           up: up,
           down: down,
-          upColor: scheme.primary,
-          downColor: scheme.tertiary,
+          upColor: uploadColor(scheme),
+          downColor: downloadColor(scheme),
           gridColor: scheme.outlineVariant,
           showGrid: showGrid,
         ),
@@ -418,7 +426,7 @@ class _SparklinePainter extends CustomPainter {
     }
     canvas.drawLine(Offset(0, bottom), Offset(size.width, bottom), gridPaint);
 
-    void draw(List<double> data, Color color) {
+    void draw(List<double> data, Color color, {bool emphasize = false}) {
       if (data.isEmpty) return;
       final step = data.length <= 1 ? 0.0 : size.width / (data.length - 1);
       final points = <Offset>[
@@ -429,34 +437,25 @@ class _SparklinePainter extends CustomPainter {
           ),
       ];
       final path = _smoothPath(points, top, bottom);
-      final fill = Path.from(path)
-        ..lineTo(points.last.dx, bottom)
-        ..lineTo(points.first.dx, bottom)
-        ..close();
-      canvas.drawPath(
-        fill,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              color.withValues(alpha: 0.20),
-              color.withValues(alpha: 0.0),
-            ],
-          ).createShader(Offset.zero & size),
-      );
+      if (emphasize) {
+        final fill = Path.from(path)
+          ..lineTo(points.last.dx, bottom)
+          ..lineTo(points.first.dx, bottom)
+          ..close();
+        canvas.drawPath(fill, Paint()..color = color.withValues(alpha: 0.10));
+      }
       canvas.drawPath(
         path,
         Paint()
           ..style = PaintingStyle.stroke
-          ..strokeWidth = 2
+          ..strokeWidth = emphasize ? 2 : 1.5
           ..strokeCap = StrokeCap.round
           ..strokeJoin = StrokeJoin.round
           ..color = color,
       );
     }
 
-    draw(down, downColor);
+    draw(down, downColor, emphasize: true);
     draw(up, upColor);
   }
 

@@ -171,6 +171,48 @@ AllowedIPs = 172.16.0.7/16
     }
   });
 
+  test('Windows standalone forwards TUN packets after DNS hijacking', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0');
+    final profile = snapshot.wireGuardProfiles.single;
+    snapshot.wireGuardProfiles = [
+      WireGuardProfile(
+        id: profile.id,
+        name: profile.name,
+        configuration: profile.configuration.replaceFirst(
+          '[Interface]',
+          '[Interface]\nMTU = 1280',
+        ),
+      ),
+    ];
+    final windows = _compile(snapshot, CompileTarget.windows).json;
+    final tun = (windows['inbounds'] as List).cast<Map>().singleWhere(
+      (inbound) => inbound['type'] == 'tun',
+    );
+    expect(tun['mtu'], 1280);
+    expect((windows['endpoints'] as List).single['mtu'], tun['mtu']);
+    final route = windows['route'] as Map;
+    expect(route['rules'], [
+      {
+        'inbound': ['neko-wireguard'],
+        'action': 'reject',
+      },
+      {'port': 53, 'action': 'hijack-dns'},
+      {
+        'inbound': ['tun-in'],
+        'ip_cidr': ['0.0.0.0/0', '::/0'],
+        'action': 'route',
+        'outbound': 'neko-wireguard',
+      },
+    ]);
+    expect(route['final'], 'direct');
+
+    final android = _compile(snapshot, CompileTarget.android).json;
+    expect(
+      ((android['route'] as Map)['rules'] as List).last['action'],
+      'hijack-dns',
+    );
+  });
+
   test('combined retains selector and wires nodes and direct DNS through the profile', () {
     final snapshot = _snapshot(OutboundMode.wireGuardProxy, '0.0.0.0/0');
     snapshot.subscriptions.add(

@@ -337,6 +337,7 @@ class ConfigCompiler {
         inbounds,
         nodeTags,
         only: wireGuardOnly,
+        forwardTunPackets: wireGuardOnly && target == CompileTarget.windows,
         protected:
             wireGuardOnly &&
             target == CompileTarget.windows &&
@@ -387,6 +388,7 @@ class ConfigCompiler {
     List<Map<String, dynamic>> inbounds,
     Map<String, String> nodeTags, {
     required bool only,
+    required bool forwardTunPackets,
     required bool protected,
     required String? systemDns,
     required bool testOnly,
@@ -407,12 +409,16 @@ class ConfigCompiler {
     final hasDomainPeer = profile.peers.any(
       (peer) => InternetAddress.tryParse(peer['address'] as String) == null,
     );
-    config['endpoints'] = [
-      profile.toEndpoint(
-        wireGuardTag,
-        resolver: hasDomainPeer ? wireGuardBootstrapTag : null,
-      ),
-    ];
+    final endpoint = profile.toEndpoint(
+      wireGuardTag,
+      resolver: hasDomainPeer ? wireGuardBootstrapTag : null,
+    );
+    if (forwardTunPackets) {
+      // Use the core's WireGuard default for both ends of the packet path
+      // unless the profile supplies its own MTU.
+      endpoint.putIfAbsent('mtu', () => 1408);
+    }
+    config['endpoints'] = [endpoint];
     final physical = outbounds.first;
     physical['tag'] = physicalTag;
     outbounds.insert(1, {
@@ -479,15 +485,17 @@ class ConfigCompiler {
       );
     }
     route['default_domain_resolver'] = {'server': 'dns-direct'};
+    final tunRoutes = [
+      for (final prefix in allowedIps)
+        if (prefix.contains(':') ? hasIpv6Tunnel : hasIpv4Tunnel) prefix,
+    ];
     for (final inbound in inbounds.where((item) => item['type'] == 'tun')) {
       if (!only) continue;
       inbound['auto_route'] = true;
       inbound.remove('route_exclude_address');
       final addresses = inbound['address'] as List<String>;
-      inbound['route_address'] = [
-        for (final prefix in allowedIps)
-          if (prefix.contains(':') ? hasIpv6Tunnel : hasIpv4Tunnel) prefix,
-      ];
+      inbound['route_address'] = tunRoutes;
+      if (forwardTunPackets) inbound['mtu'] = endpoint['mtu'];
       if (!hasIpv6Tunnel) {
         addresses.removeWhere((address) => address.contains(':'));
       } else if (!addresses.any((address) => address.contains(':'))) {
@@ -519,6 +527,15 @@ class ConfigCompiler {
             'action': 'reject',
           },
           {'port': 53, 'action': 'hijack-dns'},
+          if (forwardTunPackets && !testOnly)
+            {
+              // Let sing-box forward the original packets to WireGuard.
+              // The loopback proxy and DNS still use the dialer below.
+              'inbound': [tunTag],
+              'ip_cidr': tunRoutes,
+              'action': 'route',
+              'outbound': wireGuardTag,
+            },
         ];
     } else {
       final rules = route['rules'] as List?;

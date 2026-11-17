@@ -19,7 +19,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/sagernet/gvisor/pkg/buffer"
+	"github.com/sagernet/gvisor/pkg/tcpip"
+	"github.com/sagernet/gvisor/pkg/tcpip/adapters/gonet"
+	"github.com/sagernet/gvisor/pkg/tcpip/link/channel"
+	"github.com/sagernet/gvisor/pkg/tcpip/network/ipv4"
+	"github.com/sagernet/gvisor/pkg/tcpip/network/ipv6"
+	"github.com/sagernet/gvisor/pkg/tcpip/stack"
+	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing-box/log"
+	"github.com/sagernet/sing-tun"
 	M "github.com/sagernet/sing/common/metadata"
+	N "github.com/sagernet/sing/common/network"
 )
 
 func TestWireGuardRouteThroughRealPeer(t *testing.T) {
@@ -76,16 +87,19 @@ func TestWireGuardRouteThroughRealPeer(t *testing.T) {
 	  "dns":{"servers":[{"type":"hosts","tag":"fixture","predefined":{"wireguard.test":["10.67.0.1"]}}]},
 	  "route":{"rules":[{"inbound":["peer"],"port":53,"action":"hijack-dns"}],"final":"direct"},
 	  "endpoints":[{"type":"wireguard","tag":"peer","system":false,"listen_port":%d,
-	    "address":["10.67.0.1/24"],"private_key":%q,"peers":[{"public_key":%q,"allowed_ips":["10.67.0.2/32"]}]}]}`,
+	    "address":["10.67.0.1/24","fd67::1/64"],"private_key":%q,"peers":[{"public_key":%q,"allowed_ips":["10.67.0.2/32","fd67::2/128"]}]}]}`,
 		port, serverKey, clientPublic))
 	client := start(fmt.Sprintf(`{"log":{"disabled":true},
 	  "dns":{"servers":[{"type":"neko-wireguard-dns","tag":"dns","servers":["10.67.0.3"],"detour":"direct"}]},
-	  "outbounds":[{"type":"direct","tag":"physical"},{"type":"neko-wireguard-route","tag":"direct","endpoint":"wg","physical":"physical","allowed_ips":["10.67.0.0/24"],"resolver":"dns"},
+	  "outbounds":[{"type":"direct","tag":"physical"},{"type":"neko-wireguard-route","tag":"direct","endpoint":"wg","physical":"physical","allowed_ips":["10.67.0.0/24","fd67::/64"],"resolver":"dns"},
 	    {"type":"http","tag":"proxy","server":"10.67.0.1","server_port":%d,"detour":"direct"},
 	    {"type":"http","tag":"proxy-unmatched","server":"127.0.0.1","server_port":%d,"detour":"direct"}],
-	  "endpoints":[{"type":"wireguard","tag":"wg","system":false,"address":["10.67.0.2/24"],"private_key":%q,
-	    "peers":[{"address":"127.0.0.1","port":%d,"public_key":%q,"allowed_ips":["10.67.0.0/24"]}]}],
-	  "route":{"final":"direct","default_domain_resolver":{"server":"dns"}}}`,
+	  "endpoints":[{"type":"wireguard","tag":"wg","system":false,"address":["10.67.0.2/24","fd67::2/64"],"private_key":%q,
+	    "peers":[{"address":"127.0.0.1","port":%d,"public_key":%q,"allowed_ips":["10.67.0.0/24","fd67::/64"]}]}],
+	  "route":{"final":"direct","default_domain_resolver":{"server":"dns"},"rules":[
+	    {"inbound":["wg"],"action":"reject"},
+	    {"port":53,"action":"hijack-dns"},
+	    {"inbound":["tun-in"],"ip_cidr":["10.67.0.0/24","fd67::/64"],"action":"route","outbound":"wg"}]}}`,
 		servicePort, servicePort, clientKey, port, serverPublic))
 	get := func(tag, destination, want string) {
 		t.Helper()
@@ -111,6 +125,12 @@ func TestWireGuardRouteThroughRealPeer(t *testing.T) {
 	get("direct", "10.67.0.1:"+serverPort, "via peer")
 	get("direct", "wireguard.test:"+serverPort, "via peer")
 	get("proxy", "192.0.2.1:80", "via proxy")
+	t.Run("TLS over IPv4 packets", func(t *testing.T) {
+		testWireGuardHTTPSFromTun(t, client.instance.Router(), "127.0.0.1:0", "172.19.0.1/30", "10.67.0.1", ipv4.ProtocolNumber)
+	})
+	t.Run("TLS over IPv6 packets", func(t *testing.T) {
+		testWireGuardHTTPSFromTun(t, client.instance.Router(), "[::1]:0", "fdfe:dcba:9876::1/126", "fd67::1", ipv6.ProtocolNumber)
+	})
 	if err := peer.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -124,6 +144,118 @@ func TestWireGuardRouteThroughRealPeer(t *testing.T) {
 		conn.Close()
 		t.Fatal("covered destination unexpectedly connected after the WireGuard peer stopped")
 	}
+}
+
+// Feed packets from a separate client TCP stack through the same dispatcher
+// used by the Windows system TUN, without requiring a driver or elevation.
+func testWireGuardHTTPSFromTun(t *testing.T, router adapter.Router, loopback, source, destination string, protocol tcpip.NetworkProtocolNumber) {
+	t.Helper()
+	payload := strings.Repeat("HTTPS over WireGuard\n", 4096)
+	listener, err := net.Listen("tcp", loopback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &httptest.Server{Listener: listener, Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if body, err := io.ReadAll(r.Body); err != nil || string(body) != payload {
+			http.Error(w, "bad request body", http.StatusBadRequest)
+			return
+		}
+		_, _ = io.WriteString(w, payload)
+	})}}
+	server.StartTLS()
+	defer server.Close()
+	port := uint16(server.Listener.Addr().(*net.TCPAddr).Port)
+	link := channel.New(256, 1408, "")
+	ipStack, err := tun.NewGVisorStackWithOptions(link, stack.NICOptions{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ipStack.Close()
+	prefix := netip.MustParsePrefix(source)
+	if err := ipStack.AddProtocolAddress(tun.DefaultNIC, tcpip.ProtocolAddress{
+		Protocol:          protocol,
+		AddressWithPrefix: tcpip.AddressWithPrefix{Address: tun.AddressFromAddr(prefix.Addr()), PrefixLen: prefix.Bits()},
+	}, stack.AddressProperties{}); err != nil {
+		t.Fatal(err)
+	}
+	dispatcher := tun.NewForwardDispatcher(tunTCPHandler{router: router}, tunTCPWriteback{link, protocol}, log.NewNOPFactory().Logger(), 0, 0)
+	defer dispatcher.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	readDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-readDone
+	}()
+	go func() {
+		defer close(readDone)
+		for {
+			packet := link.ReadContext(ctx)
+			if packet == nil {
+				return
+			}
+			view := packet.ToView()
+			packet.DecRef()
+			forwarded := dispatcher.Dispatch(view.AsSlice())
+			dispatcher.Flush()
+			view.Release()
+			if !forwarded {
+				t.Error("TUN packet did not take the WireGuard packet path")
+				cancel()
+				return
+			}
+		}
+	}()
+	transport := server.Client().Transport.(*http.Transport).Clone()
+	defer transport.CloseIdleConnections()
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		return gonet.DialContextTCP(ctx, ipStack, tcpip.FullAddress{
+			NIC: tun.DefaultNIC, Addr: tun.AddressFromAddr(netip.MustParseAddr(destination)), Port: port,
+		}, protocol)
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, server.URL, strings.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := (&http.Client{Transport: transport}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if body, err := io.ReadAll(response.Body); err != nil || response.StatusCode != http.StatusOK || string(body) != payload {
+		t.Fatalf("HTTPS through WireGuard: HTTP %d, %d bytes, err %v", response.StatusCode, len(body), err)
+	}
+}
+
+type tunTCPHandler struct {
+	tun.Handler
+	router adapter.Router
+}
+
+func (h tunTCPHandler) JudgeFlow(_ uint8, source, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	result := h.router.PreMatch(adapter.InboundContext{
+		Inbound: "tun-in", InboundType: "tun", Network: N.NetworkTCP,
+		Source: M.SocksaddrFromNetIP(source), Destination: M.SocksaddrFromNetIP(destination),
+	}, firstPacket)
+	if port, ok := result.Outbound.(tun.Port); result.Action == adapter.PreMatchFlow && ok {
+		return tun.FlowVerdict{Action: tun.ActionFlow, Port: port}
+	}
+	return tun.FlowVerdict{Action: tun.ActionAccept}
+}
+
+type tunTCPWriteback struct {
+	link     *channel.Endpoint
+	protocol tcpip.NetworkProtocolNumber
+}
+
+func (tunTCPWriteback) ReturnHeadroom() int { return 0 }
+
+func (w tunTCPWriteback) WriteReturnPackets(packets [][]byte) error {
+	for _, data := range packets {
+		packet := stack.NewPacketBuffer(stack.PacketBufferOptions{Payload: buffer.MakeWithData(data)})
+		w.link.InjectInbound(w.protocol, packet)
+		packet.DecRef()
+	}
+	return nil
 }
 
 func TestWireGuardRouteRejectsUncoveredWhenProtected(t *testing.T) {

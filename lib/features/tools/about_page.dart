@@ -57,6 +57,7 @@ class _AboutPageState extends State<AboutPage> {
     final theme = Theme.of(context);
     return HeaderScaffold(
       title: const Text('关于 NekoProxy'),
+      maxContentWidth: 720,
       body: (headerInset) => SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
@@ -65,7 +66,7 @@ class _AboutPageState extends State<AboutPage> {
             child: Column(
               children: [
                 ClipRRect(
-                  borderRadius: BorderRadius.circular(17),
+                  borderRadius: BorderRadius.circular(16),
                   child: Image.asset(
                     'assets/icons/app_icon.png',
                     width: 92,
@@ -89,7 +90,7 @@ class _AboutPageState extends State<AboutPage> {
                     context.getInheritedWidgetOfExactType<AppScope>() !=
                         null) ...[
                   AppUpdateCard(currentVersion: updateVersion),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 16),
                 ],
                 SectionCard(
                   title: '技术组件',
@@ -109,7 +110,7 @@ class _AboutPageState extends State<AboutPage> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
                 SectionCard(
                   title: '开源协议',
                   icon: Icons.code_rounded,

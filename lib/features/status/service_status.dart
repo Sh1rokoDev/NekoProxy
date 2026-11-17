@@ -192,7 +192,9 @@ class ServiceStatusPage extends StatelessWidget {
         children: [
           Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 820),
+              constraints: const BoxConstraints(
+                maxWidth: HeaderScaffold.defaultContentWidth,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -207,7 +209,11 @@ class ServiceStatusPage extends StatelessWidget {
                               child: Text(
                                 title,
                                 key: ValueKey(title),
-                                style: theme.textTheme.titleMedium,
+                                style: theme.textTheme.titleLarge?.copyWith(
+                                  fontFeatures: const [
+                                    FontFeature.tabularFigures(),
+                                  ],
+                                ),
                               ),
                             ),
                             const SizedBox(height: 2),
@@ -244,7 +250,7 @@ class ServiceStatusPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 16),
                   SectionCard(
-                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    padding: const EdgeInsets.symmetric(vertical: 8),
                     child: LayoutBuilder(
                       builder: (context, constraints) {
                         final abbreviateRegions = _shouldAbbreviateRegions(

@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 
 import 'header_fade.dart';
 
+export 'header_icon_button.dart';
 export 'sliding_segmented_control.dart';
 
 class RegionBadge extends StatelessWidget {
@@ -174,50 +175,6 @@ class PageFrame extends StatelessWidget {
           if (actions != null) ...[const SizedBox(width: 12), actions!],
         ],
       ),
-    );
-  }
-}
-
-class HeaderIconButton extends StatelessWidget {
-  const HeaderIconButton({
-    super.key,
-    required this.icon,
-    required this.tooltip,
-    this.onPressed,
-    this.active = false,
-    this.backgroundColor,
-    this.foregroundColor,
-  });
-
-  final IconData icon;
-  final String tooltip;
-  final VoidCallback? onPressed;
-  final bool active;
-  final Color? backgroundColor;
-  final Color? foregroundColor;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final fill =
-        backgroundColor ??
-        (active ? scheme.primaryContainer : scheme.surfaceContainerHighest);
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      style: IconButton.styleFrom(
-        minimumSize: const Size(42, 42),
-        fixedSize: const Size(42, 42),
-        padding: EdgeInsets.zero,
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        backgroundColor: fill,
-        disabledBackgroundColor: scheme.surfaceContainerHigh,
-        foregroundColor:
-            foregroundColor ??
-            (active ? scheme.onPrimaryContainer : scheme.onSurfaceVariant),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      ),
-      icon: Icon(icon, size: 21),
     );
   }
 }

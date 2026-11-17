@@ -64,25 +64,29 @@ class _AppsPageState extends State<AppsPage> {
     final mode = controller.settings.perAppMode;
     final query = _search.text.trim().toLowerCase();
     final apps = (_apps ?? const <InstalledApp>[])
-        .where((app) =>
-            query.isEmpty ||
-            app.label.toLowerCase().contains(query) ||
-            app.packageName.toLowerCase().contains(query))
+        .where(
+          (app) =>
+              query.isEmpty ||
+              app.label.toLowerCase().contains(query) ||
+              app.packageName.toLowerCase().contains(query),
+        )
         .toList();
 
     return HeaderScaffold(
       title: const Text('分应用代理'),
+      maxContentWidth: 760,
       actions: [
         if (controller.running)
-          Padding(
-            padding: const EdgeInsets.only(right: 12),
-            child: FilledButton.tonalIcon(
-              onPressed: _reconnecting ? null : () => _reconnect(controller),
-              icon: _reconnecting
-                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.restart_alt_rounded, size: 18),
-              label: const Text('重新连接'),
-            ),
+          FilledButton.tonalIcon(
+            onPressed: _reconnecting ? null : () => _reconnect(controller),
+            icon: _reconnecting
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.restart_alt_rounded, size: 18),
+            label: const Text('重新连接'),
           ),
       ],
       scrollsBehindHeader: false,
@@ -94,7 +98,7 @@ class _AppsPageState extends State<AppsPage> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                padding: const EdgeInsets.fromLTRB(24, 16, 24, 0),
                 child: SectionCard(
                   title: '接管范围',
                   icon: Icons.apps_rounded,
@@ -122,20 +126,25 @@ class _AppsPageState extends State<AppsPage> {
                         onChanged: (value) => _setMode(controller, value),
                       ),
                       if (mode == PerAppMode.allow && _selected.isEmpty) ...[
-                        const SizedBox(height: 10),
+                        const SizedBox(height: 8),
                         Text(
                           '至少选择一个应用，否则无法连接。',
-                          style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.error),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.error,
+                          ),
                         ),
                       ],
-                      const SizedBox(height: 10),
-                      Text('已选 ${_selected.length} 个', style: theme.textTheme.labelMedium),
+                      const SizedBox(height: 8),
+                      Text(
+                        '已选 ${_selected.length} 个',
+                        style: theme.textTheme.labelMedium,
+                      ),
                     ],
                   ),
                 ),
               ),
               Padding(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 8),
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 8),
                 child: TextField(
                   controller: _search,
                   onChanged: (_) => setState(() {}),
@@ -150,54 +159,67 @@ class _AppsPageState extends State<AppsPage> {
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
                     : _error != null
-                        ? Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: EmptyState(
-                              icon: Icons.error_outline_rounded,
-                              title: '无法列出应用',
-                              message: _error!,
-                              action: OutlinedButton.icon(
-                                onPressed: () {
-                                  setState(() {
-                                    _loading = true;
-                                    _error = null;
-                                  });
-                                  _load(controller);
-                                },
-                                icon: const Icon(Icons.refresh_rounded),
-                                label: const Text('重试'),
+                    ? Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: EmptyState(
+                          icon: Icons.error_outline_rounded,
+                          title: '无法列出应用',
+                          message: _error!,
+                          action: OutlinedButton.icon(
+                            onPressed: () {
+                              setState(() {
+                                _loading = true;
+                                _error = null;
+                              });
+                              _load(controller);
+                            },
+                            icon: const Icon(Icons.refresh_rounded),
+                            label: const Text('重试'),
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                        itemCount: apps.length,
+                        itemBuilder: (context, index) {
+                          final app = apps[index];
+                          final checked = _selected.contains(app.packageName);
+                          return CheckboxListTile(
+                            dense: true,
+                            value: checked,
+                            onChanged: mode == PerAppMode.off
+                                ? null
+                                : (value) => _toggle(
+                                    controller,
+                                    app.packageName,
+                                    value == true,
+                                  ),
+                            secondary: CircleAvatar(
+                              radius: 16,
+                              backgroundColor:
+                                  theme.colorScheme.surfaceContainerHighest,
+                              child: Text(
+                                app.label.isEmpty
+                                    ? '?'
+                                    : app.label.substring(0, 1).toUpperCase(),
+                                style: theme.textTheme.labelMedium,
                               ),
                             ),
-                          )
-                        : ListView.builder(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
-                            itemCount: apps.length,
-                            itemBuilder: (context, index) {
-                              final app = apps[index];
-                              final checked = _selected.contains(app.packageName);
-                              return CheckboxListTile(
-                                dense: true,
-                                value: checked,
-                                onChanged: mode == PerAppMode.off
-                                    ? null
-                                    : (value) => _toggle(controller, app.packageName, value == true),
-                                secondary: CircleAvatar(
-                                  radius: 16,
-                                  backgroundColor: theme.colorScheme.surfaceContainerHighest,
-                                  child: Text(
-                                    app.label.isEmpty ? '?' : app.label.substring(0, 1).toUpperCase(),
-                                    style: theme.textTheme.labelMedium,
-                                  ),
-                                ),
-                                title: Text(app.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-                                subtitle: Text(
-                                  app.system ? '${app.packageName} · 系统应用' : app.packageName,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                ),
-                              );
-                            },
-                          ),
+                            title: Text(
+                              app.label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            subtitle: Text(
+                              app.system
+                                  ? '${app.packageName} · 系统应用'
+                                  : app.packageName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        },
+                      ),
               ),
             ],
           ),
@@ -229,7 +251,9 @@ class _AppsPageState extends State<AppsPage> {
       await controller.restartCore();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(controller.running ? '已重新连接并应用接管范围' : '当前未连接，设置已保存')),
+        SnackBar(
+          content: Text(controller.running ? '已重新连接并应用接管范围' : '当前未连接，设置已保存'),
+        ),
       );
     } finally {
       if (mounted) setState(() => _reconnecting = false);

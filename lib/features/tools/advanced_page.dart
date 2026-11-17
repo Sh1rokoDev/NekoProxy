@@ -55,7 +55,9 @@ class _AdvancedPageState extends State<AdvancedPage> {
         padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 820),
+            constraints: const BoxConstraints(
+              maxWidth: HeaderScaffold.defaultContentWidth,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -75,14 +77,18 @@ class _AdvancedPageState extends State<AdvancedPage> {
                           Expanded(
                             child: TextField(
                               controller: _interval,
-                              decoration: const InputDecoration(labelText: '间隔', ),
+                              decoration: const InputDecoration(
+                                labelText: '间隔',
+                              ),
                             ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(
                             child: TextField(
                               controller: _idle,
-                              decoration: const InputDecoration(labelText: '空闲超时', ),
+                              decoration: const InputDecoration(
+                                labelText: '空闲超时',
+                              ),
                             ),
                           ),
                         ],
@@ -96,7 +102,8 @@ class _AdvancedPageState extends State<AdvancedPage> {
                       SwitchRow(
                         title: '切换时中断现有入站连接',
                         value: _interrupt,
-                        onChanged: (value) => setState(() => _interrupt = value),
+                        onChanged: (value) =>
+                            setState(() => _interrupt = value),
                       ),
                     ],
                   ),
@@ -115,26 +122,28 @@ class _AdvancedPageState extends State<AdvancedPage> {
                       DropdownMenuItem(value: 'warn', child: Text('warn')),
                       DropdownMenuItem(value: 'error', child: Text('error')),
                     ],
-                    onChanged: (value) => setState(() => _logLevel = value ?? _logLevel),
+                    onChanged: (value) =>
+                        setState(() => _logLevel = value ?? _logLevel),
                   ),
                 ),
                 const SizedBox(height: 20),
-                Row(
+                OverflowBar(
+                  alignment: MainAxisAlignment.end,
+                  overflowAlignment: OverflowBarAlignment.end,
+                  spacing: 12,
+                  overflowSpacing: 8,
                   children: [
-                    Expanded(
-                      child: FilledButton.icon(
-                        onPressed: controller.busy ? null : () => _save(controller),
-                        icon: const Icon(Icons.save_outlined),
-                        label: const Text('保存并应用'),
-                      ),
+                    FilledButton.icon(
+                      onPressed: controller.busy
+                          ? null
+                          : () => _save(controller),
+                      icon: const Icon(Icons.save_outlined),
+                      label: const Text('保存并应用'),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _preview(controller),
-                        icon: const Icon(Icons.code_rounded),
-                        label: const Text('查看生成配置'),
-                      ),
+                    OutlinedButton.icon(
+                      onPressed: () => _preview(controller),
+                      icon: const Icon(Icons.code_rounded),
+                      label: const Text('查看生成配置'),
                     ),
                   ],
                 ),
@@ -148,7 +157,9 @@ class _AdvancedPageState extends State<AdvancedPage> {
 
   Future<void> _save(AppController controller) async {
     final tolerance = int.tryParse(_tolerance.text.trim()) ?? -1;
-    if (_url.text.trim().isEmpty || _interval.text.trim().isEmpty || _idle.text.trim().isEmpty) {
+    if (_url.text.trim().isEmpty ||
+        _interval.text.trim().isEmpty ||
+        _idle.text.trim().isEmpty) {
       _showError('测速 URL、间隔和空闲超时不能为空');
       return;
     }
@@ -167,7 +178,8 @@ class _AdvancedPageState extends State<AdvancedPage> {
       restart: true,
     );
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('运行参数已应用')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('运行参数已应用')));
     }
   }
 
@@ -184,8 +196,13 @@ class _AdvancedPageState extends State<AdvancedPage> {
             height: 520,
             child: SingleChildScrollView(
               child: SelectableText(
-                const JsonEncoder.withIndent('  ').convert(compiled.redactedJson),
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11, height: 1.4),
+                const JsonEncoder.withIndent('  ')
+                    .convert(compiled.redactedJson),
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11,
+                  height: 1.4,
+                ),
               ),
             ),
           ),
@@ -194,13 +211,17 @@ class _AdvancedPageState extends State<AdvancedPage> {
               onPressed: () async {
                 await copyText(
                   context,
-                  const JsonEncoder.withIndent('  ').convert(compiled.redactedJson),
+                  const JsonEncoder.withIndent('  ')
+                      .convert(compiled.redactedJson),
                   message: '配置已复制',
                 );
               },
               child: const Text('复制'),
             ),
-            FilledButton(onPressed: () => Navigator.pop(context), child: const Text('关闭')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('关闭'),
+            ),
           ],
         ),
       );
@@ -211,6 +232,7 @@ class _AdvancedPageState extends State<AdvancedPage> {
   }
 
   void _showError(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 }

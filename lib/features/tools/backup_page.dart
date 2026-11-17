@@ -34,6 +34,7 @@ class _BackupPageState extends State<BackupPage> {
     final theme = Theme.of(context);
     return HeaderScaffold(
       title: const Text('备份与恢复'),
+      maxContentWidth: 760,
       body: (headerInset) => SingleChildScrollView(
         padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
@@ -89,9 +90,6 @@ class _BackupPageState extends State<BackupPage> {
                 SectionCard(
                   title: '重置',
                   icon: Icons.delete_forever_outlined,
-                  color: theme.colorScheme.errorContainer.withValues(
-                    alpha: 0.4,
-                  ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [

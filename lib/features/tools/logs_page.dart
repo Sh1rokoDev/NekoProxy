@@ -77,7 +77,8 @@ class _LogsPageState extends State<LogsPage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (position.maxScrollExtent - position.pixels < 160 || _paused == false) {
+      if (position.maxScrollExtent - position.pixels < 160 ||
+          _paused == false) {
         _scrollController.jumpTo(position.maxScrollExtent);
       }
     });
@@ -89,18 +90,22 @@ class _LogsPageState extends State<LogsPage> {
     final theme = Theme.of(context);
     return HeaderScaffold(
       title: const Text('运行日志'),
+      maxContentWidth: PageFrame.maxContentWidth,
       actions: [
-        IconButton(
+        HeaderIconButton(
           tooltip: _paused ? '继续' : '暂停',
           onPressed: () => setState(() => _paused = !_paused),
-          icon: Icon(_paused ? Icons.play_arrow_rounded : Icons.pause_rounded),
+          icon: _paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+          active: _paused,
         ),
-        IconButton(
+        HeaderIconButton(
           tooltip: '复制全部',
-          onPressed: _lines.isEmpty ? null : () => copyText(context, _lines.join('\n'), message: '日志已复制'),
-          icon: const Icon(Icons.copy_rounded),
+          onPressed: _lines.isEmpty
+              ? null
+              : () => copyText(context, _lines.join('\n'), message: '日志已复制'),
+          icon: Icons.copy_rounded,
         ),
-        IconButton(
+        HeaderIconButton(
           tooltip: '清空文件',
           onPressed: _lines.isEmpty
               ? null
@@ -120,21 +125,21 @@ class _LogsPageState extends State<LogsPage> {
                     _offset = 0;
                   } catch (e) {
                     if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('清空失败：$e')));
+                      ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content: Text('清空失败：$e')));
                     }
                   }
                 },
-          icon: const Icon(Icons.delete_sweep_outlined),
+          icon: Icons.delete_sweep_outlined,
         ),
-        const SizedBox(width: 8),
       ],
       scrollsBehindHeader: false,
-      fadeTail: 10,
+      fadeTail: 8,
       body: (_) => Column(
         children: [
           Container(
             width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             color: theme.colorScheme.surfaceContainer,
             child: Row(
               children: [
@@ -143,11 +148,18 @@ class _LogsPageState extends State<LogsPage> {
                     '日志路径：$_path',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ),
                 if (!controller.running)
-                  Text('核心未运行', style: theme.textTheme.labelSmall?.copyWith(color: theme.colorScheme.error)),
+                  Text(
+                    '核心未运行',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.error,
+                    ),
+                  ),
               ],
             ),
           ),
@@ -171,7 +183,7 @@ class _LogsPageState extends State<LogsPage> {
                           _lines.join('\n'),
                           style: const TextStyle(
                             fontFamily: 'monospace',
-                            fontSize: 11.5,
+                            fontSize: 12,
                             height: 1.55,
                           ),
                         ),

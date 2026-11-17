@@ -2,6 +2,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import 'header_icon_button.dart';
+
 /// A full-height viewport with a frosted overlay starting at its top edge.
 class HeaderFade extends StatelessWidget {
   const HeaderFade({super.key, required this.child, required this.extent});
@@ -81,52 +83,122 @@ class HeaderFrost extends StatelessWidget {
   }
 }
 
-/// A detail page with a standard Material toolbar and a soft body edge.
+/// A detail toolbar aligned with its content and clear of system insets.
 class HeaderScaffold extends StatelessWidget {
   const HeaderScaffold({
     super.key,
     required this.title,
     required this.body,
-    this.actions,
+    this.actions = const [],
+    this.maxContentWidth = defaultContentWidth,
     this.fadeTail = 20,
     this.scrollsBehindHeader = true,
   });
 
+  static const defaultContentWidth = 820.0;
+  static const _edge = 24.0;
+  static const _actionGap = 8.0;
+
   final Widget title;
   final Widget Function(double headerInset) body;
-  final List<Widget>? actions;
+  final List<Widget> actions;
+  final double maxContentWidth;
   final double fadeTail;
   final bool scrollsBehindHeader;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      extendBodyBehindAppBar: true,
-      appBar: AppBar(
-        title: title,
-        actions: actions,
-        forceMaterialTransparency: true,
-      ),
-      body: Builder(
-        builder: (context) {
-          final inset = MediaQuery.paddingOf(context).top;
-          return SizedBox.expand(
-            child: HeaderFade(
-              extent: inset + fadeTail,
-              child: MediaQuery.removePadding(
-                context: context,
-                removeTop: true,
-                child: scrollsBehindHeader
-                    ? body(inset)
-                    : Padding(
-                        padding: EdgeInsets.only(top: inset),
-                        child: body(0),
+    final route = ModalRoute.of(context);
+    final hasBack = route?.impliesAppBarDismissal ?? false;
+    final theme = Theme.of(context);
+    final localizations = MaterialLocalizations.of(context);
+    final close = route is PageRoute<dynamic> && route.fullscreenDialog;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final gutter = ((constraints.maxWidth - maxContentWidth) / 2).clamp(
+          _edge,
+          double.infinity,
+        );
+        final narrowActions =
+            actions.length >= 3 &&
+            constraints.maxWidth <
+                400 * MediaQuery.textScalerOf(context).scale(1);
+        final toolbarActions = [
+          for (final (index, action) in actions.indexed) ...[
+            if (index > 0) const SizedBox(width: _actionGap),
+            action,
+          ],
+        ];
+        return Scaffold(
+          extendBodyBehindAppBar: true,
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            leading: hasBack
+                ? Padding(
+                    padding: EdgeInsetsDirectional.only(start: gutter),
+                    child: Center(
+                      child: HeaderIconButton(
+                        icon: close
+                            ? Icons.close_rounded
+                            : Icons.arrow_back_rounded,
+                        tooltip: close
+                            ? localizations.closeButtonTooltip
+                            : localizations.backButtonTooltip,
+                        onPressed: () => Navigator.of(context).maybePop(),
                       ),
-              ),
-            ),
-          );
-        },
-      ),
+                    ),
+                  )
+                : null,
+            leadingWidth: gutter + HeaderIconButton.size,
+            title: title,
+            titleTextStyle: theme.textTheme.titleLarge,
+            titleSpacing: hasBack ? 12 : gutter,
+            centerTitle: false,
+            actions: narrowActions ? null : toolbarActions,
+            actionsPadding: EdgeInsetsDirectional.only(end: gutter),
+            bottom: narrowActions
+                ? PreferredSize(
+                    preferredSize: const Size.fromHeight(
+                      HeaderIconButton.size + _actionGap,
+                    ),
+                    child: Padding(
+                      padding: EdgeInsetsDirectional.only(
+                        start: gutter,
+                        end: gutter,
+                        bottom: _actionGap,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: toolbarActions,
+                      ),
+                    ),
+                  )
+                : null,
+            forceMaterialTransparency: true,
+          ),
+          body: Builder(
+            builder: (context) {
+              final inset = MediaQuery.paddingOf(context).top;
+              return SizedBox.expand(
+                child: HeaderFade(
+                  extent: inset + fadeTail,
+                  child: MediaQuery.removePadding(
+                    context: context,
+                    removeTop: true,
+                    child: scrollsBehindHeader
+                        ? body(inset)
+                        : Padding(
+                            padding: EdgeInsets.only(top: inset),
+                            child: body(0),
+                          ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
     );
   }
 }

@@ -69,6 +69,71 @@ void main() {
     expect(tester.getRect(find.byType(HeaderFrost)), frostBounds);
   });
 
+  testWidgets('详情页在窄屏将操作移到下一行，宽屏恢复到标题右侧', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(320, 700));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    var refreshed = false;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => Scaffold(
+            body: TextButton(
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => HeaderScaffold(
+                    title: const Text('当前连接'),
+                    actions: [
+                      const HeaderIconButton(icon: Icons.search, tooltip: '搜索'),
+                      HeaderIconButton(
+                        icon: Icons.refresh,
+                        tooltip: '刷新',
+                        onPressed: () => refreshed = true,
+                      ),
+                      const HeaderIconButton(
+                        icon: Icons.link_off,
+                        tooltip: '关闭全部',
+                      ),
+                    ],
+                    body: (inset) => Padding(
+                      padding: EdgeInsets.only(top: inset),
+                      child: const Text('连接列表'),
+                    ),
+                  ),
+                ),
+              ),
+              child: const Text('打开详情'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开详情'));
+    await tester.pumpAndSettle();
+
+    final title = find.text('当前连接');
+    final refresh = find.byTooltip('刷新');
+    expect(
+      tester.getTopLeft(refresh).dy,
+      greaterThan(tester.getRect(title).bottom),
+    );
+    expect(
+      tester.getTopLeft(find.text('连接列表')).dy,
+      greaterThan(tester.getRect(refresh).bottom),
+    );
+    await tester.tap(refresh);
+    expect(refreshed, isTrue);
+
+    await tester.binding.setSurfaceSize(const Size(1200, 700));
+    await tester.pumpAndSettle();
+    expect(
+      tester.getCenter(refresh).dy,
+      closeTo(tester.getCenter(title).dy, 1),
+    );
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(find.text('打开详情'), findsOneWidget);
+  });
+
   testWidgets('标题栏边缘的模糊逐渐减弱，底边下方恢复清晰', (tester) async {
     final preview = GlobalKey();
     await tester.pumpWidget(

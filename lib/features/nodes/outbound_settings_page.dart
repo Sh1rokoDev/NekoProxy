@@ -5,6 +5,8 @@ import 'dart:math';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
+import '../../app/header_fade.dart';
+import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
 
@@ -119,97 +121,162 @@ class _OutboundSettingsPageState extends State<OutboundSettingsPage> {
     } on FormatException {
       // Applying the draft reports the invalid profile without closing the page.
     }
-    return Scaffold(
-      appBar: AppBar(title: const Text('高级')),
-      body: controller.snapshot.useCustomConfig
-          ? const Center(child: Text('当前出站由完整自定义配置接管。'))
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                DropdownButtonFormField<OutboundMode>(
-                  initialValue: _mode,
-                  decoration: const InputDecoration(labelText: '出站模式'),
-                  items: [
-                    for (final item in _labels.entries)
-                      DropdownMenuItem(
-                        value: item.key,
-                        child: Text(item.value),
-                      ),
-                  ],
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) setState(() => _mode = value);
-                        },
-                ),
-                const SizedBox(height: 12),
-                Text(switch (_mode) {
-                  OutboundMode.proxy => '按现有规则直连、代理或拦截。',
-                  OutboundMode.wireGuard => '匹配的地址 → WireGuard → 目标地址',
-                  OutboundMode.wireGuardProxy => '直连 → WireGuard → 目标地址\n代理 → WireGuard → 代理节点 → 目标地址\n拦截 → 拒绝连接',
-                }),
-                if (protected)
-                  const ListTile(
-                    leading: Icon(Icons.shield_outlined),
-                    title: Text('在 Windows 上启用 TUN 和系统断网保护。'),
-                  ),
-                const Divider(height: 32),
-                Wrap(
-                  spacing: 12,
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  children: [
-                    Text(
-                      'WireGuard 节点',
-                      style: Theme.of(context).textTheme.titleMedium,
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final explanation = theme.textTheme.bodyMedium?.copyWith(
+      color: scheme.onSurfaceVariant,
+    );
+    return HeaderScaffold(
+      title: const Text('高级'),
+      body: (headerInset) => ListView(
+        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
+        children: [
+          Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(
+                maxWidth: HeaderScaffold.defaultContentWidth,
+              ),
+              child: controller.snapshot.useCustomConfig
+                  ? const EmptyState(
+                      icon: Icons.data_object_rounded,
+                      title: '出站由自定义配置接管',
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      spacing: 16,
+                      children: [
+                        SectionCard(
+                          title: '出站模式',
+                          icon: Icons.route_outlined,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            spacing: 12,
+                            children: [
+                              DropdownButtonFormField<OutboundMode>(
+                                initialValue: _mode,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: '模式',
+                                ),
+                                items: [
+                                  for (final item in _labels.entries)
+                                    DropdownMenuItem(
+                                      value: item.key,
+                                      child: Text(
+                                        item.value,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                ],
+                                onChanged: _busy
+                                    ? null
+                                    : (value) {
+                                        if (value != null) {
+                                          setState(() => _mode = value);
+                                        }
+                                      },
+                              ),
+                              Text(switch (_mode) {
+                                OutboundMode.proxy => '按现有规则直连、代理或拦截',
+                                OutboundMode.wireGuard =>
+                                  '匹配的地址 → WireGuard → 目标地址',
+                                OutboundMode.wireGuardProxy => '直连 → WireGuard → 目标地址\n代理 → WireGuard → 代理节点 → 目标地址\n拦截 → 拒绝连接',
+                              }, style: explanation),
+                              if (protected)
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.shield_outlined,
+                                      size: 18,
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        '在 Windows 上启用 TUN 和系统断网保护',
+                                        style: explanation,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                            ],
+                          ),
+                        ),
+                        SectionCard(
+                          title: 'WireGuard 节点',
+                          icon: Icons.vpn_key_outlined,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            spacing: 8,
+                            children: [
+                              if (_profiles.isEmpty)
+                                Text('尚未导入 WireGuard 配置', style: explanation),
+                              for (final item in _profiles)
+                                Material(
+                                  type: MaterialType.transparency,
+                                  child: ListTile(
+                                    contentPadding: const EdgeInsets.symmetric(
+                                      horizontal: 12,
+                                    ),
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(10),
+                                    ),
+                                    selected: item.id == _selected,
+                                    selectedTileColor: scheme.surfaceContainer,
+                                    leading: Icon(
+                                      item.id == _selected
+                                          ? Icons.radio_button_checked
+                                          : Icons.radio_button_off,
+                                      size: 18,
+                                    ),
+                                    title: Text(item.name),
+                                    onTap: _busy
+                                        ? null
+                                        : () => setState(
+                                            () => _selected = item.id,
+                                          ),
+                                    trailing: HeaderIconButton(
+                                      tooltip: '编辑 ${item.name}',
+                                      onPressed: _busy
+                                          ? null
+                                          : () => _edit(item),
+                                      icon: Icons.edit_outlined,
+                                    ),
+                                  ),
+                                ),
+                              Align(
+                                alignment: AlignmentDirectional.centerStart,
+                                child: OutlinedButton.icon(
+                                  onPressed: _busy ? null : _import,
+                                  icon: const Icon(Icons.file_upload_outlined),
+                                  label: const Text('导入 .conf'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_error case final error?)
+                          Text(error, style: TextStyle(color: scheme.error)),
+                        Align(
+                          alignment: AlignmentDirectional.centerEnd,
+                          child: FilledButton(
+                            onPressed: _busy || controller.busy ? null : _apply,
+                            child: Text(
+                              controller.outboundChangeNeedsRestart(
+                                    _mode,
+                                    profile,
+                                  )
+                                  ? '应用并重新连接'
+                                  : '应用出站设置',
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                    OutlinedButton.icon(
-                      onPressed: _busy ? null : _import,
-                      icon: const Icon(Icons.file_upload_outlined),
-                      label: const Text('导入 .conf'),
-                    ),
-                  ],
-                ),
-                if (_profiles.isEmpty)
-                  const ListTile(title: Text('尚未导入 WireGuard 配置')),
-                for (final item in _profiles)
-                  ListTile(
-                    selected: item.id == _selected,
-                    leading: Icon(
-                      item.id == _selected
-                          ? Icons.radio_button_checked
-                          : Icons.radio_button_off,
-                    ),
-                    title: Text(item.name),
-                    onTap: _busy
-                        ? null
-                        : () => setState(() => _selected = item.id),
-                    trailing: IconButton(
-                      tooltip: '编辑 ${item.name}',
-                      onPressed: _busy ? null : () => _edit(item),
-                      icon: const Icon(Icons.edit_outlined),
-                    ),
-                  ),
-                if (_error != null)
-                  Text(
-                    _error ?? '',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    onPressed: _busy || controller.busy ? null : _apply,
-                    child: Text(
-                      controller.outboundChangeNeedsRestart(_mode, profile)
-                          ? '应用并重新连接'
-                          : '应用出站设置',
-                    ),
-                  ),
-                ),
-              ],
             ),
+          ),
+        ],
+      ),
     );
   }
 }

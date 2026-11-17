@@ -68,7 +68,9 @@ class _IngressPageState extends State<IngressPage> {
         padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 820),
+            constraints: const BoxConstraints(
+              maxWidth: HeaderScaffold.defaultContentWidth,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -92,13 +94,15 @@ class _IngressPageState extends State<IngressPage> {
                       ),
                       const Divider(height: 24),
                       Text('入站认证（可选）', style: theme.textTheme.titleSmall),
-                      const SizedBox(height: 10),
+                      const SizedBox(height: 12),
                       Row(
                         children: [
                           Expanded(
                             child: TextField(
                               controller: _username,
-                              decoration: const InputDecoration(labelText: '用户名'),
+                              decoration: const InputDecoration(
+                                labelText: '用户名',
+                              ),
                             ),
                           ),
                           const SizedBox(width: 12),
@@ -106,7 +110,9 @@ class _IngressPageState extends State<IngressPage> {
                             child: TextField(
                               controller: _password,
                               obscureText: true,
-                              decoration: const InputDecoration(labelText: '密码'),
+                              decoration: const InputDecoration(
+                                labelText: '密码',
+                              ),
                             ),
                           ),
                         ],
@@ -124,20 +130,30 @@ class _IngressPageState extends State<IngressPage> {
                       TextField(
                         controller: _mtu,
                         keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'MTU',
-                        ),
+                        decoration: const InputDecoration(labelText: 'MTU'),
                       ),
-                      const SizedBox(height: 14),
+                      const SizedBox(height: 12),
                       DropdownButtonFormField<StackMode>(
                         initialValue: _stack,
                         decoration: const InputDecoration(labelText: '网络栈'),
                         items: const [
-                          DropdownMenuItem(value: StackMode.mixed, child: Text('mixed')),
-                          DropdownMenuItem(value: StackMode.system, child: Text('system')),
-                          DropdownMenuItem(value: StackMode.gvisor, child: Text('gvisor')),
+                          DropdownMenuItem(
+                            value: StackMode.mixed,
+                            child: Text('mixed'),
+                          ),
+                          DropdownMenuItem(
+                            value: StackMode.system,
+                            child: Text('system'),
+                          ),
+                          DropdownMenuItem(
+                            value: StackMode.gvisor,
+                            child: Text('gvisor'),
+                          ),
                         ],
-                        onChanged: windows ? null : (value) => setState(() => _stack = value ?? _stack),
+                        onChanged: windows
+                            ? null
+                            : (value) =>
+                                  setState(() => _stack = value ?? _stack),
                       ),
                       SwitchRow(
                         title: '启用 IPv6',
@@ -147,26 +163,32 @@ class _IngressPageState extends State<IngressPage> {
                       SwitchRow(
                         title: '自动路由',
                         value: _autoRoute,
-                        onChanged: (value) => setState(() => _autoRoute = value),
+                        onChanged: (value) =>
+                            setState(() => _autoRoute = value),
                       ),
                       SwitchRow(
                         title: '严格路由',
                         value: _strictRoute,
-                        onChanged: (value) => setState(() => _strictRoute = value),
+                        onChanged: (value) =>
+                            setState(() => _strictRoute = value),
                       ),
                       SwitchRow(
                         title: '局域网直连',
                         value: _bypassLan,
-                        onChanged: (value) => setState(() => _bypassLan = value),
+                        onChanged: (value) =>
+                            setState(() => _bypassLan = value),
                       ),
                     ],
                   ),
                 ),
                 const SizedBox(height: 20),
-                FilledButton.icon(
-                  onPressed: controller.busy ? null : () => _save(controller),
-                  icon: const Icon(Icons.save_outlined),
-                  label: const Text('保存并应用'),
+                Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: FilledButton.icon(
+                    onPressed: controller.busy ? null : () => _save(controller),
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text('保存并应用'),
+                  ),
                 ),
               ],
             ),
@@ -209,11 +231,13 @@ class _IngressPageState extends State<IngressPage> {
     await controller.saveSettings();
     if (controller.running) await controller.restartCore();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('监听与 TUN 设置已应用')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('监听与 TUN 设置已应用')));
     }
   }
 
   void _error(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 }

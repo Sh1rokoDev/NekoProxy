@@ -53,12 +53,13 @@ class _ConfigPageState extends State<ConfigPage> {
     final editor = isCustom ? _custom : _advanced;
     return HeaderScaffold(
       title: const Text('高级配置'),
+      maxContentWidth: 980,
       scrollsBehindHeader: false,
       fadeTail: 8,
       body: (_) => Column(
         children: [
           Container(
-            padding: const EdgeInsets.fromLTRB(24, 8, 24, 14),
+            padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
             child: Center(
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 980),

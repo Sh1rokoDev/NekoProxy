@@ -20,9 +20,6 @@ class ConnectionListCard extends StatelessWidget {
   final String? nodeName;
   final String? ruleName;
 
-  static const _actionSize = 42.0;
-  static const _actionGap = 4.0;
-
   static const _blockedOutboundTags = {
     'block',
     'reject',
@@ -46,17 +43,6 @@ class ConnectionListCard extends StatelessWidget {
         ? connection.domain
         : connection.destination;
     final resolvedNodeName = nodeName?.trim();
-    final actionStyle = IconButton.styleFrom(
-      fixedSize: const Size.square(_actionSize),
-      minimumSize: const Size.square(_actionSize),
-      padding: EdgeInsets.zero,
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      backgroundColor: scheme.surfaceContainerHighest,
-      foregroundColor: scheme.onSurfaceVariant,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      iconSize: 19,
-    );
-
     return LayoutBuilder(
       builder: (context, constraints) {
         final rightWidth = math.min(
@@ -64,12 +50,12 @@ class ConnectionListCard extends StatelessWidget {
           math.max(120.0, constraints.maxWidth * 0.28),
         );
         return Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           decoration: BoxDecoration(
             color: scheme.surfaceContainerLow,
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
-              color: scheme.outlineVariant.withValues(alpha: 0.35),
+              color: scheme.outlineVariant.withValues(alpha: 0.65),
             ),
           ),
           child: Row(
@@ -135,7 +121,7 @@ class ConnectionListCard extends StatelessWidget {
                           child: _ConnectionStat(
                             icon: Icons.arrow_upward_rounded,
                             value: formatBytes(connection.uploaded),
-                            color: scheme.primary,
+                            color: scheme.onSurfaceVariant,
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -143,7 +129,7 @@ class ConnectionListCard extends StatelessWidget {
                           child: _ConnectionStat(
                             icon: Icons.arrow_downward_rounded,
                             value: formatBytes(connection.downloaded),
-                            color: scheme.tertiary,
+                            color: scheme.primary,
                           ),
                         ),
                       ],
@@ -152,18 +138,16 @@ class ConnectionListCard extends StatelessWidget {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.end,
                       children: [
-                        IconButton(
+                        HeaderIconButton(
                           tooltip: '查看详情',
                           onPressed: () => _showDetails(context, rule),
-                          style: actionStyle,
-                          icon: const Icon(Icons.info_outline_rounded),
+                          icon: Icons.info_outline_rounded,
                         ),
-                        const SizedBox(width: _actionGap),
-                        IconButton(
+                        const SizedBox(width: 8),
+                        HeaderIconButton(
                           tooltip: '关闭连接',
                           onPressed: onClose,
-                          style: actionStyle,
-                          icon: const Icon(Icons.link_off_rounded),
+                          icon: Icons.link_off_rounded,
                         ),
                       ],
                     ),
@@ -237,12 +221,12 @@ class _ConnectionBadge extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
       decoration: BoxDecoration(
         color: muted
             ? scheme.surfaceContainerHighest
             : scheme.secondaryContainer,
-        borderRadius: BorderRadius.circular(7),
+        borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
         label,
@@ -250,7 +234,7 @@ class _ConnectionBadge extends StatelessWidget {
         overflow: TextOverflow.ellipsis,
         style: theme.textTheme.labelSmall?.copyWith(
           color: muted ? scheme.onSurfaceVariant : scheme.onSecondaryContainer,
-          fontWeight: FontWeight.w700,
+          fontWeight: FontWeight.w500,
         ),
       ),
     );

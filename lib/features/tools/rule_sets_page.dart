@@ -19,7 +19,9 @@ class RuleSetsPage extends StatelessWidget {
         padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
         child: Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 820),
+            constraints: const BoxConstraints(
+              maxWidth: HeaderScaffold.defaultContentWidth,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -58,7 +60,7 @@ class RuleSetsPage extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 16),
                 SectionCard(
                   title: '同步',
                   icon: Icons.sync_rounded,
@@ -90,9 +92,7 @@ class RuleSetsPage extends StatelessWidget {
                                     )
                                   : const Icon(Icons.sync_rounded),
                               label: Text(
-                                controller.updatingRuleSets
-                                    ? '正在检查...'
-                                    : '检查更新',
+                                controller.updatingRuleSets ? '正在检查…' : '检查更新',
                               ),
                             ),
                           ),

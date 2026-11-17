@@ -69,6 +69,15 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
             : connections
                   .where((item) => _matchesSearch(controller, item))
                   .toList();
+        Widget emptyState(double headerInset, Widget child) => Padding(
+          padding: EdgeInsets.fromLTRB(24, headerInset + 16, 24, 24),
+          child: Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 480),
+              child: child,
+            ),
+          ),
+        );
         return HeaderScaffold(
           title: _searchOpen
               ? TextField(
@@ -84,56 +93,48 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                 )
               : const Text('当前连接'),
           actions: [
-            IconButton(
+            HeaderIconButton(
               tooltip: _searchOpen ? '关闭搜索' : '搜索连接',
               onPressed: _searchOpen || controller.running
                   ? _toggleSearch
                   : null,
-              icon: Icon(
-                _searchOpen ? Icons.close_rounded : Icons.search_rounded,
-              ),
+              icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
             ),
-            IconButton(
+            HeaderIconButton(
               tooltip: '刷新',
               onPressed: controller.running
                   ? controller.refreshConnections
                   : null,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: Icons.refresh_rounded,
             ),
-            IconButton(
+            HeaderIconButton(
               tooltip: '关闭全部连接',
               onPressed: controller.running
                   ? controller.clearConnections
                   : null,
-              icon: const Icon(Icons.link_off_rounded),
+              icon: Icons.link_off_rounded,
             ),
-            const SizedBox(width: 8),
           ],
+          maxContentWidth: PageFrame.maxContentWidth,
           fadeTail: 16,
           body: (headerInset) => !controller.running
-              ? Padding(
-                  padding: EdgeInsets.only(top: headerInset),
-                  child: const Center(
-                    child: EmptyState(
-                      icon: Icons.power_off_rounded,
-                      title: '核心未运行',
-                      message: '连接后可以在此查看每个连接的来源、目标与出口。',
-                    ),
+              ? emptyState(
+                  headerInset,
+                  const EmptyState(
+                    icon: Icons.power_off_rounded,
+                    title: '核心未运行',
+                    message: '连接后可查看每个连接的来源、目标与出口',
                   ),
                 )
               : visibleConnections.isEmpty
-              ? Padding(
-                  padding: EdgeInsets.only(top: headerInset),
-                  child: Center(
-                    child: EmptyState(
-                      icon: _query.isEmpty
-                          ? Icons.hourglass_empty_rounded
-                          : Icons.search_off_rounded,
-                      title: _query.isEmpty ? '暂无活动连接' : '没有匹配的连接',
-                      message: _query.isEmpty
-                          ? '浏览网页或使用应用后，这里会出现连接记录。'
-                          : '试试其他搜索词。',
-                    ),
+              ? emptyState(
+                  headerInset,
+                  EmptyState(
+                    icon: _query.isEmpty
+                        ? Icons.swap_vert_rounded
+                        : Icons.search_off_rounded,
+                    title: _query.isEmpty ? '暂无活动连接' : '没有匹配的连接',
+                    message: _query.isEmpty ? '应用产生流量后，这里会显示活动连接' : '试试其他搜索词',
                   ),
                 )
               : ListView.separated(
@@ -142,15 +143,23 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final connection = visibleConnections[index];
-                    return ConnectionListCard(
-                      key: ValueKey(connection.id),
-                      connection: connection,
-                      onClose: () => controller.closeConnection(connection.id),
-                      ruleName: controller.nameForMatchedRule(
-                        connection.ruleIndex,
-                      ),
-                      nodeName: controller.nodeNameForOutboundTag(
-                        connection.outbound,
+                    return Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: PageFrame.maxContentWidth,
+                        ),
+                        child: ConnectionListCard(
+                          key: ValueKey(connection.id),
+                          connection: connection,
+                          onClose: () =>
+                              controller.closeConnection(connection.id),
+                          ruleName: controller.nameForMatchedRule(
+                            connection.ruleIndex,
+                          ),
+                          nodeName: controller.nodeNameForOutboundTag(
+                            connection.outbound,
+                          ),
+                        ),
                       ),
                     );
                   },

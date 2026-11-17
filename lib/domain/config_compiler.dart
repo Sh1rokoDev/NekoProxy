@@ -291,10 +291,7 @@ class ConfigCompiler {
             systemDns,
             routeRuleNames,
           );
-    final forceTun =
-        wireGuardOnly ||
-        (target == CompileTarget.windows &&
-            (wireGuard?.windowsProtection ?? false));
+    final forceTun = wireGuardOnly;
     final inbounds = <Map<String, dynamic>>[
       if (!testOnly) _buildMixedInbound(snapshot, target),
       if (!testOnly &&
@@ -341,7 +338,9 @@ class ConfigCompiler {
         nodeTags,
         only: wireGuardOnly,
         protected:
-            target == CompileTarget.windows && wireGuard.windowsProtection,
+            wireGuardOnly &&
+            target == CompileTarget.windows &&
+            wireGuard.windowsProtection,
         systemDns: systemDns,
         testOnly: testOnly,
       );
@@ -392,6 +391,19 @@ class ConfigCompiler {
     required String? systemDns,
     required bool testOnly,
   }) {
+    final allowedIps = profile.allowedIps;
+    final interfaceAddresses = profile.options['address'] as List<String>;
+    final hasIpv4Tunnel =
+        interfaceAddresses.any((address) => !address.contains(':')) &&
+        allowedIps.any((prefix) => !prefix.contains(':'));
+    final hasIpv6Tunnel =
+        interfaceAddresses.any((address) => address.contains(':')) &&
+        allowedIps.any((prefix) => prefix.contains(':'));
+    if (only && !hasIpv4Tunnel && !hasIpv6Tunnel) {
+      throw const ConfigCompileException(
+        'WireGuard 的 Address 和 AllowedIPs 没有可用的同类地址。',
+      );
+    }
     final hasDomainPeer = profile.peers.any(
       (peer) => InternetAddress.tryParse(peer['address'] as String) == null,
     );
@@ -408,7 +420,7 @@ class ConfigCompiler {
       'tag': directTag,
       'endpoint': wireGuardTag,
       'physical': physicalTag,
-      'allowed_ips': profile.allowedIps,
+      'allowed_ips': allowedIps,
       'resolver': 'dns-direct',
       if (protected && !testOnly) 'protect_windows': true,
       if (protected && testOnly) 'block_uncovered': true,
@@ -468,17 +480,18 @@ class ConfigCompiler {
     }
     route['default_domain_resolver'] = {'server': 'dns-direct'};
     for (final inbound in inbounds.where((item) => item['type'] == 'tun')) {
-      if (only || protected) {
-        inbound['auto_route'] = true;
-        inbound.remove('route_exclude_address');
-      }
-      if (only) inbound['route_address'] = profile.allowedIps;
-      if (profile.allowedIps.any((cidr) => cidr.contains(':')) &&
-          !(inbound['address'] as List<String>).any(
-            (cidr) => cidr.contains(':'),
-          )) {
-        (inbound['address'] as List<String>).add('fdfe:dcba:9876::1/126');
-        if (dns['strategy'] == 'ipv4_only') dns['strategy'] = 'prefer_ipv4';
+      if (!only) continue;
+      inbound['auto_route'] = true;
+      inbound.remove('route_exclude_address');
+      final addresses = inbound['address'] as List<String>;
+      inbound['route_address'] = [
+        for (final prefix in allowedIps)
+          if (prefix.contains(':') ? hasIpv6Tunnel : hasIpv4Tunnel) prefix,
+      ];
+      if (!hasIpv6Tunnel) {
+        addresses.removeWhere((address) => address.contains(':'));
+      } else if (!addresses.any((address) => address.contains(':'))) {
+        addresses.add('fdfe:dcba:9876::1/126');
       }
     }
     if (only) {
@@ -490,6 +503,12 @@ class ConfigCompiler {
       );
       dns.remove('rules');
       dns['final'] = 'dns-direct';
+      // DNS must not advertise a family which this tunnel cannot carry.
+      dns['strategy'] = !hasIpv6Tunnel
+          ? 'ipv4_only'
+          : hasIpv4Tunnel
+          ? 'prefer_ipv4'
+          : 'ipv6_only';
       route
         ..remove('rule_set')
         ..remove('find_process')
@@ -503,13 +522,6 @@ class ConfigCompiler {
         ];
     } else {
       final rules = route['rules'] as List?;
-      if (protected && !testOnly && rules != null) {
-        rules.insert(0, {
-          'inbound': [tunTag],
-          'port': 53,
-          'action': 'hijack-dns',
-        });
-      }
       rules?.insert(0, {
         'inbound': [wireGuardTag],
         'action': 'reject',

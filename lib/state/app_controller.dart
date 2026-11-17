@@ -160,6 +160,7 @@ class AppController extends ChangeNotifier {
   int _appliedStatusRequest = 0;
   int _pollFailures = 0;
   bool _rebuilding = false;
+  bool _changingWireGuard = false;
   int _lastUpTotal = 0;
   int _lastDownTotal = 0;
   DateTime? _lastTrafficAt;
@@ -171,23 +172,20 @@ class AppController extends ChangeNotifier {
   bool get hasNodes => snapshot.hasNodes;
   OutboundMode get outboundMode =>
       snapshot.useCustomConfig ? OutboundMode.proxy : snapshot.outboundMode;
+  bool get showsRuleMode => outboundMode != OutboundMode.wireGuard;
+  bool get chainProxyEnabled => outboundMode == OutboundMode.wireGuardProxy;
+  bool get changingWireGuard => _changingWireGuard;
   WireGuardProfile? get activeWireGuard =>
       outboundMode == OutboundMode.proxy ? null : snapshot.wireGuardProfile;
   bool get requiresWindowsTun {
-    if (!Platform.isWindows) return false;
-    if (outboundMode == OutboundMode.wireGuard) return true;
-    try {
-      return activeWireGuard?.parse().windowsProtection ?? false;
-    } on FormatException {
-      return false;
-    }
+    return Platform.isWindows && outboundMode == OutboundMode.wireGuard;
   }
 
   bool get canConnect =>
       snapshot.useCustomConfig ||
       (outboundMode == OutboundMode.wireGuard
           ? activeWireGuard != null
-          : hasNodes);
+          : hasNodes && (!chainProxyEnabled || activeWireGuard != null));
 
   AppSettings get settings => snapshot.settings;
 
@@ -566,43 +564,132 @@ class AppController extends ChangeNotifier {
     );
   }
 
-  bool outboundChangeNeedsRestart(
-    OutboundMode mode,
-    WireGuardProfile? profile,
-  ) =>
-      running &&
-      (mode != outboundMode ||
-          (mode != OutboundMode.proxy &&
-              (profile?.id != activeWireGuard?.id ||
-                  profile?.configuration != activeWireGuard?.configuration)));
+  Future<void> setChainProxyEnabled(bool enabled) => _changeWireGuard((draft) {
+    if (enabled && (draft.wireGuardProfile == null || !draft.hasNodes)) {
+      throw const ConfigCompileException('请先在节点页选择 WireGuard 和 sing-box 节点。');
+    }
+    if (draft.useCustomConfig) {
+      throw const ConfigCompileException('当前出站由完整自定义配置接管。');
+    }
+    draft.chainProxyEnabled = enabled;
+  }, allowMissing: !enabled);
 
-  Future<void> applyOutboundSettings(
-    OutboundMode mode,
-    String? profileId,
-    List<WireGuardProfile> profiles,
-  ) async {
-    if (busy || _rebuilding || snapshot.useCustomConfig) {
-      throw StateError('当前无法应用出站设置');
+  Future<void> selectWireGuard(String id) => _changeWireGuard((draft) {
+    if (draft.useCustomConfig) {
+      throw const ConfigCompileException('当前出站由完整自定义配置接管。');
     }
-    final candidate = AppSnapshot.fromJson(snapshot.toJson())
-      ..outboundMode = mode
-      ..wireGuardProfileId = profileId
-      ..wireGuardProfiles = List.of(profiles);
-    for (final profile in profiles) {
-      profile.parse();
+    draft.wireGuardProfileId = id;
+    if (draft.wireGuardProfile == null) {
+      throw const ConfigCompileException('WireGuard 节点不存在。');
     }
-    if (mode != OutboundMode.proxy || candidate.hasNodes) compile(candidate);
-    final reconnect = outboundChangeNeedsRestart(
-      mode,
-      candidate.wireGuardProfile,
-    );
-    await storage.save(candidate);
-    snapshot
-      ..outboundMode = mode
-      ..wireGuardProfileId = profileId
-      ..wireGuardProfiles = List.of(profiles);
+    if (!draft.chainProxyEnabled) {
+      draft.standaloneOutbound = StandaloneOutbound.wireGuard;
+    }
+  });
+
+  Future<void> saveWireGuardGroup(String name, {String? id}) =>
+      _changeWireGuard((draft) {
+        final group = WireGuardGroup(id: id ?? _newId(), name: name.trim());
+        if (group.name.isEmpty) {
+          throw const ConfigCompileException('请输入分组名称。');
+        }
+        final index = draft.wireGuardGroups.indexWhere(
+          (item) => item.id == group.id,
+        );
+        if (index < 0) {
+          draft.wireGuardGroups.add(group);
+        } else {
+          draft.wireGuardGroups[index] = group;
+        }
+      });
+
+  Future<void> saveWireGuardProfile(WireGuardProfile profile) =>
+      _changeWireGuard((draft) {
+        profile.parse();
+        if (!draft.wireGuardGroups.any(
+          (group) => group.id == profile.groupId,
+        )) {
+          throw const ConfigCompileException('WireGuard 分组不存在。');
+        }
+        final index = draft.wireGuardProfiles.indexWhere(
+          (item) => item.id == profile.id,
+        );
+        if (index < 0) {
+          draft.wireGuardProfiles.add(profile);
+        } else {
+          draft.wireGuardProfiles[index] = profile;
+        }
+      });
+
+  Future<void> deleteWireGuardGroup(String id) => _changeWireGuard((draft) {
+    draft.wireGuardGroups.removeWhere((group) => group.id == id);
+    draft.wireGuardProfiles.removeWhere((profile) => profile.groupId == id);
+    if (draft.wireGuardProfile == null) draft.wireGuardProfileId = null;
+  }, removing: true);
+
+  Future<void> deleteWireGuardProfile(String id) => _changeWireGuard((draft) {
+    draft.wireGuardProfiles.removeWhere((profile) => profile.id == id);
+    if (draft.wireGuardProfileId == id) draft.wireGuardProfileId = null;
+  }, removing: true);
+
+  Future<void> _changeWireGuard(
+    void Function(AppSnapshot) edit, {
+    bool removing = false,
+    bool allowMissing = false,
+  }) async {
+    if (busy || _rebuilding || _changingWireGuard) {
+      throw const ConfigCompileException('正在切换连接，请稍后重试。');
+    }
+    _changingWireGuard = true;
     notifyListeners();
-    if (reconnect) await restartCore();
+    try {
+      final draft = AppSnapshot.fromJson(snapshot.toJson());
+      edit(draft);
+      final nextMode = draft.useCustomConfig
+          ? OutboundMode.proxy
+          : draft.outboundMode;
+      final nextProfile = nextMode == OutboundMode.proxy
+          ? null
+          : draft.wireGuardProfile;
+      final previousProfile = activeWireGuard;
+      final changed =
+          nextMode != outboundMode ||
+          nextProfile?.id != previousProfile?.id ||
+          nextProfile?.configuration != previousProfile?.configuration;
+      final selectionLost =
+          (removing || allowMissing) &&
+          changed &&
+          nextProfile == null &&
+          nextMode != OutboundMode.proxy;
+      if (changed &&
+          !selectionLost &&
+          (nextMode != OutboundMode.proxy || draft.hasNodes)) {
+        compile(draft);
+      }
+      await storage.save(draft);
+      if (_disposed) return;
+      snapshot
+        ..chainProxyEnabled = draft.chainProxyEnabled
+        ..standaloneOutbound = draft.standaloneOutbound
+        ..wireGuardProfileId = draft.wireGuardProfileId
+        ..wireGuardGroups = draft.wireGuardGroups
+        ..wireGuardProfiles = draft.wireGuardProfiles;
+      settings
+        ..manualNodeId = draft.settings.manualNodeId
+        ..selectionMode = draft.settings.selectionMode;
+      notifyListeners();
+      if (selectionLost) {
+        if (running) await disconnect(silent: true);
+        _setError(
+          removing ? '当前 WireGuard 节点已删除，请在节点页重新选择。' : '请在节点页选择 WireGuard 节点。',
+        );
+      } else if (changed && running) {
+        await restartCore();
+      }
+    } finally {
+      _changingWireGuard = false;
+      if (!_disposed) notifyListeners();
+    }
   }
 
   Future<CompiledConfig> compileForExport() async {
@@ -622,11 +709,11 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> connect() async {
-    if (busy || running) return;
+    if (busy || running || (_changingWireGuard && !_rebuilding)) return;
     if (!canConnect) {
       _setError(
-        outboundMode == OutboundMode.wireGuard
-            ? '请在「节点 → 高级」选择 WireGuard 配置。'
+        outboundMode != OutboundMode.proxy && activeWireGuard == null
+            ? '请在节点页选择 WireGuard 节点。'
             : '还没有可用节点，请先导入订阅或节点。',
       );
       return;
@@ -824,6 +911,21 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setSelectionMode(SelectionMode mode) async {
+    if (_changingWireGuard) return;
+    if (outboundMode == OutboundMode.wireGuard && mode == SelectionMode.auto) {
+      try {
+        await _changeWireGuard((draft) {
+          if (!draft.hasNodes) {
+            throw const ConfigCompileException('请先添加 sing-box 节点。');
+          }
+          draft.standaloneOutbound = StandaloneOutbound.singBox;
+          draft.settings.selectionMode = mode;
+        });
+      } on Exception catch (error) {
+        _setError(_friendlyError(error));
+      }
+      return;
+    }
     if (settings.selectionMode == mode) return;
     settings.selectionMode = mode;
     await storage.save(snapshot);
@@ -832,8 +934,21 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> selectNode(String nodeId) async {
+    if (_changingWireGuard) return;
     final node = snapshot.nodeById(nodeId);
     if (node == null) return;
+    if (outboundMode == OutboundMode.wireGuard) {
+      try {
+        await _changeWireGuard((draft) {
+          draft.standaloneOutbound = StandaloneOutbound.singBox;
+          draft.settings.manualNodeId = nodeId;
+          draft.settings.selectionMode = SelectionMode.manual;
+        });
+      } on Exception catch (error) {
+        _setError(_friendlyError(error));
+      }
+      return;
+    }
     final wasAuto = settings.selectionMode == SelectionMode.auto;
     settings.manualNodeId = nodeId;
     settings.selectionMode = SelectionMode.manual;

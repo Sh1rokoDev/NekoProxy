@@ -73,17 +73,20 @@ func TestWireGuardRouteThroughRealPeer(t *testing.T) {
 	_, serverPort, _ := net.SplitHostPort(httpServer.Listener.Addr().String())
 	servicePort, _ := strconv.Atoi(serverPort)
 	peer := start(fmt.Sprintf(`{"log":{"disabled":true},"outbounds":[{"type":"direct","tag":"direct"}],
+	  "dns":{"servers":[{"type":"hosts","tag":"fixture","predefined":{"wireguard.test":["10.67.0.1"]}}]},
+	  "route":{"rules":[{"inbound":["peer"],"port":53,"action":"hijack-dns"}],"final":"direct"},
 	  "endpoints":[{"type":"wireguard","tag":"peer","system":false,"listen_port":%d,
 	    "address":["10.67.0.1/24"],"private_key":%q,"peers":[{"public_key":%q,"allowed_ips":["10.67.0.2/32"]}]}]}`,
 		port, serverKey, clientPublic))
 	client := start(fmt.Sprintf(`{"log":{"disabled":true},
 	  "dns":{"servers":[{"type":"neko-wireguard-dns","tag":"dns","servers":["10.67.0.3"],"detour":"direct"}]},
 	  "outbounds":[{"type":"direct","tag":"physical"},{"type":"neko-wireguard-route","tag":"direct","endpoint":"wg","physical":"physical","allowed_ips":["10.67.0.0/24"],"resolver":"dns"},
-	    {"type":"http","tag":"proxy","server":"10.67.0.1","server_port":%d,"detour":"direct"}],
+	    {"type":"http","tag":"proxy","server":"10.67.0.1","server_port":%d,"detour":"direct"},
+	    {"type":"http","tag":"proxy-unmatched","server":"127.0.0.1","server_port":%d,"detour":"direct"}],
 	  "endpoints":[{"type":"wireguard","tag":"wg","system":false,"address":["10.67.0.2/24"],"private_key":%q,
 	    "peers":[{"address":"127.0.0.1","port":%d,"public_key":%q,"allowed_ips":["10.67.0.0/24"]}]}],
 	  "route":{"final":"direct","default_domain_resolver":{"server":"dns"}}}`,
-		servicePort, clientKey, port, serverPublic))
+		servicePort, servicePort, clientKey, port, serverPublic))
 	get := func(tag, destination, want string) {
 		t.Helper()
 		outbound, ok := client.instance.Outbound().Outbound(tag)
@@ -106,11 +109,13 @@ func TestWireGuardRouteThroughRealPeer(t *testing.T) {
 		}
 	}
 	get("direct", "10.67.0.1:"+serverPort, "via peer")
+	get("direct", "wireguard.test:"+serverPort, "via peer")
 	get("proxy", "192.0.2.1:80", "via proxy")
 	if err := peer.Close(); err != nil {
 		t.Fatal(err)
 	}
 	get("direct", httpServer.Listener.Addr().String(), "via peer")
+	get("proxy-unmatched", "192.0.2.1:80", "via proxy")
 	outbound, _ := client.instance.Outbound().Outbound("direct")
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()

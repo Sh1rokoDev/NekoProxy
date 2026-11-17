@@ -66,6 +66,8 @@ SOFTWARE.
 
 Android 构建使用 AndroidX、Kotlin 与 Flutter 插件生态中的第三方库，具体版本见 `pubspec.lock` 与 Gradle 依赖解析结果。这些库按其各自许可分发。
 
+- [mobile_scanner](https://pub.dev/packages/mobile_scanner)（BSD-3-Clause）：Android 相机扫码，使用集成在应用中的 ML Kit 条码识别器。
+
 ## Dart / Flutter 运行库
 
 完整依赖与版本见 `pubspec.lock`，应用内“开源许可证”页面会列出 Flutter 收集的全部许可。主要直接依赖包括：

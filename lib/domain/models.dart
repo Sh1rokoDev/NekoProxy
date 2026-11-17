@@ -893,10 +893,23 @@ class AppSnapshot {
     this.customConfig = '',
     this.useCustomConfig = false,
     this.installedAt,
-    this.outboundMode = OutboundMode.proxy,
+    OutboundMode outboundMode = OutboundMode.proxy,
+    bool? chainProxyEnabled,
+    StandaloneOutbound? standaloneOutbound,
     this.wireGuardProfileId,
     this.wireGuardProfiles = const [],
-  }) : rules = rules ?? [];
+    List<WireGuardGroup>? wireGuardGroups,
+  }) : rules = rules ?? [],
+       chainProxyEnabled =
+           chainProxyEnabled ?? outboundMode == OutboundMode.wireGuardProxy,
+       standaloneOutbound =
+           standaloneOutbound ??
+           (outboundMode == OutboundMode.wireGuard
+               ? StandaloneOutbound.wireGuard
+               : StandaloneOutbound.singBox),
+       wireGuardGroups =
+           wireGuardGroups ??
+           (wireGuardProfiles.isEmpty ? [] : [WireGuardGroup.legacy]);
 
   AppSettings settings;
   List<Subscription> subscriptions;
@@ -905,7 +918,23 @@ class AppSnapshot {
   String customConfig;
   bool useCustomConfig;
   DateTime? installedAt;
-  OutboundMode outboundMode;
+  bool chainProxyEnabled;
+  StandaloneOutbound standaloneOutbound;
+  List<WireGuardGroup> wireGuardGroups;
+  OutboundMode get outboundMode => chainProxyEnabled
+      ? OutboundMode.wireGuardProxy
+      : standaloneOutbound == StandaloneOutbound.wireGuard
+      ? OutboundMode.wireGuard
+      : OutboundMode.proxy;
+  set outboundMode(OutboundMode mode) {
+    chainProxyEnabled = mode == OutboundMode.wireGuardProxy;
+    if (!chainProxyEnabled) {
+      standaloneOutbound = mode == OutboundMode.wireGuard
+          ? StandaloneOutbound.wireGuard
+          : StandaloneOutbound.singBox;
+    }
+  }
+
   String? wireGuardProfileId;
   List<WireGuardProfile> wireGuardProfiles;
 
@@ -969,6 +998,9 @@ class AppSnapshot {
     'customConfig': customConfig,
     'useCustomConfig': useCustomConfig,
     'outboundMode': outboundMode.name,
+    'chainProxyEnabled': chainProxyEnabled,
+    'standaloneOutbound': standaloneOutbound.name,
+    'wireGuardGroups': wireGuardGroups.map((group) => group.toJson()).toList(),
     'wireGuardProfileId': wireGuardProfileId,
     'wireGuardProfiles': wireGuardProfiles.map((e) => e.toJson()).toList(),
     'installedAt': installedAt?.toIso8601String(),
@@ -1012,6 +1044,17 @@ class AppSnapshot {
         (mode) => mode.name == json['outboundMode'],
         orElse: () => OutboundMode.proxy,
       ),
+      chainProxyEnabled: json['chainProxyEnabled'] as bool?,
+      standaloneOutbound: StandaloneOutbound.values
+          .where((mode) => mode.name == json['standaloneOutbound'])
+          .firstOrNull,
+      wireGuardGroups: (json['wireGuardGroups'] as List?)
+          ?.map(
+            (group) => WireGuardGroup.fromJson(
+              Map<String, dynamic>.from(group as Map),
+            ),
+          )
+          .toList(),
       wireGuardProfileId: json['wireGuardProfileId'] as String?,
       wireGuardProfiles: (json['wireGuardProfiles'] as List? ?? const [])
           .map(

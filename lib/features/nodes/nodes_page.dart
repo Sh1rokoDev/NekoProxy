@@ -11,6 +11,7 @@ import '../../domain/node_view.dart';
 import '../../services/qr_service.dart';
 import '../../state/app_controller.dart';
 import 'outbound_settings_page.dart';
+import 'wireguard_group_card.dart';
 
 class NodesPage extends StatefulWidget {
   const NodesPage({super.key});
@@ -31,11 +32,37 @@ class _NodesPageState extends State<NodesPage> {
     final controller = AppScope.of(context);
     final dockInset = MediaQuery.paddingOf(context).bottom;
     final hasNodes = controller.hasNodes;
+    final snapshot = controller.snapshot;
+    final wireGuardGroups =
+        {
+          for (final group in snapshot.wireGuardGroups)
+            group: snapshot.wireGuardProfiles
+                .where(
+                  (profile) =>
+                      profile.groupId == group.id &&
+                      (_query.isEmpty ||
+                          group.name.toLowerCase().contains(_query) ||
+                          profile.name.toLowerCase().contains(_query)),
+                )
+                .toList(),
+        }..removeWhere(
+          (group, profiles) =>
+              _query.isNotEmpty &&
+              !group.name.toLowerCase().contains(_query) &&
+              profiles.isEmpty,
+        );
     final automatic = controller.settings.selectionMode == SelectionMode.auto;
-    final highlightedNode = !automatic
-        ? controller.currentNode
+    final highlightedNode = !controller.showsRuleMode
+        ? null
+        : !automatic
+        ? controller.currentNode ??
+              (controller.chainProxyEnabled
+                  ? snapshot.allNodes.firstOrNull
+                  : null)
         : controller.running
         ? controller.reportedNode
+        : controller.chainProxyEnabled
+        ? null
         : controller.offlineRecommendedNode;
     final highlightedId = highlightedNode?.id;
     final groups = _buildGroups(controller, automatic ? null : highlightedId);
@@ -83,7 +110,10 @@ class _NodesPageState extends State<NodesPage> {
           HeaderIconButton(
             icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
             tooltip: _searchOpen ? '关闭搜索' : '搜索节点',
-            onPressed: _searchOpen || hasNodes ? _toggleSearch : null,
+            onPressed:
+                _searchOpen || hasNodes || snapshot.wireGuardGroups.isNotEmpty
+                ? _toggleSearch
+                : null,
           ),
         ],
       ),
@@ -125,7 +155,7 @@ class _NodesPageState extends State<NodesPage> {
         ],
       ),
       slivers: [
-        if (groups.isEmpty)
+        if (groups.isEmpty && wireGuardGroups.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
             child: Padding(
@@ -146,9 +176,14 @@ class _NodesPageState extends State<NodesPage> {
               ),
             ),
           )
-        else
+        else if (groups.isNotEmpty)
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(24, 0, 24, 168 + dockInset),
+            padding: EdgeInsets.fromLTRB(
+              24,
+              0,
+              24,
+              wireGuardGroups.isEmpty ? 168 + dockInset : 0,
+            ),
             sliver: SliverLayoutBuilder(
               builder: (context, constraints) {
                 final gutter =
@@ -259,6 +294,31 @@ class _NodesPageState extends State<NodesPage> {
                   ),
                 );
               },
+            ),
+          ),
+        if (wireGuardGroups.isNotEmpty)
+          SliverPadding(
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 168 + dockInset),
+            sliver: SliverList.list(
+              children: [
+                for (final entry in wireGuardGroups.entries)
+                  Center(
+                    key: ValueKey(entry.key.id),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxWidth: PageFrame.maxContentWidth,
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: WireGuardGroupCard(
+                          controller: controller,
+                          group: entry.key,
+                          profiles: entry.value,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
             ),
           ),
       ],
@@ -647,6 +707,12 @@ class _NodesPageState extends State<NodesPage> {
               title: const Text('节点分组'),
               onTap: () => Navigator.pop(context, 'group'),
             ),
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.vpn_key_outlined),
+              title: const Text('WireGuard 分组'),
+              onTap: () => Navigator.pop(context, 'wireguard'),
+            ),
           ],
         ),
       ),
@@ -657,6 +723,17 @@ class _NodesPageState extends State<NodesPage> {
         await _showUrlDialog(context, controller);
       case 'group':
         await _createGroup(context, controller);
+      case 'wireguard':
+        final name = await askWireGuardGroupName(context);
+        if (name == null || !context.mounted) return;
+        try {
+          await controller.saveWireGuardGroup(name);
+        } on Exception catch (error) {
+          if (context.mounted) {
+            ScaffoldMessenger.of(context)
+                .showSnackBar(SnackBar(content: Text(error.toString())));
+          }
+        }
     }
   }
 
@@ -1242,8 +1319,12 @@ class _SelectionToggle extends StatelessWidget {
           icon: Icons.auto_awesome_rounded,
         ),
       ],
-      selected: controller.settings.selectionMode,
-      onChanged: controller.busy ? null : controller.setSelectionMode,
+      selected: controller.showsRuleMode
+          ? controller.settings.selectionMode
+          : SelectionMode.manual,
+      onChanged: controller.busy || controller.changingWireGuard
+          ? null
+          : controller.setSelectionMode,
     );
   }
 }

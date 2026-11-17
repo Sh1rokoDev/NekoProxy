@@ -48,9 +48,13 @@
 
 ## WireGuard 出站
 
-在「节点 → 高级」可以导入或编辑 WireGuard `.conf`，手动选择一份配置，并切换「仅代理」「仅 WireGuard」或「WireGuard + 代理」。组合模式保留 sing-box 分流和代理选点：直连目的地址和代理节点服务端地址分别按 WireGuard 的 `AllowedIPs` 决定是否走隧道。包含地址在隧道不可用时不会回退。
+在「节点 → 添加」创建 WireGuard 分组，组内可用表单或手写 `.conf` 创建节点，也可从剪贴板、文件或二维码图片导入。点击 WireGuard 节点可单独使用；WireGuard 分组不参与 sing-box 自动选点。
 
-Windows 的单对端 `/0` 配置会使用 TUN 及会话断网保护；Android 使用 NekoProxy 已有的单个系统 VPN。配置的 Endpoint 可以是 `公网地址:53`，但仍需要网络实际放行该对端的 WireGuard UDP 报文。
+「节点 → 高级」可以启用链式代理。第一级是手动选择的 WireGuard，第二级仍在节点页手动或自动选择 sing-box 节点。直连目标 IP 和代理服务器 IP 各自按 WireGuard 的 `AllowedIPs` 决定是否进隧道；隧道故障时，命中的地址不会回退到物理网络。关闭链式后恢复原来的单独出站类型。
+
+Android 也支持相机扫码。节点菜单可导出含密钥的 `.conf`。
+
+单独使用 WireGuard 时按配置决定 IPv4／IPv6；Windows 的单对端 `/0` 配置会使用 TUN 及会话断网保护。链式代理不启用此项保护，以便未命中的地址仍能使用物理网络。Android 使用 NekoProxy 已有的单个系统 VPN。
 
 ## 从源码构建
 

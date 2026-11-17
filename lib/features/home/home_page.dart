@@ -119,7 +119,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   List<HomeCard> _visibleCards(HomeLayout layout) => layout.order
       .where(
-        (kind) => kind != HomeCard.connection && !layout.hidden.contains(kind),
+        (kind) =>
+            kind != HomeCard.connection &&
+            !layout.hidden.contains(kind) &&
+            (kind != HomeCard.splitMode ||
+                AppScope.read(context).showsRuleMode),
       )
       .toList();
 
@@ -151,7 +155,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _addCard(HomeLayout draft) async {
-    final available = draft.order.where(draft.hidden.contains).toList();
+    final showsRuleMode = AppScope.read(context).showsRuleMode;
+    final available = draft.order
+        .where(
+          (kind) =>
+              draft.hidden.contains(kind) &&
+              (kind != HomeCard.splitMode || showsRuleMode),
+        )
+        .toList();
     final selected = await showModalBottomSheet<HomeCard>(
       context: context,
       showDragHandle: true,

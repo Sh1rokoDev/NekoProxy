@@ -72,6 +72,7 @@ class _AppShellState extends State<AppShell> {
   void _onControllerChanged() {
     final controller = _controller;
     if (controller == null) return;
+    if (!controller.showsRuleMode && _index == 2) _index = 0;
     final loadWarning = controller.loadWarning;
     if (loadWarning != _lastLoadWarning) {
       _lastLoadWarning = loadWarning;
@@ -121,6 +122,7 @@ class _AppShellState extends State<AppShell> {
   }
 
   void _selectTab(int value) {
+    if (value == 2 && _controller?.showsRuleMode == false) return;
     if (value == _index) return;
     FocusManager.instance.primaryFocus?.unfocus();
     setState(() => _index = value);
@@ -128,11 +130,13 @@ class _AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final showsRuleMode = AppScope.of(context).showsRuleMode;
+    final selected = !showsRuleMode && _index == 2 ? 0 : _index;
     // Keep the tab widget stable as LayoutBuilder receives new window sizes.
     final tabContent = Expanded(
       key: const ValueKey('tab-content'),
       child: _AnimatedTabStack(
-        index: _index,
+        index: selected,
         children: const [HomePage(), NodesPage(), RulesPage(), ToolsPage()],
       ),
     );
@@ -144,8 +148,10 @@ class _AppShellState extends State<AppShell> {
           final desktop = constraints.maxWidth >= 900;
           final navigation = NavigationDock(
             axis: desktop ? Axis.vertical : Axis.horizontal,
-            destinations: _destinations,
-            selected: _index,
+            destinations: showsRuleMode
+                ? _destinations
+                : _destinations.where((item) => item.value != 2).toList(),
+            selected: selected,
             onSelected: _selectTab,
           );
           return Scaffold(

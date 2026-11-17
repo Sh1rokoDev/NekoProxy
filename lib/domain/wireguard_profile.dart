@@ -3,21 +3,43 @@ import 'dart:io';
 
 enum OutboundMode { proxy, wireGuard, wireGuardProxy }
 
+enum StandaloneOutbound { singBox, wireGuard }
+
+class WireGuardGroup {
+  const WireGuardGroup({required this.id, required this.name});
+
+  static const legacy = WireGuardGroup(
+    id: 'wireguard-default',
+    name: 'WireGuard',
+  );
+
+  final String id;
+  final String name;
+
+  Map<String, String> toJson() => {'id': id, 'name': name};
+
+  factory WireGuardGroup.fromJson(Map<String, dynamic> json) =>
+      WireGuardGroup(id: json['id'] as String, name: json['name'] as String);
+}
+
 class WireGuardProfile {
   WireGuardProfile({
     required this.id,
     required this.name,
     required this.configuration,
+    this.groupId = 'wireguard-default',
   });
 
   final String id;
   final String name;
   final String configuration;
+  final String groupId;
 
   Map<String, String> toJson() => {
     'id': id,
     'name': name,
     'configuration': configuration,
+    'groupId': groupId,
   };
 
   factory WireGuardProfile.fromJson(Map<String, dynamic> json) =>
@@ -25,6 +47,7 @@ class WireGuardProfile {
         id: json['id'] as String,
         name: json['name'] as String,
         configuration: json['configuration'] as String,
+        groupId: json['groupId'] as String? ?? WireGuardGroup.legacy.id,
       );
 
   WireGuardConfig parse() => WireGuardConfig.parse(configuration);

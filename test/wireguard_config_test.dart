@@ -109,7 +109,7 @@ AllowedIPs = 172.16.0.7/16
       final snapshot = _snapshot(
         OutboundMode.wireGuard,
         '10.10.0.0/24, fd00::/64',
-      );
+      )..settings.tunOrDefault.ipv6 = true;
       for (final target in CompileTarget.values) {
         final compiled = _compile(snapshot, target);
         expect(compiled.hasTunInbound, isTrue);
@@ -119,11 +119,57 @@ AllowedIPs = 172.16.0.7/16
         );
         expect(tun['route_address'], ['10.10.0.0/24', 'fd00::/64']);
         expect(tun['address'], contains('fdfe:dcba:9876::1/126'));
+        expect((compiled.json['dns'] as Map)['strategy'], 'prefer_ipv4');
         expect(jsonEncode(compiled.redactedJson), isNot(contains(_privateKey)));
         expect(compiled.encoded, contains(_privateKey));
       }
     },
   );
+
+  test('standalone takes IPv6 from the profile even when sing-box IPv6 is disabled', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0');
+    for (final target in CompileTarget.values) {
+      final compiled = _compile(snapshot, target);
+      final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
+        (inbound) => inbound['type'] == 'tun',
+      );
+      expect(tun['route_address'], ['0.0.0.0/0', '::/0']);
+      expect(tun['address'], contains('fdfe:dcba:9876::1/126'));
+      expect((compiled.json['dns'] as Map)['strategy'], 'prefer_ipv4');
+    }
+  });
+
+  test('standalone requires an IPv6 interface address to advertise IPv6', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0');
+    final profile = snapshot.wireGuardProfiles.single;
+    snapshot.settings.tunOrDefault.ipv6 = true;
+    snapshot.wireGuardProfiles = [
+      WireGuardProfile(
+        id: profile.id,
+        name: profile.name,
+        configuration: profile.configuration.replaceFirst(', fd00::2/64', ''),
+      ),
+    ];
+    final compiled = _compile(snapshot, CompileTarget.windows);
+    expect((compiled.json['dns'] as Map)['strategy'], 'ipv4_only');
+    final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
+      (inbound) => inbound['type'] == 'tun',
+    );
+    expect(tun['address'], ['172.19.0.1/30']);
+  });
+
+  test('standalone keeps IPv6 when the profile has no IPv4 route', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '::/0');
+    for (final target in CompileTarget.values) {
+      final compiled = _compile(snapshot, target);
+      final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
+        (inbound) => inbound['type'] == 'tun',
+      );
+      expect(tun['route_address'], ['::/0']);
+      expect(tun['address'], contains('fdfe:dcba:9876::1/126'));
+      expect((compiled.json['dns'] as Map)['strategy'], 'ipv6_only');
+    }
+  });
 
   test('combined retains selector and wires nodes and direct DNS through the profile', () {
     final snapshot = _snapshot(OutboundMode.wireGuardProxy, '0.0.0.0/0');
@@ -150,8 +196,8 @@ AllowedIPs = 172.16.0.7/16
       for (final item in (compiled.json['outbounds'] as List).cast<Map>())
         item['tag']: item,
     };
-    expect(compiled.hasTunInbound, isTrue);
-    expect(out['direct']?['protect_windows'], isTrue);
+    expect(compiled.hasTunInbound, isFalse);
+    expect(out['direct']?['protect_windows'], isNull);
     expect(out['proxy']?['outbounds'], ['node-a']);
     expect(out['node-a']?['detour'], 'direct');
     expect(out['node-a']?['domain_resolver'], {'server': 'dns-direct'});
@@ -168,7 +214,7 @@ AllowedIPs = 172.16.0.7/16
     final offline = _compile(snapshot, CompileTarget.windows, testOnly: true);
     expect(offline.hasTunInbound, isFalse);
     expect(offline.encoded, isNot(contains('protect_windows')));
-    expect(offline.encoded, contains('block_uncovered'));
+    expect(offline.encoded, isNot(contains('block_uncovered')));
   });
 
   test('equivalent /1 routes do not trigger Windows system protection', () {
@@ -182,6 +228,18 @@ AllowedIPs = 172.16.0.7/16
     );
   });
 
+  test(
+    'standalone keeps Windows protection for single-peer default routes',
+    () {
+      final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0');
+      final windows = _compile(snapshot, CompileTarget.windows);
+      final android = _compile(snapshot, CompileTarget.android);
+      expect(windows.hasTunInbound, isTrue);
+      expect(windows.encoded, contains('protect_windows'));
+      expect(android.encoded, isNot(contains('protect_windows')));
+    },
+  );
+
   test('outbound settings round trip and old snapshots default to proxy', () {
     final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0');
     final restored = AppSnapshot.fromJson(snapshot.toJson());
@@ -189,8 +247,26 @@ AllowedIPs = 172.16.0.7/16
     expect(restored.wireGuardProfile?.name, 'VPS');
     final old = snapshot.toJson()
       ..remove('outboundMode')
+      ..remove('chainProxyEnabled')
+      ..remove('standaloneOutbound')
+      ..remove('wireGuardGroups')
       ..remove('wireGuardProfileId')
       ..remove('wireGuardProfiles');
     expect(AppSnapshot.fromJson(old).outboundMode, OutboundMode.proxy);
+  });
+
+  test('migrates flat profiles without changing IDs or the selected stage', () {
+    final old = _snapshot(OutboundMode.wireGuardProxy, '0.0.0.0/0').toJson()
+      ..remove('chainProxyEnabled')
+      ..remove('standaloneOutbound')
+      ..remove('wireGuardGroups');
+    final profiles = (old['wireGuardProfiles'] as List).cast<Map>();
+    profiles.single.remove('groupId');
+    final migrated = AppSnapshot.fromJson(old);
+    expect(migrated.chainProxyEnabled, isTrue);
+    expect(migrated.standaloneOutbound, StandaloneOutbound.singBox);
+    expect(migrated.wireGuardGroups.single.id, WireGuardGroup.legacy.id);
+    expect(migrated.wireGuardProfile?.id, 'wg');
+    expect(migrated.wireGuardProfile?.groupId, WireGuardGroup.legacy.id);
   });
 }

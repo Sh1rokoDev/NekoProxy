@@ -184,7 +184,7 @@ class _AdvancedPageState extends State<AdvancedPage> {
             height: 520,
             child: SingleChildScrollView(
               child: SelectableText(
-                const JsonEncoder.withIndent('  ').convert(compiled.json),
+                const JsonEncoder.withIndent('  ').convert(compiled.redactedJson),
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 11, height: 1.4),
               ),
             ),
@@ -192,7 +192,11 @@ class _AdvancedPageState extends State<AdvancedPage> {
           actions: [
             TextButton(
               onPressed: () async {
-                await copyText(context, compiled.encoded, message: '配置已复制');
+                await copyText(
+                  context,
+                  const JsonEncoder.withIndent('  ').convert(compiled.redactedJson),
+                  message: '配置已复制',
+                );
               },
               child: const Text('复制'),
             ),

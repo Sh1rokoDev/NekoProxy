@@ -7,6 +7,10 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -17,6 +21,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class NekoVpnService : VpnService() {
+    private var networkCallback: ConnectivityManager.NetworkCallback? = null
     companion object {
         private const val TAG = "NekoVpnService"
         private const val CHANNEL_ID = "nekoproxy-vpn"
@@ -220,6 +225,7 @@ class NekoVpnService : VpnService() {
         var core: Engine? = null
         try {
             val parsed = JSONObject(config)
+            resolveManagedWireGuardPeers(parsed)
             val tunOptions = findTunInbound(parsed)
                 ?: throw IllegalStateException("配置中没有 TUN 入站")
             val addresses = tunOptions.optJSONArray("address") ?: JSONArray()
@@ -245,12 +251,31 @@ class NekoVpnService : VpnService() {
                 addressValues.add(value)
             }
             if (autoRoute) {
-                builder.addRoute("0.0.0.0", 0)
-                if (ipv6) builder.addRoute("::", 0)
+                val routes = tunOptions.optJSONArray("route_address")
+                if (routes == null || routes.length() == 0) {
+                    builder.addRoute("0.0.0.0", 0)
+                    if (ipv6) builder.addRoute("::", 0)
+                } else {
+                    for (index in 0 until routes.length()) {
+                        val route = routes.getString(index)
+                        builder.addRoute(route.substringBefore('/'), route.substringAfter('/').toInt())
+                    }
+                    builder.addRoute("172.19.0.2", 32)
+                    if (ipv6) builder.addRoute("fdfe:dcba:9876::2", 128)
+                }
             }
             applyPerAppSelection(builder, perAppMode, perAppPackages)
             builder.addDnsServer("172.19.0.2")
             if (ipv6) builder.addDnsServer("fdfe:dcba:9876::2")
+            parsed.optJSONObject("dns")?.optJSONArray("servers")?.let { servers ->
+                for (i in 0 until servers.length()) {
+                    val server = servers.optJSONObject(i) ?: continue
+                    if (server.optString("type") != "neko-wireguard-dns") continue
+                    server.optJSONArray("search_domains")?.let { domains ->
+                        for (j in 0 until domains.length()) builder.addSearchDomain(domains.getString(j))
+                    }
+                }
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 builder.setMetered(false)
             }
@@ -263,7 +288,7 @@ class NekoVpnService : VpnService() {
             core = Mobile.newEngine(protector, VpnOwnerFinder(this))
             core.prepareTun(pfd.fd, JSONArray(addressValues).toString())
             Log.i(TAG, "starting sing-box core, log=$logPath")
-            core.start(config)
+            core.start(parsed.toString())
             if (destroyed || token != startToken) {
                 core.stop()
                 pfd.close()
@@ -271,6 +296,9 @@ class NekoVpnService : VpnService() {
                 return
             }
             engine = core
+            if (parsed.optJSONArray("endpoints")?.let { endpoints ->
+                (0 until endpoints.length()).any { endpoints.optJSONObject(it)?.optString("type") == "wireguard" }
+            } == true) observeWireGuardNetwork(core)
             state = STATE_RUNNING
             lastError = null
             Log.i(TAG, "sing-box started, log=$logPath")
@@ -332,11 +360,69 @@ class NekoVpnService : VpnService() {
     }
 
     private fun closeTun() {
+        networkCallback?.let { callback ->
+            networkCallback = null
+            try {
+                getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback)
+            } catch (error: RuntimeException) {
+                Log.w(TAG, "could not unregister underlying network callback", error)
+            }
+        }
         try {
             tunInterface?.close()
         } catch (_: Throwable) {
         }
         tunInterface = null
+    }
+
+    private fun observeWireGuardNetwork(core: Engine) {
+        val manager = getSystemService(ConnectivityManager::class.java)
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) {
+                if (engine === core) core.rebindWireGuard()
+            }
+            override fun onLost(network: Network) {
+                if (engine === core) core.rebindWireGuard()
+            }
+        }
+        val request = NetworkRequest.Builder()
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+            .build()
+        manager.registerNetworkCallback(request, callback)
+        networkCallback = callback
+    }
+
+    private fun resolveManagedWireGuardPeers(config: JSONObject) {
+        val outbounds = config.optJSONArray("outbounds") ?: return
+        val route = (0 until outbounds.length()).asSequence()
+            .mapNotNull(outbounds::optJSONObject)
+            .firstOrNull { it.optString("type") == "neko-wireguard-route" } ?: return
+        val endpoints = config.getJSONArray("endpoints")
+        val endpoint = (0 until endpoints.length()).asSequence()
+            .mapNotNull(endpoints::optJSONObject)
+            .first { it.optString("tag") == route.getString("endpoint") }
+        val peers = endpoint.getJSONArray("peers")
+        for (i in 0 until peers.length()) {
+            val peer = peers.getJSONObject(i)
+            val host = peer.getString("address")
+            if (host.contains(':') || host.split('.').let { parts ->
+                    parts.size == 4 && parts.all { part ->
+                        part.toIntOrNull()?.let { it in 0..255 } == true
+                    }
+                }) continue
+            val manager = getSystemService(ConnectivityManager::class.java)
+            val network = (listOfNotNull(manager.activeNetwork) + manager.allNetworks)
+                .firstOrNull {
+                    val caps = manager.getNetworkCapabilities(it)
+                    caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == true &&
+                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                } ?: throw IllegalStateException("没有可用于解析 WireGuard 对端的底层网络")
+            val address = network.getAllByName(host).firstOrNull()?.hostAddress
+                ?: throw IllegalStateException("无法解析 WireGuard 对端")
+            peer.put("address", address)
+        }
+        endpoint.remove("domain_resolver")
     }
 
     override fun onRevoke() {

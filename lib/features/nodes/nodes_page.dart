@@ -10,6 +10,7 @@ import '../../domain/models.dart';
 import '../../domain/node_view.dart';
 import '../../services/qr_service.dart';
 import '../../state/app_controller.dart';
+import 'outbound_settings_page.dart';
 
 class NodesPage extends StatefulWidget {
   const NodesPage({super.key});
@@ -19,20 +20,11 @@ class NodesPage extends StatefulWidget {
 }
 
 class _NodesPageState extends State<NodesPage> {
-  final _searchController = TextEditingController();
-  final _searchFocus = FocusNode();
   final Set<String> _updating = {};
   final Set<String> _collapsed = {};
   bool _searchOpen = false;
   bool _savingSubscriptionOrder = false;
   String _query = '';
-
-  @override
-  void dispose() {
-    _searchController.dispose();
-    _searchFocus.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -58,16 +50,42 @@ class _NodesPageState extends State<NodesPage> {
         : '测速';
     return PageFrame(
       title: '节点',
+      titleWidget: _searchOpen
+          ? TextField(
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              onChanged: (value) =>
+                  setState(() => _query = value.trim().toLowerCase()),
+              decoration: const InputDecoration(
+                hintText: '搜索节点、地址或协议',
+                isDense: true,
+              ),
+            )
+          : null,
+      wrapHeader: !_searchOpen,
       actions: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _SelectionToggle(controller: controller),
-          const SizedBox(width: 8),
-          HeaderIconButton(
-            icon: _searchOpen ? Icons.close_rounded : Icons.search_rounded,
+          if (!_searchOpen) ...[
+            _SelectionToggle(controller: controller),
+            const SizedBox(width: 8),
+            HeaderIconButton(
+              icon: Icons.settings_outlined,
+              tooltip: '高级',
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => OutboundSettingsPage(controller: controller),
+                ),
+              ),
+            ),
+            const SizedBox(width: 4),
+          ],
+          IconButton(
+            icon: Icon(
+              _searchOpen ? Icons.close_rounded : Icons.search_rounded,
+            ),
             tooltip: _searchOpen ? '关闭搜索' : '搜索节点',
-            active: _searchOpen,
-            onPressed: _toggleSearch,
+            onPressed: _searchOpen || hasNodes ? _toggleSearch : null,
           ),
         ],
       ),
@@ -107,38 +125,6 @@ class _NodesPageState extends State<NodesPage> {
             label: const Text('添加'),
           ),
         ],
-      ),
-      headerBottom: AnimatedSize(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        alignment: Alignment.topCenter,
-        child: _searchOpen
-            ? Padding(
-                padding: const EdgeInsets.only(top: PageFrame.headerGap),
-                child: TextField(
-                  controller: _searchController,
-                  focusNode: _searchFocus,
-                  autofocus: true,
-                  textInputAction: TextInputAction.search,
-                  onChanged: (value) => setState(() => _query = value.trim()),
-                  decoration: InputDecoration(
-                    hintText: '搜索节点、地址或协议',
-                    prefixIcon: const Icon(Icons.search_rounded),
-                    suffixIcon: _query.isEmpty
-                        ? null
-                        : IconButton(
-                            tooltip: '清除',
-                            onPressed: () {
-                              _searchController.clear();
-                              setState(() => _query = '');
-                            },
-                            icon: const Icon(Icons.close_rounded),
-                          ),
-                    isDense: true,
-                  ),
-                ),
-              )
-            : const SizedBox(width: double.infinity),
       ),
       slivers: [
         if (groups.isEmpty)
@@ -301,16 +287,10 @@ class _NodesPageState extends State<NodesPage> {
     }
   }
 
-  void _toggleSearch() {
-    setState(() {
-      _searchOpen = !_searchOpen;
-      if (!_searchOpen) {
-        _searchController.clear();
-        _query = '';
-      }
-    });
-    if (!_searchOpen) _searchFocus.unfocus();
-  }
+  void _toggleSearch() => setState(() {
+    _searchOpen = !_searchOpen;
+    _query = '';
+  });
 
   String _countLabel(_NodeGroup group) {
     if (_query.isNotEmpty) return '${group.nodes.length} 个匹配';
@@ -327,7 +307,7 @@ class _NodesPageState extends State<NodesPage> {
     final groups = <_NodeGroup>[];
     final subscriptions = controller.snapshot.subscriptions;
     final known = {for (final subscription in subscriptions) subscription.id};
-    final query = _query.toLowerCase();
+    final query = _query;
     final orphans = <ProxyNode>[];
     final sortLatencies = controller.testingNodes
         ? const <String, int>{}

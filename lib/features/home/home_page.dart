@@ -329,8 +329,9 @@ class _NetworkTakeoverActions extends StatelessWidget {
         _CompactSwitch(
           icon: Icons.lan_outlined,
           label: 'TUN',
-          value: controller.settings.tunEnabled,
-          enabled: enabled,
+          value:
+              controller.settings.tunEnabled || controller.requiresWindowsTun,
+          enabled: enabled && !controller.requiresWindowsTun,
           onChanged: (value) => controller.setTun(value),
         ),
         if (controller.supportsSystemProxy)

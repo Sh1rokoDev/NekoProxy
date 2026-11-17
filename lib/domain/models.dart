@@ -1,5 +1,9 @@
 import 'dart:convert';
 
+import 'wireguard_profile.dart';
+
+export 'wireguard_profile.dart';
+
 enum SplitMode { rule, global, direct }
 
 enum SelectionMode { manual, auto }
@@ -889,6 +893,9 @@ class AppSnapshot {
     this.customConfig = '',
     this.useCustomConfig = false,
     this.installedAt,
+    this.outboundMode = OutboundMode.proxy,
+    this.wireGuardProfileId,
+    this.wireGuardProfiles = const [],
   }) : rules = rules ?? [];
 
   AppSettings settings;
@@ -898,6 +905,16 @@ class AppSnapshot {
   String customConfig;
   bool useCustomConfig;
   DateTime? installedAt;
+  OutboundMode outboundMode;
+  String? wireGuardProfileId;
+  List<WireGuardProfile> wireGuardProfiles;
+
+  WireGuardProfile? get wireGuardProfile {
+    for (final profile in wireGuardProfiles) {
+      if (profile.id == wireGuardProfileId) return profile;
+    }
+    return null;
+  }
 
   static const formatVersion = 2;
 
@@ -951,6 +968,9 @@ class AppSnapshot {
     'advancedJson': advancedJson,
     'customConfig': customConfig,
     'useCustomConfig': useCustomConfig,
+    'outboundMode': outboundMode.name,
+    'wireGuardProfileId': wireGuardProfileId,
+    'wireGuardProfiles': wireGuardProfiles.map((e) => e.toJson()).toList(),
     'installedAt': installedAt?.toIso8601String(),
   };
 
@@ -988,6 +1008,18 @@ class AppSnapshot {
       advancedJson: Map<String, dynamic>.from(json['advancedJson'] as Map),
       customConfig: json['customConfig'] as String? ?? '',
       useCustomConfig: json['useCustomConfig'] as bool? ?? false,
+      outboundMode: OutboundMode.values.firstWhere(
+        (mode) => mode.name == json['outboundMode'],
+        orElse: () => OutboundMode.proxy,
+      ),
+      wireGuardProfileId: json['wireGuardProfileId'] as String?,
+      wireGuardProfiles: (json['wireGuardProfiles'] as List? ?? const [])
+          .map(
+            (profile) => WireGuardProfile.fromJson(
+              Map<String, dynamic>.from(profile as Map),
+            ),
+          )
+          .toList(),
       installedAt: DateTime.tryParse(json['installedAt'] as String? ?? ''),
     );
   }

@@ -10,6 +10,63 @@ import 'package:nekoproxy/features/nodes/nodes_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
+  testWidgets('节点搜索替换标题、自动聚焦，关闭后恢复列表', (tester) async {
+    tester.view
+      ..physicalSize = const Size(320, 700)
+      ..devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final controller = AppController()
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(),
+        subscriptions: [
+          Subscription(
+            id: 'group',
+            name: '测试分组',
+            nodes: [
+              ProxyNode(
+                id: 'node',
+                tag: 'node',
+                name: '東京',
+                subscriptionId: 'group',
+                outbound: {'type': 'http', 'server': 'tokyo.example.com'},
+              ),
+            ],
+          ),
+        ],
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          controller: controller,
+          child: const Scaffold(body: NodesPage()),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('搜索节点'));
+    await tester.pumpAndSettle();
+    final search = find.byType(TextField);
+    expect(find.text('节点'), findsNothing);
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).focusNode.hasFocus,
+      isTrue,
+    );
+    await tester.enterText(search, '  TOKYO.EXAMPLE.COM ');
+    await tester.pump();
+    expect(find.text('東京'), findsOneWidget);
+    await tester.enterText(search, '不存在的节点');
+    await tester.pump();
+    expect(find.text('没有匹配的节点'), findsOneWidget);
+    await tester.tap(find.byTooltip('关闭搜索'));
+    await tester.pumpAndSettle();
+    expect(search, findsNothing);
+    expect(find.text('节点'), findsOneWidget);
+    expect(find.text('東京'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('订阅卡片在缺少流量数据时显示暂无数据', (tester) async {
     final controller = AppController()
       ..snapshot = AppSnapshot(

@@ -48,7 +48,12 @@ class _BackupPageState extends State<BackupPage> {
                   child: TextField(
                     controller: _password,
                     obscureText: true,
-                    decoration: const InputDecoration(labelText: '密码（可选）'),
+                    decoration: InputDecoration(
+                      labelText:
+                          controller.snapshot.wireGuardProfiles.isNotEmpty
+                          ? '密码（导出 WireGuard 配置时必填）'
+                          : '密码（可选）',
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),

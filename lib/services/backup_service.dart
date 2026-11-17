@@ -24,6 +24,10 @@ class BackupService {
   static const _iterationCount = 210000;
 
   static Future<String> export(AppSnapshot snapshot, {String? password}) async {
+    if (snapshot.wireGuardProfiles.isNotEmpty &&
+        (password == null || password.isEmpty)) {
+      throw const BackupPasswordException('备份含 WireGuard 密钥，请设置备份密码');
+    }
     final payload = jsonEncode({
       'app': 'nekoproxy',
       'version': _formatVersion,

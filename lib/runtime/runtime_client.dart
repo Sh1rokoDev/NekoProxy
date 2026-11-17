@@ -174,7 +174,6 @@ class WindowsRuntimeClient implements RuntimeClient {
   bool _stopping = false;
   String? _lastError;
 
-  File get _configFile => File('${paths.runtime.path}${Platform.pathSeparator}config.json');
   File get _readyFile => File('${paths.runtime.path}${Platform.pathSeparator}ready.json');
   File get _errorFile => File('${_readyFile.path}.error');
 
@@ -195,7 +194,6 @@ class WindowsRuntimeClient implements RuntimeClient {
     _stopping = false;
     _lastError = null;
     await paths.runtime.create(recursive: true);
-    await _configFile.writeAsString(config, flush: true);
     if (await _readyFile.exists()) await _readyFile.delete();
     if (await _errorFile.exists()) await _errorFile.delete();
     if (await paths.logFile.exists()) await paths.logFile.delete();
@@ -207,7 +205,7 @@ class WindowsRuntimeClient implements RuntimeClient {
     final process = await Process.start(
       worker,
       [
-        '-config', _configFile.path,
+        '-config', '-',
         '-ready', _readyFile.path,
         '-log', paths.logFile.path,
         '-install-dir', paths.base.parent.path,
@@ -220,6 +218,8 @@ class WindowsRuntimeClient implements RuntimeClient {
       runInShell: false,
     );
     _process = process;
+    process.stdin.add(utf8.encode(config));
+    await process.stdin.close();
     unawaited(process.exitCode.then((code) {
       if (!_stopping) {
         _lastError = '内核进程已退出（代码 $code）';

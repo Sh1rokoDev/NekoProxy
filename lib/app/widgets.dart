@@ -50,6 +50,7 @@ class PageFrame extends StatelessWidget {
   const PageFrame({
     super.key,
     required this.title,
+    this.titleWidget,
     this.child,
     this.slivers,
     this.headerBottom,
@@ -60,6 +61,7 @@ class PageFrame extends StatelessWidget {
   }) : assert((child == null) != (slivers == null));
 
   final String title;
+  final Widget? titleWidget;
   final Widget? child;
   final List<Widget>? slivers;
   final Widget? headerBottom;
@@ -147,7 +149,7 @@ class PageFrame extends StatelessWidget {
           spacing: 12,
           overflowSpacing: 12,
           children: [
-            Text(title, style: theme.textTheme.headlineSmall),
+            titleWidget ?? Text(title, style: theme.textTheme.headlineSmall),
             if (actions != null)
               FittedBox(fit: BoxFit.scaleDown, child: actions!),
           ],
@@ -160,12 +162,14 @@ class PageFrame extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: theme.textTheme.headlineSmall,
-            ),
+            child:
+                titleWidget ??
+                Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.headlineSmall,
+                ),
           ),
           if (actions != null) ...[const SizedBox(width: 12), actions!],
         ],

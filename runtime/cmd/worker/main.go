@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -60,7 +61,7 @@ func main() {
 		fail(*readyPath, "control token is too short")
 	}
 
-	configData, err := os.ReadFile(*configPath)
+	configData, err := readConfig(*configPath)
 	if err != nil {
 		fail(*readyPath, "read configuration: "+err.Error())
 	}
@@ -68,9 +69,32 @@ func main() {
 		fail(*readyPath, err.Error())
 	}
 
+	configData, protection, err := prepareWireGuardProtection(configData)
+	if err != nil {
+		fail(*readyPath, err.Error())
+	}
+	var firewall *wireGuardFirewall
+	if protection != nil {
+		firewall, err = installWireGuardProtection(protection)
+		if err != nil {
+			fail(*readyPath, "install WireGuard protection: "+err.Error())
+		}
+		defer func() {
+			if err := firewall.close(); err != nil {
+				log.Printf("close WireGuard protection: %v", err)
+			}
+		}()
+	}
+
 	engineInstance := engine.New()
 	if err = engineInstance.Start(configData); err != nil {
 		fail(*readyPath, "start: "+err.Error())
+	}
+	if firewall != nil {
+		if err = firewall.allowTun(protection); err != nil {
+			_ = engineInstance.Close()
+			fail(*readyPath, "enable WireGuard TUN protection: "+err.Error())
+		}
 	}
 
 	stop := make(chan struct{})
@@ -121,6 +145,18 @@ func main() {
 			}
 		}
 	}
+}
+
+func readConfig(path string) ([]byte, error) {
+	if path != "-" {
+		return os.ReadFile(path)
+	}
+	const maxConfigSize = 32 << 20
+	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxConfigSize+1))
+	if err == nil && len(data) > maxConfigSize {
+		return nil, fmt.Errorf("configuration exceeds %d bytes", maxConfigSize)
+	}
+	return data, err
 }
 
 func fail(readyPath, message string) {

@@ -46,6 +46,12 @@
    - **Android**：通过系统 VPN 服务接管流量，支持按应用配置分应用代理或排除名单。
    - **Windows**：支持独立开启**系统代理**与 **TUN 模式**。仅开启系统代理时，出站流量默认遵循 Windows 系统路由。
 
+## WireGuard 出站
+
+在「节点 → 高级」可以导入或编辑 WireGuard `.conf`，手动选择一份配置，并切换「仅代理」「仅 WireGuard」或「WireGuard + 代理」。组合模式保留 sing-box 分流和代理选点：直连目的地址和代理节点服务端地址分别按 WireGuard 的 `AllowedIPs` 决定是否走隧道。包含地址在隧道不可用时不会回退。
+
+Windows 的单对端 `/0` 配置会使用 TUN 及会话断网保护；Android 使用 NekoProxy 已有的单个系统 VPN。配置的 Endpoint 可以是 `公网地址:53`，但仍需要网络实际放行该对端的 WireGuard UDP 报文。
+
 ## 从源码构建
 
 ### 环境准备

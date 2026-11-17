@@ -46,3 +46,4 @@ flutter:
     - LICENSE
     - third_party/THIRD_PARTY_NOTICES.md
     - third_party/wintun-LICENSE.txt
+    - third_party/wfp-LICENSE.txt

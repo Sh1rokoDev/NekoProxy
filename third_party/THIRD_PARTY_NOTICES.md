@@ -48,6 +48,13 @@ SOFTWARE.
 - 许可：见 `third_party/wintun-LICENSE.txt`
 - 用途：Windows TUN 虚拟网卡。Wintun 作为独立组件随应用分发，NekoProxy 仅通过公开 API 使用它。
 
+## Windows Filtering Platform Go 绑定
+
+- 项目：https://github.com/tailscale/wf
+- 版本：`v0.0.0-20240214030419-6fbb0a674ee6`
+- 许可：见 `third_party/wfp-LICENSE.txt`
+- 用途：Windows worker 安装和自动清理 WireGuard 会话的防火墙规则。
+
 ## Microsoft Visual C++ 运行库
 
 - 组件：`MSVCP140.dll`、`VCRUNTIME140.dll`、`VCRUNTIME140_1.dll` 等 Visual Studio 可再发行组件。

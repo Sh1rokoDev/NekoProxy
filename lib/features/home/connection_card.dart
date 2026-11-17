@@ -27,13 +27,23 @@ class ConnectionCard extends StatelessWidget {
     final scheme = theme.colorScheme;
     final running = controller.running;
     final busy = controller.busy;
-    final node = controller.currentNode;
+    final profile = controller.activeWireGuard;
+    final onlyWireGuard = controller.outboundMode == OutboundMode.wireGuard;
+    final node = onlyWireGuard ? null : controller.currentNode;
+    String? endpoint;
+    if (onlyWireGuard && profile != null) {
+      try {
+        endpoint = profile.parse().firstEndpoint;
+      } on FormatException {
+        endpoint = 'WireGuard 配置无效';
+      }
+    }
     final exitInfo = controller.exitInfo;
     final source = _sourceName(controller, node);
     final statusText = busy
         ? '正在应用'
         : running
-        ? '已连接'
+        ? (profile != null && exitInfo == null ? '核心已启动' : '已连接')
         : '未连接';
     final connectedColor = theme.brightness == Brightness.dark
         ? const Color(0xFF7ADCA5)
@@ -49,14 +59,21 @@ class ConnectionCard extends StatelessWidget {
       SplitMode.direct => '直连',
     };
     final modes = <Widget>[
-      _ConnectionMode(
-        icon: controller.settings.selectionMode == SelectionMode.auto
-            ? Icons.auto_awesome_outlined
-            : Icons.pan_tool_alt_rounded,
-        label: controller.currentGroupLabel,
-      ),
-      const _ConnectionModeDot(),
-      _ConnectionMode(icon: Icons.route_outlined, label: splitLabel),
+      if (onlyWireGuard)
+        const _ConnectionMode(
+          icon: Icons.route_outlined,
+          label: '按 AllowedIPs 路由',
+        )
+      else ...[
+        _ConnectionMode(
+          icon: controller.settings.selectionMode == SelectionMode.auto
+              ? Icons.auto_awesome_outlined
+              : Icons.pan_tool_alt_rounded,
+          label: controller.currentGroupLabel,
+        ),
+        const _ConnectionModeDot(),
+        _ConnectionMode(icon: Icons.route_outlined, label: splitLabel),
+      ],
     ];
 
     return LayoutBuilder(
@@ -68,7 +85,7 @@ class ConnectionCard extends StatelessWidget {
         final power = _ConnectionPowerButton(
           controller: controller,
           running: running,
-          hasNodes: hasNodes,
+          hasNodes: controller.canConnect,
           compact: !wide,
         );
         final meta = <Widget>[
@@ -138,6 +155,9 @@ class ConnectionCard extends StatelessWidget {
                             node: node,
                             hasNodes: hasNodes,
                             region: exitInfo?.region.trim() ?? '',
+                            displayName: onlyWireGuard ? profile?.name : null,
+                            displayAddress: endpoint,
+                            upstreamName: onlyWireGuard ? null : profile?.name,
                           ),
                         ],
                       ),
@@ -186,11 +206,17 @@ class _NodeDetails extends StatelessWidget {
     required this.node,
     required this.hasNodes,
     required this.region,
+    this.displayName,
+    this.displayAddress,
+    this.upstreamName,
   });
 
   final ProxyNode? node;
   final bool hasNodes;
   final String region;
+  final String? displayName;
+  final String? displayAddress;
+  final String? upstreamName;
 
   @override
   Widget build(BuildContext context) {
@@ -198,9 +224,10 @@ class _NodeDetails extends StatelessWidget {
     final scheme = theme.colorScheme;
     final node = this.node;
     final address = Text(
-      node == null
-          ? (hasNodes ? '选择一个节点' : '导入订阅或节点')
-          : '${node.server}:${node.port}',
+      displayAddress ??
+          (node == null
+              ? (hasNodes ? '选择一个节点' : '导入订阅或节点')
+              : '${node.server}:${node.port}'),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: theme.textTheme.bodySmall?.copyWith(
@@ -227,13 +254,13 @@ class _NodeDetails extends StatelessWidget {
           ),
         ),
         child: SizedBox(
-          key: ValueKey(node?.id ?? 'no-node'),
+          key: ValueKey(displayName ?? node?.id ?? 'no-node'),
           width: double.infinity,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                node?.name ?? (hasNodes ? '尚未选择节点' : '还没有节点'),
+                displayName ?? node?.name ?? (hasNodes ? '尚未选择节点' : '还没有节点'),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.titleLarge?.copyWith(
@@ -243,6 +270,12 @@ class _NodeDetails extends StatelessWidget {
                   letterSpacing: -0.4,
                 ),
               ),
+              if (upstreamName != null)
+                Text(
+                  'WireGuard · $upstreamName',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               const SizedBox(height: 9),
               if (node != null && region.isNotEmpty)
                 LayoutBuilder(

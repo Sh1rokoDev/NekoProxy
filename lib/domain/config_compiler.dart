@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'config_policy.dart';
 import 'models.dart';
@@ -53,6 +54,22 @@ class CompiledConfig {
   }
 
   bool get hasTunInbound => _hasTunInbound(json['inbounds']);
+
+  Map<String, dynamic> get redactedJson =>
+      Map<String, dynamic>.from(_redact(json) as Map);
+
+  static Object? _redact(Object? value) {
+    if (value is List) return value.map(_redact).toList();
+    if (value is Map) {
+      return {
+        for (final entry in value.entries)
+          entry.key: const {'private_key', 'pre_shared_key'}.contains(entry.key)
+              ? '<已隐藏>'
+              : _redact(entry.value),
+      };
+    }
+    return value;
+  }
 }
 
 class ConfigCompiler {
@@ -65,6 +82,10 @@ class ConfigCompiler {
   static const tunTag = 'tun-in';
   static const bootstrapTag = 'dns-bootstrap';
   static const systemTag = 'dns-system';
+  static const wireGuardTag = 'neko-wireguard';
+  static const physicalTag = 'neko-physical';
+  static const wireGuardDnsTag = 'neko-wireguard-dns';
+  static const wireGuardBootstrapTag = 'neko-wireguard-bootstrap';
 
   static String nodeTag(ProxyNode node) => 'node-${node.id}';
 
@@ -114,13 +135,44 @@ class ConfigCompiler {
       return _compileCustom(snapshot);
     }
 
+    final wireGuardOnly = snapshot.outboundMode == OutboundMode.wireGuard;
+    final WireGuardConfig? wireGuard;
+    if (snapshot.outboundMode == OutboundMode.proxy) {
+      wireGuard = null;
+    } else {
+      final profile = snapshot.wireGuardProfile;
+      if (profile == null) {
+        throw const ConfigCompileException('请选择 WireGuard 配置。');
+      }
+      try {
+        wireGuard = profile.parse();
+      } on FormatException catch (error) {
+        throw ConfigCompileException(error.message);
+      }
+      if (snapshot.advancedJson.keys.any(
+        const {
+          'inbounds',
+          'outbounds',
+          'endpoints',
+          'dns',
+          'route',
+          'services',
+          'http_clients',
+        }.contains,
+      )) {
+        throw const ConfigCompileException(
+          '高级 JSON 与 WireGuard 的入站、出站或 DNS 配置冲突。',
+        );
+      }
+    }
+
     final seenIds = <String>{};
-    final nodes = snapshot.allNodes
+    final nodes = (wireGuardOnly ? const <ProxyNode>[] : snapshot.allNodes)
         .where(
           (node) => _isSupportedOutbound(node.outbound) && seenIds.add(node.id),
         )
         .toList();
-    if (nodes.isEmpty) {
+    if (nodes.isEmpty && !wireGuardOnly) {
       throw const ConfigCompileException('没有可用的节点，请先导入订阅或节点。');
     }
 
@@ -141,6 +193,8 @@ class ConfigCompiler {
     final selectedTag =
         manualNode != null && nodeTags.containsKey(manualNode.id)
         ? nodeTags[manualNode.id]
+        : nodes.isEmpty
+        ? null
         : nodeTags[nodes.first.id];
 
     final outbounds = <Map<String, dynamic>>[
@@ -153,12 +207,14 @@ class ConfigCompiler {
       },
     ];
 
-    outbounds.add({
-      'type': 'selector',
-      'tag': proxyTag,
-      'outbounds': [for (final node in nodes) nodeTags[node.id]!],
-      'default': selectedTag,
-    });
+    if (!wireGuardOnly) {
+      outbounds.add({
+        'type': 'selector',
+        'tag': proxyTag,
+        'outbounds': [for (final node in nodes) nodeTags[node.id]!],
+        'default': selectedTag,
+      });
+    }
 
     if (!testOnly && autoNodes.isNotEmpty) {
       // Until the first urltest finishes, sing-box selects the group's first
@@ -235,10 +291,14 @@ class ConfigCompiler {
             systemDns,
             routeRuleNames,
           );
-    final generatedRules = route['rules'];
+    final forceTun =
+        wireGuardOnly ||
+        (target == CompileTarget.windows &&
+            (wireGuard?.windowsProtection ?? false));
     final inbounds = <Map<String, dynamic>>[
       if (!testOnly) _buildMixedInbound(snapshot, target),
-      if (!testOnly && (settings.tunEnabled || target == CompileTarget.android))
+      if (!testOnly &&
+          (forceTun || settings.tunEnabled || target == CompileTarget.android))
         _buildTunInbound(snapshot, target, warnings),
     ];
     final effectiveInbounds =
@@ -248,7 +308,9 @@ class ConfigCompiler {
     // Without a TUN to loop back into, let Windows route through VPN adapters
     // such as WireGuard that sing-box's interface detection skips.
     route['auto_detect_interface'] =
-        target == CompileTarget.android || _hasTunInbound(effectiveInbounds);
+        target == CompileTarget.android ||
+        wireGuard != null ||
+        _hasTunInbound(effectiveInbounds);
 
     final config = <String, dynamic>{
       'log': testOnly
@@ -267,6 +329,25 @@ class ConfigCompiler {
           'cache_file': {'enabled': true, 'path': cachePath},
         },
     };
+
+    if (wireGuard != null) {
+      _applyWireGuard(
+        wireGuard,
+        config,
+        dns,
+        route,
+        outbounds,
+        inbounds,
+        nodeTags,
+        only: wireGuardOnly,
+        protected:
+            target == CompileTarget.windows && wireGuard.windowsProtection,
+        systemDns: systemDns,
+        testOnly: testOnly,
+      );
+      if (wireGuardOnly) routeRuleNames.clear();
+    }
+    final generatedRules = route['rules'];
 
     if (!testOnly && snapshot.advancedJson.isNotEmpty) {
       _deepMerge(config, snapshot.advancedJson, warnings);
@@ -296,6 +377,144 @@ class ConfigCompiler {
           ? Map.unmodifiable(routeRuleNames)
           : const {},
     );
+  }
+
+  static void _applyWireGuard(
+    WireGuardConfig profile,
+    Map<String, dynamic> config,
+    Map<String, dynamic> dns,
+    Map<String, dynamic> route,
+    List<Map<String, dynamic>> outbounds,
+    List<Map<String, dynamic>> inbounds,
+    Map<String, String> nodeTags, {
+    required bool only,
+    required bool protected,
+    required String? systemDns,
+    required bool testOnly,
+  }) {
+    final hasDomainPeer = profile.peers.any(
+      (peer) => InternetAddress.tryParse(peer['address'] as String) == null,
+    );
+    config['endpoints'] = [
+      profile.toEndpoint(
+        wireGuardTag,
+        resolver: hasDomainPeer ? wireGuardBootstrapTag : null,
+      ),
+    ];
+    final physical = outbounds.first;
+    physical['tag'] = physicalTag;
+    outbounds.insert(1, {
+      'type': 'neko-wireguard-route',
+      'tag': directTag,
+      'endpoint': wireGuardTag,
+      'physical': physicalTag,
+      'allowed_ips': profile.allowedIps,
+      'resolver': 'dns-direct',
+      if (protected && !testOnly) 'protect_windows': true,
+      if (protected && testOnly) 'block_uncovered': true,
+    });
+    for (final outbound in outbounds.skip(2)) {
+      if (!nodeTags.containsValue(outbound['tag'])) continue;
+      outbound['detour'] = directTag;
+      if (outbound['server'] case final String host when _isDomain(host)) {
+        outbound['domain_resolver'] = {'server': 'dns-direct'};
+      }
+    }
+    final servers = (dns['servers'] as List).cast<Map<String, dynamic>>();
+    servers.removeWhere((server) => server['tag'] == systemTag);
+    for (final server in servers.where((server) => server['type'] == 'local')) {
+      server['prefer_go'] = true;
+      server['detour'] = server['tag'] == 'dns-proxy'
+          ? (route['final'] == autoTag ? autoTag : proxyTag)
+          : directTag;
+    }
+    if (hasDomainPeer) {
+      servers.add({
+        'tag': wireGuardBootstrapTag,
+        if (systemDns == null)
+          'type': 'local'
+        else ...{
+          'type': 'udp',
+          'server': systemDns,
+          'detour': physicalTag,
+        },
+      });
+    }
+    if (profile.dns.isNotEmpty || only) {
+      servers.removeWhere((server) => server['tag'] == 'dns-direct');
+      servers.add(
+        profile.dns.isEmpty
+            ? {
+                'tag': 'dns-direct',
+                if (systemDns == null) ...{
+                  'type': 'local',
+                  'prefer_go': true,
+                  'detour': directTag,
+                } else ...{
+                  'type': 'udp',
+                  'server': systemDns,
+                  'detour': directTag,
+                },
+              }
+            : {
+                'type': 'neko-wireguard-dns',
+                'tag': 'dns-direct',
+                'servers': profile.dns,
+                if (profile.searchDomains.isNotEmpty)
+                  'search_domains': profile.searchDomains,
+                'detour': directTag,
+              },
+      );
+    }
+    route['default_domain_resolver'] = {'server': 'dns-direct'};
+    for (final inbound in inbounds.where((item) => item['type'] == 'tun')) {
+      if (only || protected) {
+        inbound['auto_route'] = true;
+        inbound.remove('route_exclude_address');
+      }
+      if (only) inbound['route_address'] = profile.allowedIps;
+      if (profile.allowedIps.any((cidr) => cidr.contains(':')) &&
+          !(inbound['address'] as List<String>).any(
+            (cidr) => cidr.contains(':'),
+          )) {
+        (inbound['address'] as List<String>).add('fdfe:dcba:9876::1/126');
+        if (dns['strategy'] == 'ipv4_only') dns['strategy'] = 'prefer_ipv4';
+      }
+    }
+    if (only) {
+      servers.removeWhere(
+        (server) => !const {
+          'dns-direct',
+          wireGuardBootstrapTag,
+        }.contains(server['tag']),
+      );
+      dns.remove('rules');
+      dns['final'] = 'dns-direct';
+      route
+        ..remove('rule_set')
+        ..remove('find_process')
+        ..['final'] = directTag
+        ..['rules'] = [
+          {
+            'inbound': [wireGuardTag],
+            'action': 'reject',
+          },
+          {'port': 53, 'action': 'hijack-dns'},
+        ];
+    } else {
+      final rules = route['rules'] as List?;
+      if (protected && !testOnly && rules != null) {
+        rules.insert(0, {
+          'inbound': [tunTag],
+          'port': 53,
+          'action': 'hijack-dns',
+        });
+      }
+      rules?.insert(0, {
+        'inbound': [wireGuardTag],
+        'action': 'reject',
+      });
+    }
   }
 
   static CompiledConfig _compileCustom(AppSnapshot snapshot) {

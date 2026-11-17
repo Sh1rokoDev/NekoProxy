@@ -115,6 +115,7 @@ Section "NekoProxy（必需）" SecMain
   SetOutPath "$INSTDIR\third_party"
   File "${ROOT}\third_party\THIRD_PARTY_NOTICES.md"
   File "${ROOT}\third_party\wintun-LICENSE.txt"
+  File "${ROOT}\third_party\wfp-LICENSE.txt"
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 

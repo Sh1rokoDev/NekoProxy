@@ -20,7 +20,6 @@ import (
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/common/trafficcontrol"
 	"github.com/sagernet/sing-box/common/urltest"
-	"github.com/sagernet/sing-box/include"
 	"github.com/sagernet/sing-box/option"
 	"github.com/sagernet/sing-box/protocol/group"
 	M "github.com/sagernet/sing/common/metadata"
@@ -110,7 +109,7 @@ func (e *Engine) StartWithPlatform(configData []byte, platform adapter.PlatformI
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	ctx = include.Context(ctx)
+	ctx = registerWireGuard(ctx)
 	ctx = service.ContextWithPtr(ctx, urltest.NewHistoryStorage())
 	if platform != nil {
 		service.MustRegister[adapter.PlatformInterface](ctx, platform)

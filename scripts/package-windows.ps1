@@ -31,6 +31,7 @@ Copy-Item (Join-Path $root "README.md") $target
 New-Item -ItemType Directory -Force -Path (Join-Path $target "third_party") | Out-Null
 Copy-Item (Join-Path $root "third_party\THIRD_PARTY_NOTICES.md") (Join-Path $target "third_party")
 Copy-Item (Join-Path $root "third_party\wintun-LICENSE.txt") (Join-Path $target "third_party")
+Copy-Item (Join-Path $root "third_party\wfp-LICENSE.txt") (Join-Path $target "third_party")
 
 $zipName = "$packageName.zip"
 $zip = Join-Path $DistDir $zipName

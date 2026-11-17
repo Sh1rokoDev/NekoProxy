@@ -260,7 +260,7 @@ class _ConfigPageState extends State<ConfigPage> {
       if (!mounted || _custom.text != previousText) return;
       setState(() {
         _custom.text = const JsonEncoder.withIndent('  ')
-            .convert(compiled.json);
+            .convert(compiled.redactedJson);
       });
       _showInfo('已载入当前生成配置。请检查后再启用完整配置。');
     } catch (e) {

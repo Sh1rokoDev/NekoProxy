@@ -169,6 +169,25 @@ class AppController extends ChangeNotifier {
   bool get supportsSystemProxy => Platform.isWindows;
   bool get supportsTun => Platform.isWindows || Platform.isAndroid;
   bool get hasNodes => snapshot.hasNodes;
+  OutboundMode get outboundMode =>
+      snapshot.useCustomConfig ? OutboundMode.proxy : snapshot.outboundMode;
+  WireGuardProfile? get activeWireGuard =>
+      outboundMode == OutboundMode.proxy ? null : snapshot.wireGuardProfile;
+  bool get requiresWindowsTun {
+    if (!Platform.isWindows) return false;
+    if (outboundMode == OutboundMode.wireGuard) return true;
+    try {
+      return activeWireGuard?.parse().windowsProtection ?? false;
+    } on FormatException {
+      return false;
+    }
+  }
+
+  bool get canConnect =>
+      snapshot.useCustomConfig ||
+      (outboundMode == OutboundMode.wireGuard
+          ? activeWireGuard != null
+          : hasNodes);
 
   AppSettings get settings => snapshot.settings;
 
@@ -413,7 +432,7 @@ class AppController extends ChangeNotifier {
     _ruleSetTimer = Timer.periodic(const Duration(hours: 6), (_) {
       unawaited(_autoUpdateRuleSets());
     });
-    if (settings.autoConnect && hasNodes) {
+    if (settings.autoConnect && canConnect) {
       unawaited(connect());
     }
   }
@@ -534,9 +553,9 @@ class AppController extends ChangeNotifier {
     return '$month-$day';
   }
 
-  CompiledConfig compile() {
+  CompiledConfig compile([AppSnapshot? candidate]) {
     return ConfigCompiler.compile(
-      snapshot,
+      candidate ?? snapshot,
       target: Platform.isAndroid
           ? CompileTarget.android
           : CompileTarget.windows,
@@ -545,6 +564,45 @@ class AppController extends ChangeNotifier {
       systemDnsServers: _systemDns,
       ruleSetPaths: ruleSets.pathsByTag,
     );
+  }
+
+  bool outboundChangeNeedsRestart(
+    OutboundMode mode,
+    WireGuardProfile? profile,
+  ) =>
+      running &&
+      (mode != outboundMode ||
+          (mode != OutboundMode.proxy &&
+              (profile?.id != activeWireGuard?.id ||
+                  profile?.configuration != activeWireGuard?.configuration)));
+
+  Future<void> applyOutboundSettings(
+    OutboundMode mode,
+    String? profileId,
+    List<WireGuardProfile> profiles,
+  ) async {
+    if (busy || _rebuilding || snapshot.useCustomConfig) {
+      throw StateError('当前无法应用出站设置');
+    }
+    final candidate = AppSnapshot.fromJson(snapshot.toJson())
+      ..outboundMode = mode
+      ..wireGuardProfileId = profileId
+      ..wireGuardProfiles = List.of(profiles);
+    for (final profile in profiles) {
+      profile.parse();
+    }
+    if (mode != OutboundMode.proxy || candidate.hasNodes) compile(candidate);
+    final reconnect = outboundChangeNeedsRestart(
+      mode,
+      candidate.wireGuardProfile,
+    );
+    await storage.save(candidate);
+    snapshot
+      ..outboundMode = mode
+      ..wireGuardProfileId = profileId
+      ..wireGuardProfiles = List.of(profiles);
+    notifyListeners();
+    if (reconnect) await restartCore();
   }
 
   Future<CompiledConfig> compileForExport() async {
@@ -565,8 +623,12 @@ class AppController extends ChangeNotifier {
 
   Future<void> connect() async {
     if (busy || running) return;
-    if (!hasNodes) {
-      _setError('还没有可用节点，请先导入订阅或节点。');
+    if (!canConnect) {
+      _setError(
+        outboundMode == OutboundMode.wireGuard
+            ? '请在「节点 → 高级」选择 WireGuard 配置。'
+            : '还没有可用节点，请先导入订阅或节点。',
+      );
       return;
     }
     if (Platform.isAndroid &&
@@ -1020,6 +1082,10 @@ class AppController extends ChangeNotifier {
 
   Future<void> testNodes({Iterable<ProxyNode>? nodes}) async {
     if (testingNodes || busy) return;
+    if (outboundMode == OutboundMode.wireGuard) {
+      _setError('仅 WireGuard 模式不使用代理节点。');
+      return;
+    }
     final candidates = (nodes ?? snapshot.allNodes).toList();
     if (candidates.isEmpty) return;
     final temporary = !running;
@@ -1179,7 +1245,7 @@ class AppController extends ChangeNotifier {
       running &&
       (Platform.isAndroid
           ? settings.perAppMode != PerAppMode.allow
-          : settings.tunEnabled);
+          : settings.tunEnabled || (_compiled?.hasTunInbound ?? false));
 
   bool get checksViaProxy => running && !checksViaTun;
 

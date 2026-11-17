@@ -65,6 +65,10 @@ func (e *Engine) Stop() error {
 	return e.inner.Close()
 }
 
+func (e *Engine) RebindWireGuard() {
+	e.inner.RebindWireGuard()
+}
+
 func (e *Engine) StatusJSON() string {
 	return marshal(e.inner.Status())
 }

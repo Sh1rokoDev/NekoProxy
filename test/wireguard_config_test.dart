@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/domain/config_compiler.dart';
@@ -43,6 +44,38 @@ CompiledConfig _compile(
   cachePath: 'cache.db',
   testOnly: testOnly,
 );
+
+Subscription _proxyGroup() => Subscription(
+  id: 'p',
+  name: 'proxy',
+  nodes: [
+    ProxyNode(
+      id: 'a',
+      tag: 'a',
+      name: 'a',
+      outbound: {
+        'type': 'http',
+        'server': 'node.example.com',
+        'server_port': 8080,
+      },
+    ),
+  ],
+);
+
+bool _coversAddress(String prefix, String address) {
+  final [network, length] = prefix.split('/');
+  final targetBytes = InternetAddress(address).rawAddress;
+  final networkBytes = InternetAddress(network).rawAddress;
+  if (targetBytes.length != networkBytes.length) return false;
+  final prefixLength = int.parse(length);
+  for (var bit = 0; bit < prefixLength; bit++) {
+    final mask = 1 << (7 - bit % 8);
+    if ((targetBytes[bit ~/ 8] & mask) != (networkBytes[bit ~/ 8] & mask)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 void main() {
   test(
@@ -106,10 +139,10 @@ AllowedIPs = 172.16.0.7/16
   test(
     'standalone builds TUN with profile routes without proxy subscriptions',
     () {
-      final snapshot = _snapshot(
-        OutboundMode.wireGuard,
-        '10.10.0.0/24, fd00::/64',
-      )..settings.tunOrDefault.ipv6 = true;
+      final snapshot =
+          _snapshot(OutboundMode.wireGuard, '10.10.0.0/24, fd00::/64')
+            ..settings.tunEnabled = true
+            ..settings.tunOrDefault.ipv6 = true;
       for (final target in CompileTarget.values) {
         final compiled = _compile(snapshot, target);
         expect(compiled.hasTunInbound, isTrue);
@@ -127,7 +160,8 @@ AllowedIPs = 172.16.0.7/16
   );
 
   test('standalone takes IPv6 from the profile even when sing-box IPv6 is disabled', () {
-    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0');
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0')
+      ..settings.tunEnabled = true;
     for (final target in CompileTarget.values) {
       final compiled = _compile(snapshot, target);
       final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
@@ -140,7 +174,8 @@ AllowedIPs = 172.16.0.7/16
   });
 
   test('standalone requires an IPv6 interface address to advertise IPv6', () {
-    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0');
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0')
+      ..settings.tunEnabled = true;
     final profile = snapshot.wireGuardProfiles.single;
     snapshot.settings.tunOrDefault.ipv6 = true;
     snapshot.wireGuardProfiles = [
@@ -159,7 +194,8 @@ AllowedIPs = 172.16.0.7/16
   });
 
   test('standalone keeps IPv6 when the profile has no IPv4 route', () {
-    final snapshot = _snapshot(OutboundMode.wireGuard, '::/0');
+    final snapshot = _snapshot(OutboundMode.wireGuard, '::/0')
+      ..settings.tunEnabled = true;
     for (final target in CompileTarget.values) {
       final compiled = _compile(snapshot, target);
       final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
@@ -172,7 +208,8 @@ AllowedIPs = 172.16.0.7/16
   });
 
   test('Windows standalone forwards TUN packets after DNS hijacking', () {
-    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0');
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0')
+      ..settings.tunEnabled = true;
     final profile = snapshot.wireGuardProfiles.single;
     snapshot.wireGuardProfiles = [
       WireGuardProfile(
@@ -214,25 +251,8 @@ AllowedIPs = 172.16.0.7/16
   });
 
   test('combined retains selector and wires nodes and direct DNS through the profile', () {
-    final snapshot = _snapshot(OutboundMode.wireGuardProxy, '0.0.0.0/0');
-    snapshot.subscriptions.add(
-      Subscription(
-        id: 'p',
-        name: 'proxy',
-        nodes: [
-          ProxyNode(
-            id: 'a',
-            tag: 'a',
-            name: 'a',
-            outbound: {
-              'type': 'http',
-              'server': 'node.example.com',
-              'server_port': 8080,
-            },
-          ),
-        ],
-      ),
-    );
+    final snapshot = _snapshot(OutboundMode.wireGuardProxy, '0.0.0.0/0')
+      ..subscriptions.add(_proxyGroup());
     final compiled = _compile(snapshot, CompileTarget.windows);
     final out = {
       for (final item in (compiled.json['outbounds'] as List).cast<Map>())
@@ -259,28 +279,114 @@ AllowedIPs = 172.16.0.7/16
     expect(offline.encoded, isNot(contains('block_uncovered')));
   });
 
-  test('equivalent /1 routes do not trigger Windows system protection', () {
-    final snapshot = _snapshot(
-      OutboundMode.wireGuard,
-      '0.0.0.0/1, 128.0.0.0/1',
+  test('chain only bypasses LAN addresses outside the WireGuard profile', () {
+    const allowed = '10.2.1.1/32, 10.3.0.0/16, fd00:2::/64';
+    final snapshot = _snapshot(OutboundMode.wireGuardProxy, allowed)
+      ..settings.tunEnabled = true
+      ..settings.tunOrDefault.ipv6 = true
+      ..subscriptions.add(_proxyGroup());
+    final compiled = _compile(snapshot, CompileTarget.windows);
+    final excluded =
+        _tunInbound(compiled)['route_exclude_address'] as List<String>;
+    bool bypasses(String address) =>
+        excluded.any((prefix) => _coversAddress(prefix, address));
+    for (final covered in ['10.2.1.1', '10.3.255.255', 'fd00:2::5']) {
+      expect(bypasses(covered), isFalse, reason: covered);
+    }
+    for (final uncovered in [
+      '10.2.1.0',
+      '10.2.1.2',
+      '10.4.0.0',
+      '192.168.1.1',
+      'fd00:3::5',
+    ]) {
+      expect(bypasses(uncovered), isTrue, reason: uncovered);
+    }
+    expect(bypasses('203.0.113.1'), isFalse);
+    final endpoint = (compiled.json['endpoints'] as List).single as Map;
+    expect(
+      (endpoint['peers'] as List).single['allowed_ips'],
+      allowed.split(', '),
     );
+    final rules = (compiled.json['route'] as Map)['rules'] as List;
+    final privateRule = rules.cast<Map>().singleWhere(
+      (rule) => rule['ip_is_private'] == true,
+    );
+    expect(privateRule, {
+      'ip_is_private': true,
+      'action': 'route',
+      'outbound': 'direct',
+    });
+    expect(compiled.routeRuleNames[rules.indexOf(privateRule)], '私网地址直连');
+    final preview = ConfigCompiler.previewRouting(
+      snapshot,
+      target: CompileTarget.windows,
+    );
+    expect(preview.coreRules, rules.take(rules.indexOf(privateRule)));
+    expect(preview.activeRuleIds, contains(snapshot.rules.first.id));
+
+    snapshot.outboundMode = OutboundMode.proxy;
+    final proxy = _compile(snapshot, CompileTarget.windows);
+    expect(_tunInbound(proxy)['route_exclude_address'], contains('10.0.0.0/8'));
+  });
+
+  test('chain with dual-stack default coverage has no LAN exclusions', () {
+    final snapshot = _snapshot(OutboundMode.wireGuardProxy, '0.0.0.0/0, ::/0')
+      ..settings.tunEnabled = true
+      ..subscriptions.add(_proxyGroup());
+    final compiled = _compile(snapshot, CompileTarget.windows);
+    expect(_tunInbound(compiled).containsKey('route_exclude_address'), isFalse);
+    expect(compiled.encoded, isNot(contains('protect_windows')));
+  });
+
+  test('equivalent /1 routes do not trigger Windows system protection', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/1, 128.0.0.0/1')
+      ..settings.tunEnabled = true;
     expect(
       _compile(snapshot, CompileTarget.windows).encoded,
       isNot(contains('protect_windows')),
     );
   });
 
-  test(
-    'standalone keeps Windows protection for single-peer default routes',
-    () {
-      final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0');
-      final windows = _compile(snapshot, CompileTarget.windows);
-      final android = _compile(snapshot, CompileTarget.android);
-      expect(windows.hasTunInbound, isTrue);
-      expect(windows.encoded, contains('protect_windows'));
-      expect(android.encoded, isNot(contains('protect_windows')));
-    },
-  );
+  test('standalone with TUN keeps Windows protection for single-peer default routes', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0')
+      ..settings.tunEnabled = true;
+    final windows = _compile(snapshot, CompileTarget.windows);
+    final android = _compile(snapshot, CompileTarget.android);
+    expect(windows.hasTunInbound, isTrue);
+    expect(windows.encoded, contains('protect_windows'));
+    expect(android.encoded, isNot(contains('protect_windows')));
+  });
+
+  test('Windows standalone without TUN keeps only the local proxy entry', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0');
+    final windows = _compile(snapshot, CompileTarget.windows);
+    expect(windows.hasTunInbound, isFalse);
+    expect(windows.nodeTags, isEmpty);
+    expect((windows.json['inbounds'] as List).single['type'], 'mixed');
+    final route = windows.json['route'] as Map;
+    expect(route['final'], 'direct');
+    expect(
+      (route['rules'] as List).cast<Map>().any(
+        (rule) => rule['outbound'] == 'neko-wireguard',
+      ),
+      isFalse,
+    );
+    final dialer = (windows.json['outbounds'] as List).cast<Map>().singleWhere(
+      (outbound) => outbound['tag'] == 'direct',
+    );
+    expect(dialer['endpoint'], 'neko-wireguard');
+    expect(dialer['protect_windows'], isNull);
+    expect(dialer['block_uncovered'], isTrue);
+    final dns = windows.json['dns'] as Map;
+    final resolver = (dns['servers'] as List).single as Map;
+    expect(resolver['type'], 'neko-wireguard-dns');
+    expect(resolver['detour'], 'direct');
+
+    final android = _compile(snapshot, CompileTarget.android);
+    expect(android.hasTunInbound, isTrue);
+    expect(android.encoded, isNot(contains('protect_windows')));
+  });
 
   test('outbound settings round trip and old snapshots default to proxy', () {
     final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0');
@@ -312,3 +418,7 @@ AllowedIPs = 172.16.0.7/16
     expect(migrated.wireGuardProfile?.groupId, WireGuardGroup.legacy.id);
   });
 }
+
+Map _tunInbound(CompiledConfig compiled) => (compiled.json['inbounds'] as List)
+    .cast<Map>()
+    .singleWhere((inbound) => inbound['type'] == 'tun');

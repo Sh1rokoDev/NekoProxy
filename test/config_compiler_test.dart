@@ -327,7 +327,7 @@ void main() {
       );
     });
 
-    test('disabling all rules leaves only direct routing', () {
+    test('disabling all editable rules leaves only core routing rules', () {
       final snapshot = snapshotWith([node('a')]);
       for (final rule in snapshot.rules) {
         rule.enabled = false;
@@ -342,6 +342,7 @@ void main() {
       expect(compiled.localRuleSetPaths, isEmpty);
       final rules = (route['rules'] as List).cast<Map>();
       expect(rules.any((rule) => rule['rule_set'] != null), isFalse);
+      expect(rules.any((rule) => rule['ip_is_private'] == true), isFalse);
     });
 
     test('built-in rules are editable and compile with their own target', () {
@@ -407,16 +408,17 @@ void main() {
       );
     });
 
-    test('seeds five built-in rules in display order', () {
+    test('seeds editable built-in rules in display order', () {
       final snapshot = snapshotWith([node('a')]);
       expect(snapshot.rules.map((rule) => rule.name).toList(), [
+        '私网地址直连',
         '屏蔽 QUIC',
         '广告与追踪域名',
         '中国 Play 商店规则',
         '中国大陆域名',
         '中国大陆 IP',
       ]);
-      final quic = snapshot.rules.first;
+      final quic = snapshot.rules[1];
       expect(quic.isLogical, isTrue);
       expect(quic.logic, RuleLogic.and);
       expect(quic.target, RuleTarget.block);
@@ -425,10 +427,44 @@ void main() {
         RuleKind.port,
         RuleKind.network,
       ]);
-      expect(snapshot.rules[1].enabled, isFalse);
-      expect(snapshot.rules[2].value, 'googleapis.cn');
-      expect(snapshot.rules[2].target, RuleTarget.proxy);
+      expect(snapshot.rules[2].enabled, isFalse);
+      expect(snapshot.rules[3].value, 'googleapis.cn');
+      expect(snapshot.rules[3].target, RuleTarget.proxy);
     });
+
+    test(
+      'private address routing follows the editable rule and selected mode',
+      () {
+        final snapshot = snapshotWith([node('a')]);
+        final privateRule = snapshot.rules.first;
+        List<Map> compile() {
+          final compiled = ConfigCompiler.compile(
+            snapshot,
+            target: CompileTarget.windows,
+            cachePath: '/tmp/cache.db',
+          );
+          return ((compiled.json['route'] as Map)['rules'] as List).cast<Map>();
+        }
+
+        privateRule.target = RuleTarget.block;
+        expect(
+          compile().singleWhere(
+            (rule) => rule['ip_is_private'] == true,
+          )['action'],
+          'reject',
+        );
+        for (final mode in [SplitMode.direct, SplitMode.global]) {
+          snapshot.settings.splitMode = mode;
+          expect(
+            compile().any((rule) => rule['ip_is_private'] == true),
+            isFalse,
+          );
+        }
+        snapshot.settings.splitMode = SplitMode.rule;
+        privateRule.enabled = false;
+        expect(compile().any((rule) => rule['ip_is_private'] == true), isFalse);
+      },
+    );
 
     test('built-in logical QUIC and Play rules compile natively', () {
       final snapshot = snapshotWith([node('a')]);
@@ -953,15 +989,14 @@ void main() {
 
       final dns = compiled.json['dns'] as Map<String, dynamic>;
       final system = (dns['servers'] as List).cast<Map>().firstWhere(
-            (server) => server['tag'] == 'dns-system',
-          );
+        (server) => server['tag'] == 'dns-system',
+      );
       expect(system['type'], 'udp');
       expect(system['server'], '10.2.2.1');
       expect(system['detour'], 'direct');
-      expect(
-        (compiled.json['route'] as Map)['default_domain_resolver'],
-        {'server': 'dns-system'},
-      );
+      expect((compiled.json['route'] as Map)['default_domain_resolver'], {
+        'server': 'dns-system',
+      });
 
       final full = ConfigCompiler.compile(
         snapshot,
@@ -973,9 +1008,7 @@ void main() {
       expect(route['default_domain_resolver'], {'server': 'dns-system'});
       expect(
         (full.json['dns'] as Map)['servers'],
-        contains(
-          containsPair('tag', 'dns-system'),
-        ),
+        contains(containsPair('tag', 'dns-system')),
       );
     });
 
@@ -987,10 +1020,9 @@ void main() {
         cachePath: '/tmp/cache.db',
         systemDnsServers: const ['fe80::1', 'not-an-ip'],
       );
-      expect(
-        (compiled.json['route'] as Map)['default_domain_resolver'],
-        {'server': 'dns-direct'},
-      );
+      expect((compiled.json['route'] as Map)['default_domain_resolver'], {
+        'server': 'dns-direct',
+      });
       final tags = (compiled.json['dns'] as Map)['servers'] as List;
       expect(
         tags.map((server) => (server as Map)['tag']),

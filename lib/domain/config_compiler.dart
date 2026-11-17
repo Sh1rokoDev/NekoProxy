@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'cidr_routes.dart';
 import 'config_policy.dart';
 import 'models.dart';
 
@@ -70,6 +71,20 @@ class CompiledConfig {
     }
     return value;
   }
+}
+
+class RoutingPreview {
+  const RoutingPreview({
+    required this.coreRules,
+    required this.activeRuleIds,
+    required this.finalOutbound,
+    required this.overridden,
+  });
+
+  final List<Map<String, dynamic>> coreRules;
+  final Set<String> activeRuleIds;
+  final String? finalOutbound;
+  final bool overridden;
 }
 
 class ConfigCompiler {
@@ -272,7 +287,7 @@ class ConfigCompiler {
             systemDns,
             activeRuleSets,
           );
-    final routeRuleNames = <int, String>{};
+    final editableRules = <int, RoutingRule>{};
     final route = testOnly
         ? <String, dynamic>{
             'final': proxyTag,
@@ -289,13 +304,11 @@ class ConfigCompiler {
             availableRuleSets,
             activeRuleSets,
             systemDns,
-            routeRuleNames,
+            editableRules,
           );
-    final forceTun = wireGuardOnly;
     final inbounds = <Map<String, dynamic>>[
       if (!testOnly) _buildMixedInbound(snapshot, target),
-      if (!testOnly &&
-          (forceTun || settings.tunEnabled || target == CompileTarget.android))
+      if (!testOnly && (settings.tunEnabled || target == CompileTarget.android))
         _buildTunInbound(snapshot, target, warnings),
     ];
     final effectiveInbounds =
@@ -337,15 +350,10 @@ class ConfigCompiler {
         inbounds,
         nodeTags,
         only: wireGuardOnly,
-        forwardTunPackets: wireGuardOnly && target == CompileTarget.windows,
-        protected:
-            wireGuardOnly &&
-            target == CompileTarget.windows &&
-            wireGuard.windowsProtection,
+        target: target,
         systemDns: systemDns,
-        testOnly: testOnly,
       );
-      if (wireGuardOnly) routeRuleNames.clear();
+      if (wireGuardOnly) editableRules.clear();
     }
     final generatedRules = route['rules'];
 
@@ -374,8 +382,83 @@ class ConfigCompiler {
       routeRuleNames:
           effectiveRoute is Map &&
               identical(generatedRules, effectiveRoute['rules'])
-          ? Map.unmodifiable(routeRuleNames)
+          ? Map.unmodifiable({
+              for (final entry in editableRules.entries)
+                entry.key: entry.value.name,
+            })
           : const {},
+    );
+  }
+
+  /// Builds the route list without needing a connected core or any nodes.
+  static RoutingPreview previewRouting(
+    AppSnapshot snapshot, {
+    required CompileTarget target,
+    Map<String, String>? ruleSetPaths,
+  }) {
+    final editable = <int, RoutingRule>{};
+    final Map<String, dynamic> config;
+    var overridden = snapshot.useCustomConfig;
+    if (snapshot.useCustomConfig) {
+      config = _compileCustom(snapshot).redactedJson;
+    } else {
+      final paths =
+          ruleSetPaths ?? {for (final tag in builtInRuleSetTags) tag: tag};
+      final nodes = snapshot.allNodes.where(
+        (node) => _isSupportedOutbound(node.outbound),
+      );
+      final hasAutoGroup = autoCandidates(
+        nodes,
+        snapshot.subscriptions,
+      ).isNotEmpty;
+      final proxyGroup =
+          snapshot.settings.selectionMode == SelectionMode.auto && hasAutoGroup
+          ? autoTag
+          : proxyTag;
+      final route = _buildRoute(
+        snapshot,
+        target,
+        proxyGroup,
+        hasAutoGroup,
+        [],
+        paths,
+        snapshot.activeRuleSetTags(paths.containsKey),
+        null,
+        editable,
+      );
+      final generated = route['rules'];
+      config = {'route': route};
+      if (snapshot.advancedJson.containsKey('route')) {
+        _deepMerge(config, {'route': snapshot.advancedJson['route']}, []);
+      }
+      final effective = config['route'];
+      overridden =
+          effective is! Map || !identical(effective['rules'], generated);
+      if (overridden) editable.clear();
+    }
+    final route = config['route'];
+    final rules = route is Map ? route['rules'] : null;
+    final outbounds = config['outbounds'] ?? snapshot.advancedJson['outbounds'];
+    final firstOutbound = outbounds is List && outbounds.firstOrNull is Map
+        ? (outbounds.first as Map)['tag']
+        : null;
+    final fallback = route is Map ? route['final'] : null;
+    return RoutingPreview(
+      coreRules: [
+        if (rules is List)
+          for (final (index, rule) in rules.indexed)
+            if (rule is Map && !editable.containsKey(index))
+              Map<String, dynamic>.from(rule),
+      ],
+      activeRuleIds: {for (final rule in editable.values) rule.id},
+      finalOutbound: fallback is String && fallback.isNotEmpty
+          ? fallback
+          : firstOutbound is String && firstOutbound.isNotEmpty
+          ? firstOutbound
+          : snapshot.useCustomConfig
+          ? null
+          : directTag,
+      overridden: overridden,
     );
   }
 
@@ -388,11 +471,12 @@ class ConfigCompiler {
     List<Map<String, dynamic>> inbounds,
     Map<String, String> nodeTags, {
     required bool only,
-    required bool forwardTunPackets,
-    required bool protected,
+    required CompileTarget target,
     required String? systemDns,
-    required bool testOnly,
   }) {
+    final windowsStandalone = only && target == CompileTarget.windows;
+    final forwardTunPackets = windowsStandalone && _hasTunInbound(inbounds);
+    final restrictUncovered = windowsStandalone && profile.windowsProtection;
     final allowedIps = profile.allowedIps;
     final interfaceAddresses = profile.options['address'] as List<String>;
     final hasIpv4Tunnel =
@@ -428,8 +512,9 @@ class ConfigCompiler {
       'physical': physicalTag,
       'allowed_ips': allowedIps,
       'resolver': 'dns-direct',
-      if (protected && !testOnly) 'protect_windows': true,
-      if (protected && testOnly) 'block_uncovered': true,
+      // Without TUN, restrict proxy dials locally without changing the firewall.
+      if (restrictUncovered)
+        (forwardTunPackets ? 'protect_windows' : 'block_uncovered'): true,
     });
     for (final outbound in outbounds.skip(2)) {
       if (!nodeTags.containsValue(outbound['tag'])) continue;
@@ -490,7 +575,20 @@ class ConfigCompiler {
         if (prefix.contains(':') ? hasIpv6Tunnel : hasIpv4Tunnel) prefix,
     ];
     for (final inbound in inbounds.where((item) => item['type'] == 'tun')) {
-      if (!only) continue;
+      if (!only) {
+        // OS route exclusions act before sing-box sees the packet. Leave WG
+        // networks in TUN so the normal rules and AllowedIPs can route them.
+        final lanBypass = inbound['route_exclude_address'] as List<String>?;
+        if (lanBypass != null) {
+          final remaining = subtractRoutePrefixes(lanBypass, allowedIps);
+          if (remaining.isEmpty) {
+            inbound.remove('route_exclude_address');
+          } else {
+            inbound['route_exclude_address'] = remaining;
+          }
+        }
+        continue;
+      }
       inbound['auto_route'] = true;
       inbound.remove('route_exclude_address');
       final addresses = inbound['address'] as List<String>;
@@ -527,7 +625,7 @@ class ConfigCompiler {
             'action': 'reject',
           },
           {'port': 53, 'action': 'hijack-dns'},
-          if (forwardTunPackets && !testOnly)
+          if (forwardTunPackets)
             {
               // Let sing-box forward the original packets to WireGuard.
               // The loopback proxy and DNS still use the dialer below.
@@ -537,12 +635,6 @@ class ConfigCompiler {
               'outbound': wireGuardTag,
             },
         ];
-    } else {
-      final rules = route['rules'] as List?;
-      rules?.insert(0, {
-        'inbound': [wireGuardTag],
-        'action': 'reject',
-      });
     }
   }
 
@@ -815,24 +907,24 @@ class ConfigCompiler {
     Map<String, String> ruleSetPaths,
     Set<String> activeRuleSets,
     String? systemDns,
-    Map<int, String> routeRuleNames,
+    Map<int, RoutingRule> editableRules,
   ) {
     final settings = snapshot.settings;
     final mode = settings.splitMode;
     final rules = <Map<String, dynamic>>[];
 
+    if (snapshot.outboundMode == OutboundMode.wireGuardProxy) {
+      rules.add({
+        'inbound': [wireGuardTag],
+        'action': 'reject',
+      });
+    }
     if (settings.dnsOrDefault.sniff) {
       rules.add({'action': 'sniff'});
     }
     if (settings.tunEnabled || target == CompileTarget.android) {
       rules.add({'protocol': 'dns', 'action': 'hijack-dns'});
     }
-    rules.add({
-      'ip_is_private': true,
-      'action': 'route',
-      'outbound': directTag,
-    });
-
     if (mode == SplitMode.rule) {
       for (final rule in snapshot.rules) {
         if (!rule.enabled) continue;
@@ -844,7 +936,7 @@ class ConfigCompiler {
           activeRuleSets,
         );
         if (built != null) {
-          routeRuleNames[rules.length] = rule.name;
+          editableRules[rules.length] = rule;
           rules.add(built);
         }
       }
@@ -956,7 +1048,7 @@ class ConfigCompiler {
     final values = kind == RuleKind.ruleSet
         ? splitRuleSetTags(rawValue)
         : splitRuleValues(rawValue);
-    if (values.isEmpty) {
+    if (kind.takesValue && values.isEmpty) {
       warnings.add('规则「$ruleName」的条件为空，已跳过。');
       return null;
     }
@@ -971,6 +1063,8 @@ class ConfigCompiler {
         match['domain_keyword'] = values;
       case RuleKind.domainRegex:
         match['domain_regex'] = values;
+      case RuleKind.privateIp:
+        match['ip_is_private'] = true;
       case RuleKind.ipCidr:
         match['ip_cidr'] = values;
       case RuleKind.sourceIpCidr:

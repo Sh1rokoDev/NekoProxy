@@ -73,9 +73,31 @@ class BuiltInRuleDefinition {
   final bool defaultEnabled;
   final RuleLogic logic;
   final List<RuleCondition> conditions;
+
+  RoutingRule createRule() => RoutingRule(
+    id: 'builtin-$id',
+    name: label,
+    kind: kind,
+    value: value,
+    target: target,
+    enabled: defaultEnabled,
+    builtInId: id,
+    logic: logic,
+    conditions: List.of(conditions),
+  );
 }
 
+const _privateAddressRule = BuiltInRuleDefinition(
+  id: 'private-address-direct',
+  label: '私网地址直连',
+  kind: RuleKind.privateIp,
+  value: '',
+  target: RuleTarget.direct,
+  defaultEnabled: true,
+);
+
 const builtInRules = <BuiltInRuleDefinition>[
+  _privateAddressRule,
   BuiltInRuleDefinition(
     id: 'quic-block',
     label: '屏蔽 QUIC',
@@ -380,6 +402,7 @@ enum RuleKind {
   domainSuffix,
   domainKeyword,
   domainRegex,
+  privateIp,
   ipCidr,
   sourceIpCidr,
   port,
@@ -389,7 +412,9 @@ enum RuleKind {
   processName,
   processPath,
   packageName,
-  ruleSet,
+  ruleSet;
+
+  bool get takesValue => this != RuleKind.privateIp;
 }
 
 enum RuleTarget { proxy, direct, block, manualGroup, autoGroup }
@@ -991,6 +1016,7 @@ class AppSnapshot {
 
   Map<String, dynamic> toJson() => {
     'version': formatVersion,
+    'routingDefaultsVersion': 1,
     'settings': settings.toJson(),
     'subscriptions': subscriptions.map((e) => e.toJson()).toList(),
     'rules': rules.map((e) => e.toJson()).toList(),
@@ -1022,6 +1048,16 @@ class AppSnapshot {
     // that do not have their own setting yet.
     final legacyAutoUpdate =
         settingsJson['subscriptionAutoUpdate'] as bool? ?? true;
+    final rules = (json['rules'] as List)
+        .cast<Map>()
+        .map((item) => RoutingRule.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+    // Old snapshots predate the editable rule that replaces the compiler's
+    // implicit private-address routing. Do not restore it after user deletion.
+    if (json['routingDefaultsVersion'] == null &&
+        !rules.any((rule) => rule.builtInId == _privateAddressRule.id)) {
+      rules.insert(0, _privateAddressRule.createRule());
+    }
     return AppSnapshot(
       settings: AppSettings.fromJson(settingsJson),
       subscriptions: (json['subscriptions'] as List)
@@ -1033,10 +1069,7 @@ class AppSnapshot {
             ),
           )
           .toList(),
-      rules: (json['rules'] as List)
-          .cast<Map>()
-          .map((item) => RoutingRule.fromJson(Map<String, dynamic>.from(item)))
-          .toList(),
+      rules: rules,
       advancedJson: Map<String, dynamic>.from(json['advancedJson'] as Map),
       customConfig: json['customConfig'] as String? ?? '',
       useCustomConfig: json['useCustomConfig'] as bool? ?? false,
@@ -1071,20 +1104,7 @@ class AppSnapshot {
     settings: AppSettings(),
     subscriptions: [],
     installedAt: DateTime.now(),
-    rules: [
-      for (final definition in builtInRules)
-        RoutingRule(
-          id: 'builtin-${definition.id}',
-          name: definition.label,
-          kind: definition.kind,
-          value: definition.value,
-          target: definition.target,
-          enabled: definition.defaultEnabled,
-          builtInId: definition.id,
-          logic: definition.logic,
-          conditions: List.of(definition.conditions),
-        ),
-    ],
+    rules: [for (final definition in builtInRules) definition.createRule()],
   );
 
   String encode() => const JsonEncoder.withIndent('  ').convert(toJson());

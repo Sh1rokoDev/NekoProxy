@@ -1,9 +1,11 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
 import '../../app/widgets.dart';
+import '../../domain/config_compiler.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
 import 'split_mode_switch.dart';
@@ -28,7 +30,13 @@ class _RulesPageState extends State<RulesPage> {
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     final theme = Theme.of(context);
-    final rulesActive = controller.settings.splitMode == SplitMode.rule;
+    RoutingPreview? preview;
+    try {
+      preview = controller.previewRouting();
+    } on ConfigCompileException {
+      preview = null;
+    }
+    final ruleCount = _rules.length + (preview?.coreRules.length ?? 0);
     return PageFrame(
       title: '规则',
       actions: SplitModeSwitch(controller: controller),
@@ -46,60 +54,101 @@ class _RulesPageState extends State<RulesPage> {
             trailing: AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
               child: Text(
-                '${_rules.length} 条',
-                key: ValueKey(_rules.length),
+                '$ruleCount 条',
+                key: ValueKey(ruleCount),
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
               ),
             ),
             padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-            child: AnimatedSize(
-              duration: const Duration(milliseconds: 240),
-              curve: Curves.easeOutCubic,
-              alignment: Alignment.topCenter,
-              child: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 200),
-                child: _rules.isEmpty
-                    ? _EmptyRules(
-                        key: const ValueKey('empty-rules'),
-                        color: theme.colorScheme.onSurfaceVariant,
-                      )
-                    : ReorderableListView.builder(
-                        key: const ValueKey('rules-list'),
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        buildDefaultDragHandles: false,
-                        proxyDecorator: (child, index, animation) => child,
-                        itemCount: _rules.length,
-                        onReorderItem: (oldIndex, newIndex) async {
-                          setState(() {
-                            final item = _rules.removeAt(oldIndex);
-                            _rules.insert(newIndex, item);
-                          });
-                          await controller.saveRules(List.of(_rules));
-                        },
-                        itemBuilder: (context, index) {
-                          final rule = _rules[index];
-                          return Padding(
-                            key: ValueKey(rule.id),
-                            padding: EdgeInsets.only(
-                              bottom: index == _rules.length - 1 ? 0 : 8,
-                            ),
-                            child: _RuleCard(
-                              rule: rule,
-                              rulesActive: rulesActive,
-                              index: index,
-                              onToggle: (value) async {
-                                setState(() => rule.enabled = value);
+            child: Material(
+              type: MaterialType.transparency,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (preview == null)
+                    const ListTile(title: Text('无法预览生效规则，请检查配置')),
+                  if (preview?.overridden == true)
+                    const ListTile(
+                      title: Text('路由由 JSON 配置接管'),
+                      subtitle: Text('下方保留的可编辑规则暂未生效。'),
+                    ),
+                  if (preview != null)
+                    for (final (index, rule) in preview.coreRules.indexed)
+                      _CompiledRuleTile(
+                        key: ValueKey('compiled-rule-$index'),
+                        rule: rule,
+                        fromJson: preview.overridden,
+                      ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 240),
+                    curve: Curves.easeOutCubic,
+                    alignment: Alignment.topCenter,
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: _rules.isEmpty
+                          ? _EmptyRules(
+                              key: const ValueKey('empty-rules'),
+                              color: theme.colorScheme.onSurfaceVariant,
+                            )
+                          : ReorderableListView.builder(
+                              key: const ValueKey('rules-list'),
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              buildDefaultDragHandles: false,
+                              proxyDecorator: (child, index, animation) =>
+                                  child,
+                              itemCount: _rules.length,
+                              onReorderItem: (oldIndex, newIndex) async {
+                                setState(() {
+                                  final item = _rules.removeAt(oldIndex);
+                                  _rules.insert(newIndex, item);
+                                });
                                 await controller.saveRules(List.of(_rules));
                               },
-                              onEdit: () =>
-                                  _showEditor(context, controller, rule: rule),
+                              itemBuilder: (context, index) {
+                                final rule = _rules[index];
+                                return Padding(
+                                  key: ValueKey(rule.id),
+                                  padding: EdgeInsets.only(
+                                    bottom: index == _rules.length - 1 ? 0 : 8,
+                                  ),
+                                  child: _RuleCard(
+                                    rule: rule,
+                                    rulesActive:
+                                        preview?.activeRuleIds.contains(
+                                          rule.id,
+                                        ) ??
+                                        false,
+                                    index: index,
+                                    onToggle: (value) async {
+                                      setState(() => rule.enabled = value);
+                                      await controller.saveRules(
+                                        List.of(_rules),
+                                      );
+                                    },
+                                    onEdit: () => _showEditor(
+                                      context,
+                                      controller,
+                                      rule: rule,
+                                    ),
+                                  ),
+                                );
+                              },
                             ),
-                          );
-                        },
+                    ),
+                  ),
+                  if (preview != null)
+                    ListTile(
+                      dense: true,
+                      leading: const Icon(Icons.alt_route_rounded, size: 19),
+                      title: const Text('默认出站'),
+                      subtitle: Text(
+                        '未命中规则时：${preview.overridden && preview.finalOutbound != null ? preview.finalOutbound : _outboundLabel(preview.finalOutbound)}',
                       ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -134,12 +183,13 @@ class _RulesPageState extends State<RulesPage> {
       String raw,
       String label,
     ) {
+      if (!conditionKind.takesValue) return null;
       final text = raw.trim();
       if (text.isEmpty) return '请填写$label';
       if (conditionKind == RuleKind.ruleSet) {
-        final unknown = splitRuleSetTags(
-          text,
-        ).where((item) => !controller.ruleSets.tags.contains(item)).toList();
+        final unknown = splitRuleSetTags(text)
+            .where((item) => !controller.ruleSets.tags.contains(item))
+            .toList();
         if (unknown.isNotEmpty) return '未知规则集：${unknown.join('、')}';
       }
       return null;
@@ -299,28 +349,30 @@ class _RulesPageState extends State<RulesPage> {
                           onChanged: (value) =>
                               setDialogState(() => kind = value ?? kind),
                         ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: singleValue,
-                          minLines: 2,
-                          maxLines: 5,
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
+                        if (kind.takesValue) ...[
+                          const SizedBox(height: 12),
+                          TextField(
+                            controller: singleValue,
+                            minLines: 2,
+                            maxLines: 5,
+                            style: const TextStyle(
+                              fontFamily: 'monospace',
+                              fontSize: 12,
+                            ),
+                            decoration: InputDecoration(
+                              labelText: '匹配内容',
+                              hintText: _ruleKindHint(kind),
+                              suffixIcon: kind == RuleKind.ruleSet
+                                  ? IconButton(
+                                      tooltip: '选择规则集',
+                                      icon: const Icon(Icons.search_rounded),
+                                      onPressed: () =>
+                                          pickRuleSet(context, singleValue),
+                                    )
+                                  : null,
+                            ),
                           ),
-                          decoration: InputDecoration(
-                            labelText: '匹配内容',
-                            hintText: _ruleKindHint(kind),
-                            suffixIcon: kind == RuleKind.ruleSet
-                                ? IconButton(
-                                    tooltip: '选择规则集',
-                                    icon: const Icon(Icons.search_rounded),
-                                    onPressed: () =>
-                                        pickRuleSet(context, singleValue),
-                                  )
-                                : null,
-                          ),
-                        ),
+                        ],
                       ] else ...[
                         for (var index = 0; index < drafts.length; index++)
                           Padding(
@@ -363,39 +415,41 @@ class _RulesPageState extends State<RulesPage> {
                                       ),
                                     ),
                                   ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    flex: 5,
-                                    child: TextField(
-                                      controller: drafts[index].value,
-                                      style: const TextStyle(
-                                        fontFamily: 'monospace',
-                                        fontSize: 12,
-                                      ),
-                                      decoration: InputDecoration(
-                                        labelText: '内容',
-                                        hintText: _ruleKindHint(
-                                          drafts[index].kind,
+                                  if (drafts[index].kind.takesValue) ...[
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      flex: 5,
+                                      child: TextField(
+                                        controller: drafts[index].value,
+                                        style: const TextStyle(
+                                          fontFamily: 'monospace',
+                                          fontSize: 12,
                                         ),
-                                        suffixIcon:
-                                            drafts[index].kind ==
-                                                RuleKind.ruleSet
-                                            ? IconButton(
-                                                tooltip: '选择规则集',
-                                                icon: const Icon(
-                                                  Icons.search_rounded,
-                                                ),
-                                                onPressed: () => pickRuleSet(
-                                                  context,
-                                                  drafts[index].value,
-                                                ),
-                                              )
-                                            : null,
-                                        border: InputBorder.none,
-                                        isDense: true,
+                                        decoration: InputDecoration(
+                                          labelText: '内容',
+                                          hintText: _ruleKindHint(
+                                            drafts[index].kind,
+                                          ),
+                                          suffixIcon:
+                                              drafts[index].kind ==
+                                                  RuleKind.ruleSet
+                                              ? IconButton(
+                                                  tooltip: '选择规则集',
+                                                  icon: const Icon(
+                                                    Icons.search_rounded,
+                                                  ),
+                                                  onPressed: () => pickRuleSet(
+                                                    context,
+                                                    drafts[index].value,
+                                                  ),
+                                                )
+                                              : null,
+                                          border: InputBorder.none,
+                                          isDense: true,
+                                        ),
                                       ),
                                     ),
-                                  ),
+                                  ],
                                   IconButton(
                                     onPressed: drafts.length <= 2
                                         ? null
@@ -436,9 +490,8 @@ class _RulesPageState extends State<RulesPage> {
                         const SizedBox(height: 10),
                         Text(
                           errorText!,
-                          style: Theme.of(
-                            context,
-                          ).textTheme.bodySmall?.copyWith(color: scheme.error),
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: scheme.error),
                         ),
                       ],
                     ],
@@ -493,7 +546,10 @@ class _RulesPageState extends State<RulesPage> {
           ? <RuleCondition>[]
           : [
               for (final draft in drafts)
-                RuleCondition(kind: draft.kind, value: draft.value.text.trim()),
+                RuleCondition(
+                  kind: draft.kind,
+                  value: draft.kind.takesValue ? draft.value.text.trim() : '',
+                ),
             ];
       final updated = RoutingRule(
         id: editing
@@ -502,7 +558,7 @@ class _RulesPageState extends State<RulesPage> {
         name: name.text.trim(),
         kind: logic == RuleLogic.single ? kind : conditions.first.kind,
         value: logic == RuleLogic.single
-            ? singleValue.text.trim()
+            ? (kind.takesValue ? singleValue.text.trim() : '')
             : conditions.first.value,
         target: target,
         enabled: editing ? rule.enabled : true,
@@ -619,6 +675,59 @@ List<RuleKind> _availableRuleKinds() {
       .toList();
 }
 
+class _CompiledRuleTile extends StatelessWidget {
+  const _CompiledRuleTile({
+    super.key,
+    required this.rule,
+    required this.fromJson,
+  });
+
+  final Map<String, dynamic> rule;
+  final bool fromJson;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = rule['action'];
+    final (title, description) = switch (action) {
+      'sniff' => ('识别流量协议', '按 DNS 设置执行流量嗅探，继续匹配后续规则'),
+      'hijack-dns' => ('DNS 接管', '将命中的 DNS 查询交给 sing-box 的解析器'),
+      'reject' when !fromJson && rule['inbound'] != null => (
+        '拒绝 WireGuard 入站',
+        '拒绝对端主动发起的连接',
+      ),
+      'reject' => ('阻断', '拒绝匹配此规则的连接'),
+      'route' || null when rule['outbound'] is String => (
+        '路由到 ${_outboundLabel(rule['outbound'] as String)}',
+        '匹配后选择指定出站',
+      ),
+      _ => ('${action ?? '路由'}', '展开查看匹配条件和动作'),
+    };
+    return ExpansionTile(
+      dense: true,
+      leading: const Icon(Icons.lock_outline_rounded, size: 18),
+      title: Text(title),
+      subtitle: Text('${fromJson ? 'JSON 规则' : '核心规则'} · $description'),
+      expandedAlignment: AlignmentDirectional.topStart,
+      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      children: [
+        SelectableText(
+          const JsonEncoder.withIndent('  ').convert(rule),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
+}
+
+String _outboundLabel(String? tag) => switch (tag) {
+  ConfigCompiler.directTag => '直连',
+  ConfigCompiler.proxyTag => '手动选择',
+  ConfigCompiler.autoTag => '自动选择',
+  ConfigCompiler.wireGuardTag => 'WireGuard',
+  null => '核心默认出站',
+  _ => tag,
+};
+
 class _EmptyRules extends StatelessWidget {
   const _EmptyRules({super.key, required this.color});
 
@@ -633,11 +742,10 @@ class _EmptyRules extends StatelessWidget {
           Icon(Icons.rule_folder_outlined, size: 30, color: color),
           const SizedBox(height: 8),
           Text(
-            '暂无规则，点击右下角添加',
+            '暂无可编辑规则，点击右下角添加',
             textAlign: TextAlign.center,
-            style: Theme.of(
-              context,
-            ).textTheme.bodyMedium?.copyWith(color: color),
+            style: Theme.of(context).textTheme.bodyMedium
+                ?.copyWith(color: color),
           ),
         ],
       ),
@@ -850,6 +958,7 @@ String _ruleKindLabel(RuleKind kind) => switch (kind) {
   RuleKind.domainSuffix => '域名后缀',
   RuleKind.domainKeyword => '域名关键词',
   RuleKind.domainRegex => '域名正则',
+  RuleKind.privateIp => '私网地址',
   RuleKind.ipCidr => 'IP 网段',
   RuleKind.sourceIpCidr => '来源 IP',
   RuleKind.port => '端口',

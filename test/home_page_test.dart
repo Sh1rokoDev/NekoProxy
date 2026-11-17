@@ -151,6 +151,30 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Windows 仅 WireGuard 模式可切换并保存 TUN 设置', (tester) async {
+    final storage = _Storage();
+    final controller = _Controller()
+      ..storage = storage
+      ..snapshot.outboundMode = OutboundMode.wireGuard;
+    await showHome(tester, controller, const Size(1280, 1000));
+
+    final tunSwitch = find.descendant(
+      of: find.widgetWithText(Row, 'TUN').first,
+      matching: find.byType(Switch),
+    );
+    expect(tester.widget<Switch>(tunSwitch).value, isFalse);
+    expect(find.text('仅接管代理流量'), findsOneWidget);
+    await tester.tap(tunSwitch);
+    await tester.pumpAndSettle();
+    expect(storage.saved?.settings.tunEnabled, isTrue);
+    expect(tester.widget<Switch>(tunSwitch).value, isTrue);
+    expect(find.text('按 AllowedIPs 路由'), findsOneWidget);
+    await tester.tap(tunSwitch);
+    await tester.pumpAndSettle();
+    expect(storage.saved?.settings.tunEnabled, isFalse);
+    expect(tester.widget<Switch>(tunSwitch).value, isFalse);
+  });
+
   testWidgets('未连接卡片将状态与模式并入顶部信息行，出口提示保持单行且高度紧凑', (tester) async {
     final controller = _Controller();
     await showHome(tester, controller, const Size(1280, 1000));

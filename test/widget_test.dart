@@ -139,7 +139,7 @@ void main() {
     test('logical conditions and built-in ids survive serialization', () {
       final snapshot = AppSnapshot.empty();
       final restored = AppSnapshot.fromJson(snapshot.toJson());
-      expect(restored.rules, hasLength(5));
+      expect(restored.rules, hasLength(6));
       final quic = restored.rules.firstWhere(
         (rule) => rule.builtInId == 'quic-block',
       );
@@ -201,6 +201,19 @@ void main() {
       expect(AppSnapshot.fromJson(snapshot.toJson()).rules, isEmpty);
     });
 
+    test('migrates implicit private routing once and respects deletion', () {
+      final snapshot = AppSnapshot.empty()
+        ..rules.removeWhere((rule) => rule.kind == RuleKind.privateIp);
+      final legacy = snapshot.toJson()..remove('routingDefaultsVersion');
+      final restored = AppSnapshot.fromJson(legacy);
+      final rule = restored.rules.first;
+      expect(rule.kind, RuleKind.privateIp);
+      expect(rule.target, RuleTarget.direct);
+      expect(rule.enabled, isTrue);
+      restored.rules.removeAt(0);
+      expect(AppSnapshot.fromJson(restored.toJson()).rules, hasLength(5));
+    });
+
     test('empty snapshot is usable', () {
       final snapshot = AppSnapshot.empty();
       expect(snapshot.allNodes, isEmpty);
@@ -219,8 +232,8 @@ void main() {
         snapshot.settings.advancedOrDefault.interruptExistingConnections,
         isTrue,
       );
-      expect(snapshot.rules, hasLength(5));
-      expect(snapshot.rules.first.builtInId, 'quic-block');
+      expect(snapshot.rules, hasLength(6));
+      expect(snapshot.rules.first.builtInId, 'private-address-direct');
     });
   });
 }

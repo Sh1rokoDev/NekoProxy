@@ -60,9 +60,11 @@ class ConnectionCard extends StatelessWidget {
     };
     final modes = <Widget>[
       if (onlyWireGuard)
-        const _ConnectionMode(
+        _ConnectionMode(
           icon: Icons.route_outlined,
-          label: '按 AllowedIPs 路由',
+          label: controller.isAndroid || controller.settings.tunEnabled
+              ? '按 AllowedIPs 路由'
+              : '仅接管代理流量',
         )
       else ...[
         _ConnectionMode(

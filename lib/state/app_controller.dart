@@ -177,9 +177,6 @@ class AppController extends ChangeNotifier {
   bool get changingWireGuard => _changingWireGuard;
   WireGuardProfile? get activeWireGuard =>
       outboundMode == OutboundMode.proxy ? null : snapshot.wireGuardProfile;
-  bool get requiresWindowsTun {
-    return Platform.isWindows && outboundMode == OutboundMode.wireGuard;
-  }
 
   bool get canConnect =>
       snapshot.useCustomConfig ||
@@ -353,6 +350,12 @@ class AppController extends ChangeNotifier {
   }
 
   String? nameForMatchedRule(int? index) => _compiled?.routeRuleNames[index];
+
+  RoutingPreview previewRouting() => ConfigCompiler.previewRouting(
+    snapshot,
+    target: isAndroid ? CompileTarget.android : CompileTarget.windows,
+    ruleSetPaths: initialized ? ruleSets.pathsByTag : null,
+  );
 
   ProxyNode? get offlineRecommendedNode {
     if (_offlineTestDelays.isEmpty ||

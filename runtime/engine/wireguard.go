@@ -25,22 +25,6 @@ import (
 const wireGuardRouteType = "neko-wireguard-route"
 const wireGuardDNSType = "neko-wireguard-dns"
 
-func (e *Engine) RebindWireGuard() {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	if e.instance == nil {
-		return
-	}
-	for _, endpoint := range e.instance.Endpoint().Endpoints() {
-		if endpoint.Type() != "wireguard" {
-			continue
-		}
-		if listener, ok := endpoint.(adapter.InterfaceUpdateListener); ok {
-			listener.InterfaceUpdated(e.ctx)
-		}
-	}
-}
-
 func registerWireGuard(ctx context.Context) context.Context {
 	ctx = include.Context(ctx)
 	outbound.Register(service.FromContext[adapter.OutboundRegistry](ctx).(*outbound.Registry), wireGuardRouteType, newWireGuardRoute)

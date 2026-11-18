@@ -33,6 +33,7 @@ type OwnerFinder interface {
 type androidPlatform struct {
 	protector Protector
 	finder    OwnerFinder
+	monitor   interfaceMonitor
 
 	mu      sync.Mutex
 	tunFD   int
@@ -99,7 +100,7 @@ func (p *androidPlatform) ProcessPlatformOptions(options option.TunPlatformOptio
 func (p *androidPlatform) UsePlatformDefaultInterfaceMonitor() bool { return true }
 
 func (p *androidPlatform) CreateDefaultInterfaceMonitor(logger logger.Logger) tun.DefaultInterfaceMonitor {
-	return &interfaceMonitor{}
+	return &p.monitor
 }
 
 func (p *androidPlatform) UsePlatformNetworkInterfaces() bool { return false }
@@ -193,7 +194,9 @@ func (p *androidPlatform) LookupUser(username string) (*adapter.PlatformUser, er
 	return nil, E.New("user lookup is not available")
 }
 
-func (p *androidPlatform) LookupSFTPServer() (string, error) { return "", E.New("sftp is not available") }
+func (p *androidPlatform) LookupSFTPServer() (string, error) {
+	return "", E.New("sftp is not available")
+}
 
 func (p *androidPlatform) ReadSystemSSHHostKey() ([]byte, error) {
 	return nil, E.New("ssh host key is not available")
@@ -207,9 +210,11 @@ func (p *androidPlatform) CreateBridge(options adapter.BridgeOptions) (adapter.B
 	return nil, E.New("bridge is not available")
 }
 
-// interfaceMonitor is a no-op monitor. VpnService owns routing, and direct
-// outbounds dial through the system default network.
-type interfaceMonitor struct{}
+type interfaceMonitor struct {
+	mu        sync.Mutex
+	current   *control.Interface
+	callbacks list.List[tun.DefaultInterfaceUpdateCallback]
+}
 
 var _ tun.DefaultInterfaceMonitor = (*interfaceMonitor)(nil)
 
@@ -217,17 +222,37 @@ func (m *interfaceMonitor) Start() error { return nil }
 
 func (m *interfaceMonitor) Close() error { return nil }
 
-func (m *interfaceMonitor) DefaultInterface() *control.Interface { return nil }
+func (m *interfaceMonitor) DefaultInterface() *control.Interface {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.current
+}
 
 func (m *interfaceMonitor) OverrideAndroidVPN() bool { return false }
 
 func (m *interfaceMonitor) AndroidVPNEnabled() bool { return false }
 
 func (m *interfaceMonitor) RegisterCallback(callback tun.DefaultInterfaceUpdateCallback) *list.Element[tun.DefaultInterfaceUpdateCallback] {
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.callbacks.PushBack(callback)
 }
 
 func (m *interfaceMonitor) UnregisterCallback(element *list.Element[tun.DefaultInterfaceUpdateCallback]) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.callbacks.Remove(element)
+}
+
+func (m *interfaceMonitor) update(iface *control.Interface) {
+	m.mu.Lock()
+	m.current = iface
+	callbacks := m.callbacks.Array()
+	m.mu.Unlock()
+	// Callbacks may read DefaultInterface and must run outside the lock.
+	for _, callback := range callbacks {
+		callback(iface, 0)
+	}
 }
 
 func (m *interfaceMonitor) RegisterMyInterface(interfaceName string) {}

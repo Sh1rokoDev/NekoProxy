@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
+	"github.com/sagernet/sing/common/control"
 )
 
 type fakeOwnerFinder struct {
@@ -59,5 +60,29 @@ func TestFindConnectionOwnerWithoutFinder(t *testing.T) {
 	}
 	if _, err := platform.FindConnectionOwner(&adapter.FindConnectionOwnerRequest{}); err == nil {
 		t.Fatal("expected an error without a finder")
+	}
+}
+
+func TestDefaultInterfaceUpdates(t *testing.T) {
+	engine := NewEngine(nil, nil)
+	engine.UpdateDefaultInterface("wlan0", 3)
+	monitor := engine.platform.CreateDefaultInterfaceMonitor(nil)
+	if iface := monitor.DefaultInterface(); iface == nil || iface.Name != "wlan0" || iface.Index != 3 {
+		t.Fatalf("initial default interface = %+v", iface)
+	}
+
+	var updates []*control.Interface
+	registration := monitor.RegisterCallback(func(iface *control.Interface, _ int) {
+		if current := monitor.DefaultInterface(); iface != current {
+			t.Fatalf("callback interface = %+v, current = %+v", iface, current)
+		}
+		updates = append(updates, iface)
+	})
+	engine.UpdateDefaultInterface("", 0)
+	engine.UpdateDefaultInterface("rmnet0", 5)
+	monitor.UnregisterCallback(registration)
+	engine.UpdateDefaultInterface("wlan0", 3)
+	if len(updates) != 2 || updates[0] != nil || updates[1] == nil || updates[1].Index != 5 {
+		t.Fatalf("unexpected updates: %+v", updates)
 	}
 }

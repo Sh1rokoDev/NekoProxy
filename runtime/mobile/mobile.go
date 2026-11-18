@@ -7,6 +7,8 @@ import (
 
 	"nekoproxy/runtime/engine"
 	"nekoproxy/runtime/rulesets"
+
+	"github.com/sagernet/sing/common/control"
 )
 
 func ConvertRules(kind, input, output string) error {
@@ -65,8 +67,13 @@ func (e *Engine) Stop() error {
 	return e.inner.Close()
 }
 
-func (e *Engine) RebindWireGuard() {
-	e.inner.RebindWireGuard()
+// UpdateDefaultInterface reports Android's underlying network, including loss.
+func (e *Engine) UpdateDefaultInterface(name string, index int32) {
+	var iface *control.Interface
+	if name != "" && index > 0 {
+		iface = &control.Interface{Name: name, Index: int(index)}
+	}
+	e.platform.monitor.update(iface)
 }
 
 func (e *Engine) StatusJSON() string {

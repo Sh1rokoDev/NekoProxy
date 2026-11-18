@@ -61,10 +61,7 @@ class _RulesPageState extends State<RulesPage> {
                     if (preview == null)
                       const ListTile(title: Text('无法预览生效规则，请检查配置')),
                     if (preview?.overridden == true)
-                      const ListTile(
-                        title: Text('路由由 JSON 配置接管'),
-                        subtitle: Text('下方可编辑规则暂未生效'),
-                      ),
+                      const ListTile(title: Text('路由由 JSON 配置接管')),
                     if (preview != null &&
                         preview.overridden &&
                         preview.coreRules.isNotEmpty)
@@ -849,7 +846,7 @@ class _RuleRow extends StatelessWidget {
                     const SizedBox(height: 4),
                     Text(
                       description,
-                      maxLines: compact ? 2 : 1,
+                      maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: _ruleDetailStyle(theme),
                     ),
@@ -905,7 +902,6 @@ class _EditableRuleRow extends StatelessWidget {
     };
     final actionStyle = _ruleDetailStyle(theme)
         ?.copyWith(fontWeight: FontWeight.w500, color: actionForeground);
-    final preview = _rulePreview(rule);
     return Material(
       color: scheme.surfaceContainerLow,
       child: Column(
@@ -924,9 +920,7 @@ class _EditableRuleRow extends StatelessWidget {
             ),
             title: rule.name,
             titleColor: active ? null : scheme.onSurfaceVariant,
-            description: rule.enabled && !rulesActive
-                ? '未生效 · $preview'
-                : preview,
+            description: _rulePreview(rule),
             controls: [
               DecoratedBox(
                 decoration: ShapeDecoration(

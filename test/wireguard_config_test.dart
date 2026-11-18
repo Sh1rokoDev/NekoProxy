@@ -159,18 +159,71 @@ AllowedIPs = 172.16.0.7/16
     },
   );
 
-  test('standalone takes IPv6 from the profile even when sing-box IPv6 is disabled', () {
+  test('Android WireGuard enables socket protection only with VPN active', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0');
+    expect(
+      _compile(
+        snapshot,
+        CompileTarget.android,
+      ).json['route']['auto_detect_interface'],
+      isTrue,
+    );
+    expect(
+      _compile(
+        snapshot,
+        CompileTarget.android,
+        testOnly: true,
+      ).json['route']['auto_detect_interface'],
+      isFalse,
+    );
+    snapshot.settings.vpnEnabled = false;
+    expect(
+      _compile(
+        snapshot,
+        CompileTarget.android,
+      ).json['route']['auto_detect_interface'],
+      isFalse,
+    );
+    snapshot.settings.tunEnabled = false;
+    expect(
+      _compile(
+        snapshot,
+        CompileTarget.windows,
+      ).json['route']['auto_detect_interface'],
+      isTrue,
+    );
+  });
+
+  test('Android dual-stack VPN respects the IPv6 setting', () {
+    final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0')
+      ..settings.vpnEnabled = true;
+    final compiled = _compile(snapshot, CompileTarget.android).json;
+    final tun = (compiled['inbounds'] as List).cast<Map>().singleWhere(
+      (inbound) => inbound['type'] == 'tun',
+    );
+    expect(tun['route_address'], ['0.0.0.0/0']);
+    expect(tun['address'], ['172.19.0.1/30']);
+    expect(compiled['dns']['strategy'], 'ipv4_only');
+    final endpoint = (compiled['endpoints'] as List).single as Map;
+    expect(endpoint['address'], contains('fd00::2/64'));
+    expect(endpoint['peers'].single['allowed_ips'], ['0.0.0.0/0', '::/0']);
+
+    snapshot.settings.vpnEnabled = false;
+    final localProxy = _compile(snapshot, CompileTarget.android);
+    expect(localProxy.hasTunInbound, isFalse);
+    expect(localProxy.json['dns']['strategy'], 'prefer_ipv4');
+  });
+
+  test('Windows standalone takes IPv6 from the profile', () {
     final snapshot = _snapshot(OutboundMode.wireGuard, '0.0.0.0/0, ::/0')
       ..settings.tunEnabled = true;
-    for (final target in CompileTarget.values) {
-      final compiled = _compile(snapshot, target);
-      final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
-        (inbound) => inbound['type'] == 'tun',
-      );
-      expect(tun['route_address'], ['0.0.0.0/0', '::/0']);
-      expect(tun['address'], contains('fdfe:dcba:9876::1/126'));
-      expect((compiled.json['dns'] as Map)['strategy'], 'prefer_ipv4');
-    }
+    final compiled = _compile(snapshot, CompileTarget.windows);
+    final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
+      (inbound) => inbound['type'] == 'tun',
+    );
+    expect(tun['route_address'], ['0.0.0.0/0', '::/0']);
+    expect(tun['address'], contains('fdfe:dcba:9876::1/126'));
+    expect((compiled.json['dns'] as Map)['strategy'], 'prefer_ipv4');
   });
 
   test('standalone requires an IPv6 interface address to advertise IPv6', () {

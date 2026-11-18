@@ -35,8 +35,7 @@ void main() {
       of: firstCard,
       matching: find.byType(Switch),
     );
-    Finder inactiveLabel(Finder card) =>
-        find.descendant(of: card, matching: find.textContaining('未生效'));
+    final inactiveLabel = find.textContaining('未生效');
     bool isEnabled(Finder row) => tester
         .widget<Switch>(find.descendant(of: row, matching: find.byType(Switch)))
         .value;
@@ -48,7 +47,7 @@ void main() {
 
     expect(isEnabled(firstCard), isTrue);
     expect(isEnabled(secondCard), isFalse);
-    expect(inactiveLabel(firstCard), findsNothing);
+    expect(inactiveLabel, findsNothing);
     expect(find.text('私网地址直连'), findsOneWidget);
     expect(find.text('识别流量协议'), findsOneWidget);
     expect(find.text('默认出站'), findsOneWidget);
@@ -82,8 +81,7 @@ void main() {
 
     await selectMode('直连');
     expect(find.text('未命中规则时：直连'), findsOneWidget);
-    expect(inactiveLabel(firstCard), findsOneWidget);
-    expect(inactiveLabel(secondCard), findsNothing);
+    expect(inactiveLabel, findsNothing);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(enabled.enabled, isFalse);
@@ -92,7 +90,7 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(enabled.enabled, isTrue);
-    expect(inactiveLabel(firstCard), findsOneWidget);
+    expect(inactiveLabel, findsNothing);
     expect(isEnabled(secondCard), isFalse);
 
     await tester.tap(
@@ -105,7 +103,7 @@ void main() {
     await tester.pumpAndSettle();
 
     await selectMode('规则');
-    expect(inactiveLabel(firstCard), findsNothing);
+    expect(inactiveLabel, findsNothing);
     expect(isEnabled(secondCard), isFalse);
 
     final dragHandle = find.descendant(
@@ -133,10 +131,13 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final snapshot = AppSnapshot.empty();
     final directRule = snapshot.rules.first;
+    final quicRule = snapshot.rules.firstWhere(
+      (rule) => rule.builtInId == 'quic-block',
+    );
     final proxyRule = snapshot.rules.firstWhere(
       (rule) => rule.target == RuleTarget.proxy,
     );
-    snapshot.rules = [directRule, proxyRule];
+    snapshot.rules = [directRule, proxyRule, quicRule];
     snapshot.settings.splitMode = SplitMode.direct;
     final controller = AppController()..snapshot = snapshot;
     addTearDown(controller.dispose);
@@ -192,10 +193,14 @@ void main() {
       ),
     );
     expect(proxyDecoration, isNot(directDecoration));
-    expect(
-      find.descendant(of: firstRow, matching: find.text('未生效 · 私网地址')),
-      findsOneWidget,
+    final quicSummary = tester.widget<Text>(
+      find.descendant(
+        of: find.byKey(ValueKey(quicRule.id)),
+        matching: find.text('端口 443 · 网络 udp'),
+      ),
     );
+    expect(quicSummary.maxLines, 1);
+    expect(quicSummary.overflow, TextOverflow.ellipsis);
     await tester.tap(find.text('识别流量协议'));
     await tester.pumpAndSettle();
     final details = find.descendant(
@@ -237,6 +242,7 @@ void main() {
       ),
     );
     expect(find.text('路由由 JSON 配置接管'), findsOneWidget);
+    expect(find.textContaining('未生效'), findsNothing);
     expect(find.text('JSON 规则'), findsOneWidget);
     expect(find.text('识别流量协议'), findsNothing);
     expect(find.text('未命中规则时：wan'), findsOneWidget);

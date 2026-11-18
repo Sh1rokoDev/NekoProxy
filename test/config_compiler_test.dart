@@ -960,7 +960,7 @@ void main() {
 
       final route = compiled.json['route'] as Map<String, dynamic>;
       expect(route['final'], 'proxy');
-      expect(route['auto_detect_interface'], isTrue);
+      expect(route['auto_detect_interface'], isFalse);
       expect(route['default_domain_resolver'], {'server': 'dns-direct'});
       expect(route['rules'], isNull);
       expect(route['rule_set'], isNull);

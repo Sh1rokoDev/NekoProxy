@@ -9,9 +9,6 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
@@ -23,7 +20,7 @@ import org.json.JSONObject
 import java.util.concurrent.Executors
 
 class NekoVpnService : VpnService() {
-    private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private var networkMonitor: AndroidNetworkMonitor? = null
     companion object {
         private const val TAG = "NekoVpnService"
         private const val CHANNEL_ID = "nekoproxy-vpn"
@@ -260,6 +257,12 @@ class NekoVpnService : VpnService() {
                 override fun protect(fd: Int): Boolean = this@NekoVpnService.protect(fd)
             } else null
             core = Mobile.newEngine(protector, if (useVpn) VpnOwnerFinder(this) else null)
+            val monitor = AndroidNetworkMonitor(getSystemService(ConnectivityManager::class.java), core)
+            synchronized(Companion) {
+                if (destroyed || token != startToken) return
+                networkMonitor = monitor
+                monitor.start()
+            }
             if (useVpn) prepareVpn(core, parsed, perAppMode, perAppPackages)
             Log.i(TAG, "starting sing-box core")
             core.start(parsed.toString())
@@ -268,9 +271,6 @@ class NekoVpnService : VpnService() {
                     false
                 } else {
                     engine = core
-                    if (parsed.optJSONArray("endpoints")?.let { endpoints ->
-                        (0 until endpoints.length()).any { endpoints.optJSONObject(it)?.optString("type") == "wireguard" }
-                    } == true) observeWireGuardNetwork(core)
                     state = STATE_RUNNING
                     lastError = null
                     updateNotification(if (useVpn) "VPN 已连接" else "本地代理已启动")
@@ -407,37 +407,15 @@ class NekoVpnService : VpnService() {
     }
 
     private fun closeTun() {
-        networkCallback?.let { callback ->
-            networkCallback = null
-            try {
-                getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback)
-            } catch (error: RuntimeException) {
-                Log.w(TAG, "could not unregister underlying network callback", error)
-            }
+        val monitor = synchronized(Companion) {
+            networkMonitor.also { networkMonitor = null }
         }
+        monitor?.close()
         try {
             tunInterface?.close()
         } catch (_: Throwable) {
         }
         tunInterface = null
-    }
-
-    private fun observeWireGuardNetwork(core: Engine) {
-        val manager = getSystemService(ConnectivityManager::class.java)
-        val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                if (engine === core) core.rebindWireGuard()
-            }
-            override fun onLost(network: Network) {
-                if (engine === core) core.rebindWireGuard()
-            }
-        }
-        val request = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-            .build()
-        manager.registerNetworkCallback(request, callback)
-        networkCallback = callback
     }
 
     private fun resolveManagedWireGuardPeers(config: JSONObject) {
@@ -459,12 +437,8 @@ class NekoVpnService : VpnService() {
                     }
                 }) continue
             val manager = getSystemService(ConnectivityManager::class.java)
-            val network = (listOfNotNull(manager.activeNetwork) + manager.allNetworks)
-                .firstOrNull {
-                    val caps = manager.getNetworkCapabilities(it)
-                    caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) == true &&
-                        caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                } ?: throw IllegalStateException("没有可用于解析 WireGuard 对端的底层网络")
+            val network = AndroidNetworkMonitor.underlyingNetwork(manager)
+                ?: throw IllegalStateException("没有可用于解析 WireGuard 对端的底层网络")
             val address = network.getAllByName(host).firstOrNull()?.hostAddress
                 ?: throw IllegalStateException("无法解析 WireGuard 对端")
             peer.put("address", address)

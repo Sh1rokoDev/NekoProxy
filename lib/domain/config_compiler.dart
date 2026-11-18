@@ -318,11 +318,10 @@ class ConfigCompiler {
         !testOnly && snapshot.advancedJson.containsKey('inbounds')
         ? snapshot.advancedJson['inbounds']
         : inbounds;
-    // Android's offline test host has its own interface control. Without a TUN,
-    // ordinary Windows sessions can follow the system's VPN routes directly.
+    // VpnService protects Android sockets when a TUN is active. Without a
+    // TUN, Android already routes sockets through the system default network.
     route['auto_detect_interface'] =
-        (testOnly && target == CompileTarget.android) ||
-        wireGuard != null ||
+        (target == CompileTarget.windows && wireGuard != null) ||
         _hasTunInbound(effectiveInbounds);
 
     final config = <String, dynamic>{
@@ -354,6 +353,7 @@ class ConfigCompiler {
         nodeTags,
         only: wireGuardOnly,
         target: target,
+        tunIpv6Enabled: settings.tunOrDefault.ipv6,
         systemDns: systemDns,
       );
       if (wireGuardOnly) editableRules.clear();
@@ -477,6 +477,7 @@ class ConfigCompiler {
     Map<String, String> nodeTags, {
     required bool only,
     required CompileTarget target,
+    required bool tunIpv6Enabled,
     required String? systemDns,
   }) {
     final windowsStandalone = only && target == CompileTarget.windows;
@@ -495,6 +496,14 @@ class ConfigCompiler {
         'WireGuard 的 Address 和 AllowedIPs 没有可用的同类地址。',
       );
     }
+    // Keep IPv6 for an IPv6-only profile. A dual-stack Android VPN can omit
+    // IPv6 when the profile's gateway only provides working IPv4 connectivity.
+    final useIpv6ForTun =
+        hasIpv6Tunnel &&
+        (target != CompileTarget.android || !hasIpv4Tunnel || tunIpv6Enabled);
+    final useIpv6ForDns = _hasTunInbound(inbounds)
+        ? useIpv6ForTun
+        : hasIpv6Tunnel;
     final hasDomainPeer = profile.peers.any(
       (peer) => InternetAddress.tryParse(peer['address'] as String) == null,
     );
@@ -577,7 +586,7 @@ class ConfigCompiler {
     route['default_domain_resolver'] = {'server': 'dns-direct'};
     final tunRoutes = [
       for (final prefix in allowedIps)
-        if (prefix.contains(':') ? hasIpv6Tunnel : hasIpv4Tunnel) prefix,
+        if (prefix.contains(':') ? useIpv6ForTun : hasIpv4Tunnel) prefix,
     ];
     for (final inbound in inbounds.where((item) => item['type'] == 'tun')) {
       if (!only) {
@@ -599,7 +608,7 @@ class ConfigCompiler {
       final addresses = inbound['address'] as List<String>;
       inbound['route_address'] = tunRoutes;
       if (forwardTunPackets) inbound['mtu'] = endpoint['mtu'];
-      if (!hasIpv6Tunnel) {
+      if (!useIpv6ForTun) {
         addresses.removeWhere((address) => address.contains(':'));
       } else if (!addresses.any((address) => address.contains(':'))) {
         addresses.add('fdfe:dcba:9876::1/126');
@@ -615,7 +624,7 @@ class ConfigCompiler {
       dns.remove('rules');
       dns['final'] = 'dns-direct';
       // DNS must not advertise a family which this tunnel cannot carry.
-      dns['strategy'] = !hasIpv6Tunnel
+      dns['strategy'] = !useIpv6ForDns
           ? 'ipv4_only'
           : hasIpv4Tunnel
           ? 'prefer_ipv4'

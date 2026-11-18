@@ -82,7 +82,7 @@ class MainActivity : FlutterActivity() {
                     if (NekoVpnService.state == NekoVpnService.STATE_RUNNING) {
                         throw IllegalStateException("请先断开当前连接")
                     }
-                    TestRuntime.start(call.argument<String>("config") ?: "")
+                    TestRuntime.start(applicationContext, call.argument<String>("config") ?: "")
                 }
                 "stopTest" -> runAsync(result) {
                     TestRuntime.stop()

@@ -27,7 +27,14 @@ void main() {
     final contentTop = tester.getTopLeft(find.byKey(content)).dy;
     expect(frostBounds.top, 0);
     expect(frostBounds.contains(titleBounds.center), isTrue);
-    expect(frostBounds.bottom, contentTop);
+    final pinnedHeader = tester.widget<PinnedHeaderSliver>(
+      find.byType(PinnedHeaderSliver),
+    );
+    expect(
+      contentTop,
+      tester.getRect(find.byWidget(pinnedHeader.child!)).bottom,
+    );
+    expect(frostBounds.bottom, contentTop + 12);
 
     final scrollable = tester.state<ScrollableState>(find.byType(Scrollable));
     scrollable.position.jumpTo(contentTop - titleBounds.center.dy);

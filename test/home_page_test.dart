@@ -10,6 +10,7 @@ import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/features/home/home_cards.dart';
 import 'package:nekoproxy/features/home/home_page.dart';
 import 'package:nekoproxy/features/status/service_status.dart';
+import 'package:nekoproxy/runtime/runtime_client.dart';
 import 'package:nekoproxy/services/exit_info_service.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
@@ -81,8 +82,8 @@ void main() {
     expect(find.text('TUN'), findsOneWidget);
     expect(find.text('系统代理'), findsOneWidget);
     expect(
-      tester.getTopLeft(infoStrip).dy,
-      greaterThan(tester.getTopLeft(find.text('还没有节点')).dy),
+      tester.getTopLeft(infoStrip).dx,
+      greaterThan(tester.getTopRight(find.text('还没有节点')).dx),
     );
     expect(
       tester.getCenter(find.byTooltip('编辑首页')).dx,
@@ -175,6 +176,128 @@ void main() {
     expect(tester.widget<Switch>(tunSwitch).value, isFalse);
   });
 
+  testWidgets('仅 WireGuard 模式显示所属分组及隧道测速结果', (tester) async {
+    final controller = _WireGuardConnectionController()
+      ..running = true
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(manualNodeId: 'proxy'),
+        subscriptions: [
+          Subscription(
+            id: 'proxy-group',
+            name: '普通代理分组',
+            nodes: [
+              ProxyNode(id: 'proxy', tag: 'proxy', name: '代理', outbound: {}),
+            ],
+          ),
+        ],
+        outboundMode: OutboundMode.wireGuard,
+        wireGuardProfileId: 'wg',
+        wireGuardGroups: [const WireGuardGroup(id: 'campus', name: '校园隧道')],
+        wireGuardProfiles: [
+          WireGuardProfile(
+            id: 'wg',
+            name: '测试节点',
+            groupId: 'campus',
+            configuration: '',
+          ),
+        ],
+      )
+      ..latencies = {'proxy': 999}
+      ..wireGuardLatency = const RuntimeTestResult(delay: 42);
+    await showHome(tester, controller, const Size(1280, 1000));
+
+    Finder within(String key, Finder matching) =>
+        find.descendant(of: find.byKey(ValueKey(key)), matching: matching);
+    expect(within('connection-source', find.text('校园隧道')), findsOneWidget);
+    expect(within('connection-latency', find.text('42ms')), findsOneWidget);
+    expect(within('connection-latency', find.text('999ms')), findsNothing);
+  });
+
+  testWidgets('链式代理按实际顺序展示各级节点、来源及分隔线', (tester) async {
+    final node = ProxyNode(
+      id: 'p',
+      tag: 'p',
+      name: '二级代理',
+      subscriptionId: 'sub',
+      outbound: {'server': 'example.net', 'server_port': 443},
+    );
+    final controller = _Controller()
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(manualNodeId: node.id),
+        outboundMode: OutboundMode.wireGuardProxy,
+        subscriptions: [
+          Subscription(id: 'sub', name: '代理分组', nodes: [node]),
+        ],
+        wireGuardGroups: [const WireGuardGroup(id: 'wg-group', name: '隧道分组')],
+        wireGuardProfileId: 'w',
+        wireGuardProfiles: [
+          WireGuardProfile(
+            id: 'w',
+            name: '一级隧道',
+            groupId: 'wg-group',
+            configuration: '',
+          ),
+        ],
+      );
+    await showHome(tester, controller, const Size(880, 1000));
+    final card = find.byKey(const ValueKey(HomeCard.connection));
+    Finder inCard(String s) =>
+        find.descendant(of: card, matching: find.text(s));
+    for (final width in [1280.0, 760.0, 320.0]) {
+      await tester.binding.setSurfaceSize(Size(width, 1000));
+      await tester.pumpAndSettle();
+      expect(
+        tester.getCenter(inCard('第一级')).dy,
+        closeTo(tester.getCenter(inCard('WireGuard')).dy, 1),
+      );
+      expect(
+        tester.getCenter(inCard('第二级')).dy,
+        closeTo(tester.getCenter(inCard('SingBox')).dy, 1),
+      );
+      expect(
+        tester.getCenter(inCard('隧道分组')).dy,
+        closeTo(tester.getCenter(inCard('WireGuard')).dy, 1),
+      );
+      expect(
+        tester.getCenter(inCard('代理分组')).dy,
+        closeTo(tester.getCenter(inCard('SingBox')).dy, 1),
+      );
+      if (width == 1280) {
+        final line = find.descendant(
+          of: card,
+          matching: find.byType(VerticalDivider),
+        );
+        final row = tester.getRect(
+          find.ancestor(of: line, matching: find.byType(Row)).first,
+        );
+        expect(tester.getCenter(line).dx, closeTo(row.center.dx, 1));
+        expect(
+          tester.getRect(inCard('第一级')).right,
+          lessThan(tester.getRect(line).left),
+        );
+        expect(
+          tester.getRect(inCard('第二级')).left,
+          greaterThan(tester.getCenter(line).dx),
+        );
+        expect(
+          tester.getTopLeft(inCard('第一级')).dy,
+          tester.getTopLeft(inCard('第二级')).dy,
+        );
+      } else {
+        final line = find.descendant(of: card, matching: find.byType(Divider));
+        expect(
+          tester.getBottomLeft(inCard('一级隧道')).dy,
+          lessThan(tester.getCenter(line).dy),
+        );
+        expect(
+          tester.getCenter(line).dy,
+          lessThan(tester.getTopLeft(inCard('第二级')).dy),
+        );
+      }
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets('未连接卡片将状态与模式并入顶部信息行，出口提示保持单行且高度紧凑', (tester) async {
     final controller = _Controller();
     await showHome(tester, controller, const Size(1280, 1000));
@@ -192,7 +315,7 @@ void main() {
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('connection-latency')),
-        matching: find.byType(Text),
+        matching: find.text('未知'),
       ),
       findsOneWidget,
     );
@@ -209,12 +332,13 @@ void main() {
 
     final status = tester.getCenter(label('未连接'));
     var previous = status;
-    for (final text in ['—', '手动选择', '规则分流']) {
+    for (final text in ['—', '手动选择']) {
       final center = tester.getCenter(label(text).first);
       expect(center.dy, closeTo(status.dy, 1));
       expect(center.dx, greaterThan(previous.dx));
       previous = center;
     }
+    expect(label('规则分流'), findsNothing);
     expect(status.dy, lessThan(tester.getTopLeft(label('还没有节点')).dy));
   });
 
@@ -265,7 +389,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('连接卡片宽屏横排，窄屏出口信息分为两行两列', (tester) async {
+  testWidgets('宽屏诊断靠右，窄屏诊断置底，两种宽度均保留文字按钮', (tester) async {
     final node = ProxyNode(
       id: 'node',
       tag: 'node',
@@ -305,7 +429,6 @@ void main() {
       expect(ipText.didExceedMaxLines, isFalse);
       for (final value in ['192.0.2.1', '示例运营商', '47ms', 'sub.example.net']) {
         final paragraph = paragraphOf(tester, inCard(value));
-        expect(paragraph.text.style?.fontSize, ipText.text.style?.fontSize);
         expect(paragraph.maxLines, 1);
         expect(paragraph.overflow, TextOverflow.ellipsis);
       }
@@ -335,65 +458,63 @@ void main() {
     expect(inCard('47ms'), findsOneWidget);
     expect(inCard('sub.example.net'), findsOneWidget);
     expect(inCard('地区'), findsNothing);
-    expect(inCard('断开连接'), findsOneWidget);
+    expect(inCard('断开'), findsOneWidget);
     expect(tester.getSize(power).height, greaterThan(40));
     expect(tester.getRect(refresh).right, lessThan(tester.getRect(power).left));
-    expect(tester.getCenter(refresh).dy, tester.getCenter(power).dy);
+    expect(tester.getRect(refresh).top, tester.getRect(power).top);
+    expect(tester.getSize(refresh), tester.getSize(power));
     expect(
-      tester.getCenter(power).dy,
-      closeTo(
-        (tester.getRect(status).top + tester.getRect(address).bottom) / 2,
-        3,
-      ),
+      tester.getTopLeft(power).dy,
+      greaterThan(tester.getBottomLeft(inCard('节点延迟')).dy),
     );
     expect(find.byTooltip('复制出口 IP'), findsNothing);
     expect(find.byTooltip('刷新出口信息'), findsNothing);
     await tester.tap(refresh);
     expect(controller.refreshes, 1);
     expect(tester.getCenter(mode).dy, closeTo(tester.getCenter(status).dy, 3));
-    final wideHeadingY = tester.getCenter(inCard('出口 IP')).dy;
-    for (final title in ['运营商', '节点延迟', '来源']) {
-      expect(tester.getCenter(inCard(title)).dy, closeTo(wideHeadingY, 2));
-    }
-    expectSingleLineIpAndBadgeBeforeAddress();
-    for (final value in ['示例运营商', '47ms', 'sub.example.net']) {
+    for (final (label, value) in [
+      ('出口 IP', '192.0.2.1'),
+      ('运营商', '示例运营商'),
+      ('节点延迟', '47ms'),
+    ]) {
       expect(
-        tester.getCenter(inCard(value)).dy,
-        closeTo(tester.getCenter(ip).dy, 2),
+        tester.getCenter(inCard(label)).dy,
+        closeTo(tester.getCenter(inCard(value)).dy, 2),
+      );
+      expect(
+        tester.getTopLeft(inCard(label)).dx,
+        greaterThan(tester.getTopRight(title).dx),
       );
     }
+    expect(
+      tester.getCenter(inCard('SingBox')).dy,
+      closeTo(tester.getCenter(inCard('sub.example.net')).dy, 1),
+    );
+    expectSingleLineIpAndBadgeBeforeAddress();
     expect(tester.takeException(), isNull);
 
     await tester.binding.setSurfaceSize(const Size(400, 1000));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
-    expect(inCard('断开连接'), findsNothing);
-    expect(find.byTooltip('断开连接'), findsOneWidget);
+    expect(inCard('断开'), findsOneWidget);
     expect(tester.getRect(refresh).right, lessThan(tester.getRect(power).left));
-    expect(tester.getCenter(refresh).dy, tester.getCenter(power).dy);
+    expect(tester.getRect(refresh).top, tester.getRect(power).top);
+    expect(tester.getSize(refresh), tester.getSize(power));
     expect(tester.getCenter(mode).dy, closeTo(tester.getCenter(status).dy, 3));
     expect(tester.getRect(mode).bottom, lessThan(tester.getTopLeft(title).dy));
     final exit = tester.getTopLeft(inCard('出口 IP'));
     final provider = tester.getTopLeft(inCard('运营商'));
     final latency = tester.getTopLeft(inCard('节点延迟'));
-    final source = tester.getTopLeft(inCard('来源'));
-    expect(provider.dy, closeTo(exit.dy, 2));
-    expect(provider.dx, greaterThan(exit.dx));
-    expect(latency.dy, greaterThan(tester.getRect(ip).bottom));
-    expect(latency.dy, source.dy);
-    expect(latency.dx, exit.dx);
-    expect(provider.dx, source.dx);
+    expect(latency.dy, closeTo(exit.dy, 2));
+    expect(latency.dx, greaterThan(exit.dx));
+    expect(provider.dy, greaterThan(exit.dy));
+    expect(exit.dy, greaterThan(tester.getBottomLeft(address).dy));
+    expect(tester.getTopLeft(power).dy, greaterThan(provider.dy));
     expectSingleLineIpAndBadgeBeforeAddress();
-    final addressText = tester.renderObject<RenderParagraph>(address);
-    expect(
-      addressText.size.width,
-      lessThan(addressText.getMaxIntrinsicWidth(double.infinity)),
-    );
-    expect(tester.widget<Text>(address).overflow, TextOverflow.ellipsis);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('首页切换规则模式会保存并更新连接卡片，保存失败时恢复原模式', (tester) async {
+  testWidgets('首页切换规则模式会保存并更新选中项，保存失败时恢复原模式', (tester) async {
     final storage = _Storage();
     final controller = _ConnectedModeController()
       ..running = true
@@ -415,7 +536,10 @@ void main() {
     await tester.pump();
     expect(storage.saved?.settings.splitMode, SplitMode.global);
     expect(controller.restarts, 1);
-    expect(find.text('全局代理'), findsOneWidget);
+    expect(
+      tester.widget<SlidingSegmentedControl<SplitMode>>(control).selected,
+      SplitMode.global,
+    );
 
     storage.fail = true;
     await tester.tap(option('直连'));
@@ -792,6 +916,11 @@ class _RefreshController extends _Controller {
 
   @override
   Future<void> refreshConnectionInfo() async => refreshes++;
+}
+
+class _WireGuardConnectionController extends _Controller {
+  @override
+  RuntimeTestResult? wireGuardLatency;
 }
 
 class _Storage extends AppStorage {

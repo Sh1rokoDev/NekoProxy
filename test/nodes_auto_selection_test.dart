@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/data/app_storage.dart';
+import 'package:nekoproxy/domain/config_compiler.dart';
 import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
 import 'package:nekoproxy/runtime/runtime_client.dart';
@@ -61,6 +63,135 @@ void main() {
     await interrupted;
     expect(controller.latencies, {second.id: 65});
     expect(controller.refreshingConnectionInfo, isFalse);
+  });
+
+  test('仅 WireGuard 模式探测隧道端点，失败清除延迟且断开后丢弃迟到结果', () async {
+    final key = base64Encode(List.filled(32, 2));
+    final profile = WireGuardProfile(
+      id: 'wg',
+      name: '测试隧道',
+      configuration:
+          '''
+[Interface]
+PrivateKey = $key
+Address = 10.0.0.2/24
+[Peer]
+PublicKey = $key
+Endpoint = 192.0.2.1:51820
+AllowedIPs = 0.0.0.0/0
+''',
+    );
+    final runtime = _Runtime();
+    final paths = AppPaths.forDirectory(Directory.systemTemp.path);
+    final controller = _ConnectionInfoController()
+      ..paths = paths
+      ..storage = _Storage(paths)
+      ..runtime = runtime
+      ..ruleSets = RuleSetManager(paths: paths, clientFactory: HttpClient.new)
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(),
+        subscriptions: [],
+        outboundMode: OutboundMode.wireGuard,
+        wireGuardProfileId: profile.id,
+        wireGuardProfiles: [profile],
+      );
+    addTearDown(controller.dispose);
+    addTearDown(controller.disconnect);
+    const tag = ConfigCompiler.wireGuardTag;
+
+    await controller.connect();
+    expect(runtime.probes.keys, [tag]);
+    expect(controller.refreshingConnectionInfo, isTrue);
+    runtime.probes.remove(tag)!.complete(const RuntimeTestResult(delay: 48));
+    await _waitUntil(() => !controller.refreshingConnectionInfo);
+    expect(controller.wireGuardLatency?.delay, 48);
+    expect(controller.latencies, isEmpty);
+
+    final refresh = controller.refreshConnectionInfo();
+    await controller.refreshConnectionInfo();
+    expect(controller.exitRefreshes, 2);
+    expect(runtime.batchSizes, [1, 1]);
+    runtime.probes
+        .remove(tag)!
+        .complete(const RuntimeTestResult(error: '测试目标在 AllowedIPs 之外'));
+    await refresh;
+    expect(controller.wireGuardLatency?.delay, isNull);
+    expect(controller.wireGuardLatency?.error, '测试目标在 AllowedIPs 之外');
+
+    final inactive = WireGuardProfile(
+      id: 'other',
+      name: '未连接隧道',
+      configuration: profile.configuration,
+    );
+    await controller.saveWireGuardProfile(inactive);
+    controller.queueWireGuardTest([
+      profile,
+      inactive,
+    ], groupId: profile.groupId);
+    expect(controller.isWireGuardTestRequested(profile.id), isTrue);
+    expect(controller.isWireGuardTestRequested(inactive.id), isFalse);
+    runtime.probes.remove(tag)!.complete(const RuntimeTestResult(delay: 71));
+    await _waitUntil(() => !controller.isWireGuardTestRequested(profile.id));
+    expect(controller.wireGuardLatencyFor(profile)?.delay, 71);
+    expect(controller.wireGuardLatencyFor(inactive), isNull);
+
+    final interrupted = controller.refreshConnectionInfo();
+    await controller.disconnect();
+    runtime.probes.remove(tag)!.complete(const RuntimeTestResult(delay: 120));
+    await interrupted;
+    expect(controller.wireGuardLatency, isNull);
+    expect(controller.wireGuardLatencyFor(profile)?.delay, 71);
+    expect(controller.refreshingConnectionInfo, isFalse);
+    expect(runtime.autoRefreshes, isEmpty);
+  });
+
+  testWidgets('节点菜单只测试所选节点并更新其延迟', (tester) async {
+    final first = _node('first', '节点甲', group: 'group');
+    final second = _node('second', '节点乙', group: 'group');
+    final runtime = _Runtime();
+    final controller = AppController()
+      ..paths = AppPaths.forDirectory(Directory.systemTemp.path)
+      ..runtime = runtime
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(splitMode: SplitMode.global),
+        subscriptions: [
+          Subscription(id: 'group', name: '测试分组', nodes: [first, second]),
+        ],
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          controller: controller,
+          child: const Scaffold(body: NodesPage()),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('节点操作').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('测试节点延迟'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(runtime.probes.keys, ['node-second']);
+    expect(controller.isSingleNodeTestRequested(second.id), isTrue);
+    expect(controller.isNodeTestRequested('group'), isFalse);
+    expect(controller.isNodeTestRequested(null), isFalse);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is CircularProgressIndicator &&
+            widget.semanticsLabel == '测速中',
+      ),
+      findsOneWidget,
+    );
+
+    runtime.completeProbe(second.id, delay: 42);
+    await tester.pumpAndSettle();
+    expect(controller.isSingleNodeTestRequested(second.id), isFalse);
+    expect(controller.latencies, {second.id: 42});
+    expect(find.text('42ms'), findsOneWidget);
   });
 
   testWidgets('测速按钮显示排队和完成进度，按点击顺序依次测速', (tester) async {

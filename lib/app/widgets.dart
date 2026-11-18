@@ -73,6 +73,7 @@ class PageFrame extends StatelessWidget {
 
   static const headerGap = 20.0;
   static const maxContentWidth = 1120.0;
+  static const _fadeTail = 12.0;
 
   @override
   Widget build(BuildContext context) {
@@ -83,8 +84,15 @@ class PageFrame extends StatelessWidget {
       slivers: [
         PinnedHeaderSliver(
           child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              const Positioned.fill(child: HeaderFrost()),
+              const Positioned(
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: -_fadeTail,
+                child: HeaderFrost(),
+              ),
               SafeArea(
                 left: false,
                 right: false,

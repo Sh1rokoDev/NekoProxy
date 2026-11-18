@@ -51,6 +51,8 @@ class SlidingSegmentedControl<T> extends StatefulWidget {
 class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
     with TickerProviderStateMixin {
   static const _inset = 4.0;
+  // The lifted selection grows past both edges of the track.
+  static const _crossGrowth = 16.0;
   static const _trackRadius = BorderRadius.all(Radius.circular(16));
   static const _selectionRadius = BorderRadius.all(Radius.circular(12));
   static final _travel = SpringDescription.withDurationAndBounce(
@@ -308,7 +310,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
     final rtl = !_vertical && Directionality.of(context) == TextDirection.rtl;
     if (widget.segments.isEmpty) return const SizedBox.shrink();
     final navigation = widget.navigation;
-    final growth = navigation ? 16.0 : 8.0;
+    final axisGrowth = navigation ? 16.0 : 8.0;
     return RepaintBoundary(
       child: SizedBox(
         width: widget.width,
@@ -352,13 +354,15 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                       (rtl ? -1 : 1);
                   final axisScale =
                       1 +
-                      (growth * lift + pull.abs() * 0.5) / math.max(span, 1);
+                      (axisGrowth * lift + pull.abs() * 0.5) /
+                          math.max(span, 1);
                   final crossScale = 1 + 0.045 * lift;
                   // At rest the end segments share the same inset on both axes.
-                  final extent = (pitch + growth * lift) * (1 + stretch);
+                  final extent = (pitch + axisGrowth * lift) * (1 + stretch);
                   final thickness = math.max(
                     0.0,
-                    (cross - 2 * _inset + growth * lift) * (1 - 0.75 * stretch),
+                    (cross - 2 * _inset + _crossGrowth * lift) *
+                        (1 - 0.75 * stretch),
                   );
                   final center = _inset + pitch * (position + 0.5);
                   final along = rtl ? span - center : center;

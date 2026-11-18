@@ -7,7 +7,7 @@ import '../../services/exit_info_service.dart';
 import '../../state/app_controller.dart';
 
 const _wideCardWidth = 540.0;
-const _infoHeadingHeight = 20.0;
+
 const _connectionActionSize = 48.0;
 const _fixedWidthFonts = ['Consolas'];
 
@@ -31,7 +31,7 @@ class ConnectionCard extends StatelessWidget {
     final onlyWireGuard = controller.outboundMode == OutboundMode.wireGuard;
     final node = onlyWireGuard ? null : controller.currentNode;
     String? endpoint;
-    if (onlyWireGuard && profile != null) {
+    if (profile != null) {
       try {
         endpoint = profile.parse().firstEndpoint;
       } on FormatException {
@@ -39,7 +39,12 @@ class ConnectionCard extends StatelessWidget {
       }
     }
     final exitInfo = controller.exitInfo;
-    final source = _sourceName(controller, node);
+    final chain = controller.chainProxyEnabled;
+    final wgSource = controller.snapshot.wireGuardGroups
+        .where((group) => group.id == profile?.groupId)
+        .firstOrNull
+        ?.name;
+    final region = exitInfo?.region.trim() ?? '';
     final statusText = busy
         ? '正在应用'
         : running
@@ -53,71 +58,174 @@ class ConnectionCard extends StatelessWidget {
         : running
         ? connectedColor
         : scheme.onSurfaceVariant;
-    final splitLabel = switch (controller.settings.splitMode) {
-      SplitMode.rule => '规则分流',
-      SplitMode.global => '全局代理',
-      SplitMode.direct => '直连',
-    };
-    final modes = <Widget>[
-      if (onlyWireGuard)
-        _ConnectionMode(
-          icon: Icons.route_outlined,
-          label: controller.isAndroid || controller.settings.tunEnabled
-              ? '按 AllowedIPs 路由'
-              : '仅接管代理流量',
-        )
-      else ...[
-        _ConnectionMode(
-          icon: controller.settings.selectionMode == SelectionMode.auto
-              ? Icons.bolt_outlined
-              : Icons.touch_app_outlined,
-          label: controller.currentGroupLabel,
-        ),
-        const _ConnectionModeDot(),
-        _ConnectionMode(icon: Icons.route_outlined, label: splitLabel),
-      ],
-    ];
-
+    final mode = _ConnectionMode(
+      icon: onlyWireGuard || chain
+          ? Icons.route_outlined
+          : controller.settings.selectionMode == SelectionMode.auto
+          ? Icons.bolt_outlined
+          : Icons.touch_app_outlined,
+      label: onlyWireGuard
+          ? (controller.isAndroid || controller.settings.tunEnabled
+                ? '按 AllowedIPs 路由'
+                : '仅接管代理流量')
+          : chain
+          ? '链式代理 · ${controller.currentGroupLabel}'
+          : controller.currentGroupLabel,
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
         final wide =
             constraints.maxWidth >= _wideCardWidth * textScale.clamp(1, 2);
-        final horizontalPadding = wide ? 20.0 : 16.0;
-        final power = _ConnectionPowerButton(
-          controller: controller,
-          running: running,
-          hasNodes: controller.canConnect,
-          compact: !wide,
+        final sideWidth = (constraints.maxWidth * .31).clamp(
+          256.0 * textScale.clamp(1, 2),
+          360.0 * textScale.clamp(1, 2),
         );
-        final meta = <Widget>[
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            crossAxisAlignment: WrapCrossAlignment.center,
+        final inset = wide ? 18.0 : 14.0;
+        final detailsWidth =
+            constraints.maxWidth - (wide ? sideWidth : 0) - 2 * inset - 2;
+        const minColumnWidth = 272.0;
+        const dividerWidth = 25.0;
+        final sideBySide =
+            chain &&
+            wide &&
+            detailsWidth >=
+                2 * minColumnWidth * textScale.clamp(1, 2) + dividerWidth;
+        final nodeWidth = sideBySide
+            ? (detailsWidth - dividerWidth) / 2
+            : detailsWidth;
+        final nodes = [
+          if (chain || onlyWireGuard)
+            _NodeDetails(
+              maxRegionWidth: nodeWidth * .65,
+              type: 'WireGuard',
+              source: wgSource,
+              level: chain ? '第一级' : null,
+              name: profile?.name ?? '尚未选择 WireGuard 节点',
+              address: endpoint ?? '选择一个 WireGuard 节点',
+              region: onlyWireGuard ? region : '',
+            ),
+          if (!onlyWireGuard)
+            _NodeDetails(
+              maxRegionWidth: nodeWidth * .65,
+              type: 'SingBox',
+              source: _sourceName(controller, node),
+              level: chain ? '第二级' : null,
+              name: node?.name ?? (hasNodes ? '尚未选择节点' : '还没有节点'),
+              address: node == null
+                  ? (hasNodes ? '选择一个节点' : '导入订阅或节点')
+                  : '${node.server}:${node.port}',
+              region: region,
+            ),
+        ];
+        final details = Padding(
+          padding: EdgeInsets.all(inset),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _ConnectionStatus(
-                text: statusText,
-                color: statusColor,
-                active: running,
+              Wrap(
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 12,
+                runSpacing: 4,
+                children: [
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: .09),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: _ConnectionStatus(
+                          text: statusText,
+                          color: statusColor,
+                          active: running,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (running && TickerMode.valuesOf(context).enabled)
+                        ValueListenableBuilder<int>(
+                          valueListenable: controller.liveTick,
+                          builder: (context, _, _) =>
+                              _ConnectionUptime(value: _uptime(controller)),
+                        )
+                      else
+                        _ConnectionUptime(
+                          value: running ? _uptime(controller) : '—',
+                        ),
+                    ],
+                  ),
+                  mode,
+                ],
               ),
-              _MetaSeparator(color: scheme.outlineVariant),
-              if (running && TickerMode.valuesOf(context).enabled)
-                ValueListenableBuilder<int>(
-                  valueListenable: controller.liveTick,
-                  builder: (context, _, _) =>
-                      _ConnectionUptime(value: _uptime(controller)),
+              const SizedBox(height: 12),
+              if (sideBySide)
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (final (index, item) in nodes.indexed) ...[
+                        if (index > 0)
+                          const VerticalDivider(
+                            width: dividerWidth,
+                            thickness: 1,
+                          ),
+                        Expanded(child: item),
+                      ],
+                    ],
+                  ),
                 )
               else
-                _ConnectionUptime(value: running ? _uptime(controller) : '—'),
-              _MetaSeparator(color: scheme.outlineVariant),
-              ...modes,
+                for (final (index, item) in nodes.indexed) ...[
+                  if (index > 0) const Divider(height: 17, thickness: 1),
+                  item,
+                ],
             ],
           ),
-          const SizedBox(height: 12),
-        ];
-
-        return DecoratedBox(
+        );
+        final diagnostics = ColoredBox(
+          color: scheme.surfaceContainer,
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _ConnectionInfoStrip(
+                  controller: controller,
+                  info: exitInfo,
+                  wide: wide,
+                ),
+                if (wide) const Spacer(),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    if (running) ...[
+                      Expanded(
+                        child: _ConnectionRefreshButton(controller: controller),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: _ConnectionPowerButton(
+                        controller: controller,
+                        running: running,
+                        hasNodes: controller.canConnect,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+        return Container(
+          clipBehavior: Clip.antiAlias,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
@@ -125,53 +233,20 @@ class ConnectionCard extends StatelessWidget {
             ),
             color: scheme.surfaceContainerLow,
           ),
-          child: Padding(
-            padding: EdgeInsets.symmetric(
-              horizontal: horizontalPadding,
-              vertical: 16,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Let the compact header use the space above the buttons.
-                if (!wide) ...meta,
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (wide) ...meta,
-                          _NodeDetails(
-                            node: node,
-                            hasNodes: hasNodes,
-                            region: exitInfo?.region.trim() ?? '',
-                            displayName: onlyWireGuard ? profile?.name : null,
-                            displayAddress: endpoint,
-                            upstreamName: onlyWireGuard ? null : profile?.name,
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    if (running) ...[
-                      _ConnectionRefreshButton(controller: controller),
-                      const SizedBox(width: 8),
+          child: wide
+              ? IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: details),
+                      SizedBox(width: sideWidth, child: diagnostics),
                     ],
-                    power,
-                  ],
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [details, diagnostics],
                 ),
-                const SizedBox(height: 16),
-                _ConnectionInfoStrip(
-                  controller: controller,
-                  info: exitInfo,
-                  source: source,
-                  wide: wide,
-                ),
-              ],
-            ),
-          ),
         );
       },
     );
@@ -195,115 +270,92 @@ class ConnectionCard extends StatelessWidget {
 
 class _NodeDetails extends StatelessWidget {
   const _NodeDetails({
-    required this.node,
-    required this.hasNodes,
+    required this.maxRegionWidth,
+    required this.type,
+    required this.source,
+    required this.level,
+    required this.name,
+    required this.address,
     required this.region,
-    this.displayName,
-    this.displayAddress,
-    this.upstreamName,
   });
-
-  final ProxyNode? node;
-  final bool hasNodes;
-  final String region;
-  final String? displayName;
-  final String? displayAddress;
-  final String? upstreamName;
-
+  final double maxRegionWidth;
+  final String type, name, address, region;
+  final String? source, level;
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final node = this.node;
-    final address = Text(
-      displayAddress ??
-          (node == null
-              ? (hasNodes ? '选择一个节点' : '导入订阅或节点')
-              : '${node.server}:${node.port}'),
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: theme.textTheme.bodySmall?.copyWith(
-        color: scheme.onSurfaceVariant,
-        fontSize: 12,
-        fontFamily: node != null || displayAddress != null ? 'monospace' : null,
-        fontFamilyFallback: _fixedWidthFonts,
-        letterSpacing: 0,
-      ),
-    );
-    return AnimatedSize(
-      duration: const Duration(milliseconds: 220),
-      alignment: Alignment.topLeft,
-      child: AnimatedSwitcher(
-        duration: const Duration(milliseconds: 240),
-        transitionBuilder: (child, animation) => FadeTransition(
-          opacity: animation,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0, 0.08),
-              end: Offset.zero,
-            ).animate(animation),
-            child: child,
-          ),
-        ),
-        child: SizedBox(
-          key: ValueKey(displayName ?? node?.id ?? 'no-node'),
-          width: double.infinity,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                displayName ?? node?.name ?? (hasNodes ? '尚未选择节点' : '还没有节点'),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: theme.textTheme.titleLarge?.copyWith(
-                  fontSize: 20,
-                  height: 1.25,
-                  fontWeight: FontWeight.w600,
+    final labelStyle = theme.textTheme.bodySmall;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            if (level case final level?) ...[
+              RegionBadge(region: level, semanticPrefix: '代理级别'),
+              const SizedBox(width: 6),
+            ],
+            Text(
+              type,
+              style: labelStyle?.copyWith(
+                color: theme.colorScheme.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            if (source case final source?) ...[
+              const SizedBox(width: 8),
+              Text('来源', style: labelStyle),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Tooltip(
+                  key: const ValueKey('connection-source'),
+                  message: source,
+                  child: Text(
+                    source,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: labelStyle,
+                  ),
                 ),
               ),
-              if (upstreamName != null)
-                Text(
-                  'WireGuard · $upstreamName',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              const SizedBox(height: 8),
-              if (node != null && region.isNotEmpty)
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    // Leave room for the address ellipsis even if the badge
-                    // needs to wrap on a narrow card.
-                    final reservedWidth = (constraints.maxWidth * 0.2).clamp(
-                      0.0,
-                      28.0,
-                    );
-                    return Row(
-                      children: [
-                        ConstrainedBox(
-                          constraints: BoxConstraints(
-                            maxWidth: constraints.maxWidth - reservedWidth,
-                          ),
-                          child: RegionBadge(
-                            region: region,
-                            semanticPrefix: '出口地区',
-                          ),
-                        ),
-                        Flexible(
-                          child: Padding(
-                            padding: const EdgeInsets.only(left: 6),
-                            child: address,
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                )
-              else
-                address,
             ],
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          name,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontSize: 20,
+            height: 1.25,
+            fontWeight: FontWeight.w600,
           ),
         ),
-      ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            if (region.isNotEmpty) ...[
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: maxRegionWidth),
+                child: RegionBadge(
+                  region: region,
+                  semanticPrefix: '出口地区',
+                  shortLabel: region,
+                ),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Text(
+                address,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: labelStyle?.merge(_infoAddressStyle),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -398,17 +450,6 @@ class _ConnectionUptime extends StatelessWidget {
   }
 }
 
-class _MetaSeparator extends StatelessWidget {
-  const _MetaSeparator({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(width: 1, height: 11, color: color.withValues(alpha: 0.7));
-  }
-}
-
 class _ConnectionMode extends StatelessWidget {
   const _ConnectionMode({required this.icon, required this.label});
 
@@ -439,34 +480,16 @@ class _ConnectionMode extends StatelessWidget {
   }
 }
 
-class _ConnectionModeDot extends StatelessWidget {
-  const _ConnectionModeDot();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 3,
-      height: 3,
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.outline,
-        shape: BoxShape.circle,
-      ),
-    );
-  }
-}
-
 class _ConnectionPowerButton extends StatelessWidget {
   const _ConnectionPowerButton({
     required this.controller,
     required this.running,
     required this.hasNodes,
-    required this.compact,
   });
 
   final AppController controller;
   final bool running;
   final bool hasNodes;
-  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -475,12 +498,11 @@ class _ConnectionPowerButton extends StatelessWidget {
     final label = controller.busy
         ? '请稍候'
         : running
-        ? '断开连接'
+        ? '断开'
         : hasNodes
         ? '连接'
         : '导入节点';
-    final background = running ? scheme.surfaceContainerHigh : scheme.primary;
-    final foreground = running ? scheme.onSurface : scheme.onPrimary;
+    final foreground = scheme.onPrimary;
     final icon = controller.busy
         ? SizedBox(
             width: 18,
@@ -504,36 +526,32 @@ class _ConnectionPowerButton extends StatelessWidget {
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(10),
     );
-    if (compact) {
-      return IconButton(
-        key: const ValueKey('connection-power'),
-        tooltip: label,
-        onPressed: controller.busy ? null : onPressed,
-        style: IconButton.styleFrom(
-          fixedSize: const Size.square(_connectionActionSize),
-          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-          backgroundColor: background,
-          foregroundColor: foreground,
-          shape: shape,
-        ),
-        icon: icon,
-      );
-    }
-
     return FilledButton(
       key: const ValueKey('connection-power'),
       onPressed: controller.busy ? null : onPressed,
       style: FilledButton.styleFrom(
         minimumSize: const Size(112, _connectionActionSize),
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        visualDensity: VisualDensity.standard,
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        backgroundColor: background,
+        backgroundColor: scheme.primary,
         foregroundColor: foreground,
         shape: shape,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
-        children: [icon, const SizedBox(width: 8), Text(label)],
+        children: [
+          icon,
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -548,25 +566,34 @@ class _ConnectionRefreshButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final refreshing = controller.refreshingConnectionInfo;
-    return IconButton.filledTonal(
-      tooltip: '刷新出口、运营商和节点延迟',
-      onPressed: controller.busy || refreshing
-          ? null
-          : controller.refreshConnectionInfo,
-      style: IconButton.styleFrom(
-        fixedSize: const Size.square(_connectionActionSize),
-        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-        backgroundColor: scheme.surfaceContainerLow,
-        foregroundColor: scheme.onSurfaceVariant,
-        side: BorderSide(color: scheme.outlineVariant),
+    return Tooltip(
+      message: '刷新出口、运营商和节点延迟',
+      child: FilledButton.tonalIcon(
+        onPressed: controller.busy || refreshing
+            ? null
+            : controller.refreshConnectionInfo,
+        style: FilledButton.styleFrom(
+          minimumSize: const Size(0, _connectionActionSize),
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          visualDensity: VisualDensity.standard,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(10),
+          ),
+          backgroundColor: scheme.surfaceContainerHighest,
+          foregroundColor: scheme.onSurfaceVariant,
+        ),
+        icon: refreshing
+            ? const SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : const Icon(Icons.refresh_rounded, size: 20),
+        label: const Text(
+          '刷新',
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+        ),
       ),
-      icon: refreshing
-          ? const SizedBox.square(
-              dimension: 18,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.refresh_rounded, size: 20),
     );
   }
 }
@@ -575,31 +602,32 @@ class _ConnectionInfoStrip extends StatelessWidget {
   const _ConnectionInfoStrip({
     required this.controller,
     required this.info,
-    required this.source,
     required this.wide,
   });
 
   final AppController controller;
   final ExitInfo? info;
-  final String? source;
   final bool wide;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final dividerColor = scheme.outlineVariant.withValues(alpha: 0.65);
+
     final info = this.info;
     final provider = info?.provider.trim() ?? '';
-    final node = controller.currentNode;
-    final latency = node == null ? null : controller.latencies[node.id];
+    final onlyWireGuard = controller.outboundMode == OutboundMode.wireGuard;
+    final node = onlyWireGuard ? null : controller.currentNode;
+    final wireGuardLatency = onlyWireGuard ? controller.wireGuardLatency : null;
+    final latency = node == null
+        ? wireGuardLatency?.delay
+        : controller.latencies[node.id];
     final latencyError = node == null
-        ? null
+        ? wireGuardLatency?.error
         : controller.latencyErrors[node.id];
     final exitError = controller.exitInfoError;
     final exitCell = _ConnectionDataCell(
       label: '出口 IP',
-      padding: EdgeInsets.only(right: wide ? 12 : 8, bottom: 4),
       value: info != null
           ? SelectionArea(child: Text(info.ip, style: _infoAddressStyle))
           : Text(
@@ -621,55 +649,40 @@ class _ConnectionInfoStrip extends StatelessWidget {
     final providerCell = _ConnectionDataCell(
       key: const ValueKey('connection-provider'),
       label: '运营商',
-      padding: const EdgeInsets.only(left: 12, right: 8),
       value: Text(provider.isEmpty ? '未提供' : provider),
     );
     final latencyCell = _ConnectionDataCell(
       key: const ValueKey('connection-latency'),
       label: '节点延迟',
-      padding: EdgeInsets.only(left: wide ? 12 : 0, right: 8),
       value: switch ((latency, latencyError)) {
         (final int delay, _) => _LatencyValue(latency: delay),
         (_, final String error) => Tooltip(
           message: error,
           child: const Text('测速失败'),
         ),
-        _ => null,
+        _ => const Text('未知'),
       },
     );
-    final sourceCell = _ConnectionDataCell(
-      key: const ValueKey('connection-source'),
-      label: '来源',
-      padding: const EdgeInsets.only(left: 12),
-      value: Text(source ?? '—'),
-    );
-
-    Widget row(List<Widget> cells) => IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final (index, cell) in cells.indexed) ...[
-            if (index > 0) _StripDivider(color: dividerColor),
-            Expanded(child: cell),
-          ],
-        ],
-      ),
-    );
-
     return Column(
       key: const ValueKey('connection-info-strip'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _StripDivider(color: dividerColor, horizontal: true),
-        const SizedBox(height: 8),
-        if (wide)
-          row([exitCell, providerCell, latencyCell, sourceCell])
-        else ...[
-          row([exitCell, providerCell]),
-          const SizedBox(height: 4),
-          _StripDivider(color: dividerColor, horizontal: true),
-          const SizedBox(height: 4),
-          row([latencyCell, sourceCell]),
+        if (wide) ...[
+          exitCell,
+          const SizedBox(height: 8),
+          providerCell,
+          const SizedBox(height: 8),
+          latencyCell,
+        ] else ...[
+          Row(
+            children: [
+              Expanded(flex: 3, child: exitCell),
+              const SizedBox(width: 12),
+              Flexible(flex: 2, child: latencyCell),
+            ],
+          ),
+          const SizedBox(height: 8),
+          providerCell,
         ],
       ],
     );
@@ -686,12 +699,10 @@ class _ConnectionDataCell extends StatelessWidget {
   const _ConnectionDataCell({
     super.key,
     required this.label,
-    required this.padding,
     required this.value,
   });
 
   final String label;
-  final EdgeInsets padding;
   final Widget? value;
 
   @override
@@ -706,33 +717,29 @@ class _ConnectionDataCell extends StatelessWidget {
           fontWeight: FontWeight.w500,
           fontFeatures: const [FontFeature.tabularFigures()],
         );
-    return Padding(
-      padding: padding,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Container(
-            constraints: const BoxConstraints(minHeight: _infoHeadingHeight),
-            alignment: Alignment.centerLeft,
-            child: Text(
-              label,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-                fontSize: 12,
-              ),
-            ),
+    return Row(
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.labelSmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+            fontSize: 12,
           ),
-          const SizedBox(height: 2),
-          if (value case final value?)
-            DefaultTextStyle(
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: DefaultTextStyle(
               style: valueStyle,
               maxLines: 1,
+              softWrap: false,
               overflow: TextOverflow.ellipsis,
-              child: value,
+              child: value ?? const SizedBox.shrink(),
             ),
-        ],
-      ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -788,22 +795,6 @@ class _LatencyBars extends StatelessWidget {
           if (height != 9.0) const SizedBox(width: 2),
         ],
       ],
-    );
-  }
-}
-
-class _StripDivider extends StatelessWidget {
-  const _StripDivider({required this.color, this.horizontal = false});
-
-  final Color color;
-  final bool horizontal;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: horizontal ? double.infinity : 1,
-      height: horizontal ? 1 : null,
-      color: color,
     );
   }
 }

@@ -10,6 +10,7 @@ import '../../domain/models.dart';
 import '../../domain/node_view.dart';
 import '../../services/qr_service.dart';
 import '../../state/app_controller.dart';
+import 'node_group_widgets.dart';
 import 'outbound_settings_page.dart';
 import 'wireguard_group_card.dart';
 
@@ -23,8 +24,9 @@ class NodesPage extends StatefulWidget {
 class _NodesPageState extends State<NodesPage> {
   final Set<String> _updating = {};
   final Set<String> _collapsed = {};
+  final Set<String> _collapsedWireGuard = {};
   bool _searchOpen = false;
-  bool _savingSubscriptionOrder = false;
+  bool _savingGroupOrder = false;
   String _query = '';
 
   @override
@@ -51,6 +53,7 @@ class _NodesPageState extends State<NodesPage> {
               !group.name.toLowerCase().contains(_query) &&
               profiles.isEmpty,
         );
+    final wireGuardEntries = wireGuardGroups.entries.toList();
     final automatic = controller.settings.selectionMode == SelectionMode.auto;
     final highlightedNode = !controller.showsRuleMode
         ? null
@@ -67,6 +70,12 @@ class _NodesPageState extends State<NodesPage> {
     final highlightedId = highlightedNode?.id;
     final groups = _buildGroups(controller, automatic ? null : highlightedId);
     final allTestRequested = controller.isNodeTestRequested(null);
+    final hasWireGuardProfiles = snapshot.wireGuardProfiles.isNotEmpty;
+    final hasInactiveWireGuard =
+        controller.running &&
+        snapshot.wireGuardProfiles.any(
+          (profile) => profile.id != controller.activeWireGuard?.id,
+        );
     final testProgress = controller.testingAllNodes
         ? controller.testCompleted / controller.testTotal
         : null;
@@ -121,16 +130,21 @@ class _NodesPageState extends State<NodesPage> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          if (hasNodes) ...[
+          if (hasNodes || hasWireGuardProfiles) ...[
             FloatingActionButton.extended(
               heroTag: 'nodes-speed',
-              tooltip: allTestRequested ? null : '测速所有分组节点',
+              tooltip: allTestRequested
+                  ? null
+                  : hasInactiveWireGuard
+                  ? '测速当前可用节点'
+                  : '测速所有分组节点',
               onPressed: allTestRequested
                   ? null
                   : () => _startNodeTest(
                       context,
                       controller,
-                      controller.snapshot.allNodes,
+                      controller.showsRuleMode ? snapshot.allNodes : const [],
+                      wireGuardProfiles: snapshot.wireGuardProfiles,
                     ),
               icon: allTestRequested
                   ? SizedBox(
@@ -194,13 +208,12 @@ class _NodesPageState extends State<NodesPage> {
                   padding: EdgeInsets.symmetric(horizontal: gutter),
                   sliver: SliverReorderableList(
                     proxyDecorator: (child, _, _) => child,
-                    onReorderItem: (oldIndex, newIndex) =>
-                        _reorderSubscriptions(
-                          controller,
-                          groups,
-                          oldIndex,
-                          newIndex,
-                        ),
+                    onReorderItem: (oldIndex, newIndex) => _reorderGroups(
+                      groups.map((group) => group.subscription?.id).toList(),
+                      controller.reorderSubscriptions,
+                      oldIndex,
+                      newIndex,
+                    ),
                     itemCount: groups.length,
                     itemBuilder: (context, index) {
                       final group = groups[index];
@@ -210,11 +223,12 @@ class _NodesPageState extends State<NodesPage> {
                         child: _GroupCard(
                           group: group,
                           controller: controller,
-                          reorderIndex:
-                              group.subscription?.isUrlSubscription == true
-                              ? index
-                              : null,
-                          reorderEnabled: !_savingSubscriptionOrder,
+                          reorderIndex: group.subscription == null
+                              ? null
+                              : index,
+                          reorderEnabled:
+                              !_savingGroupOrder &&
+                              !controller.changingWireGuard,
                           highlightedId: highlightedId,
                           expanded:
                               _query.isNotEmpty ||
@@ -299,49 +313,67 @@ class _NodesPageState extends State<NodesPage> {
         if (wireGuardGroups.isNotEmpty)
           SliverPadding(
             padding: EdgeInsets.fromLTRB(24, 0, 24, 168 + dockInset),
-            sliver: SliverList.list(
-              children: [
-                for (final entry in wireGuardGroups.entries)
-                  Center(
-                    key: ValueKey(entry.key.id),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxWidth: PageFrame.maxContentWidth,
-                      ),
-                      child: Padding(
+            sliver: SliverLayoutBuilder(
+              builder: (context, constraints) {
+                final gutter =
+                    (constraints.crossAxisExtent - PageFrame.maxContentWidth)
+                        .clamp(0.0, double.infinity) /
+                    2;
+                return SliverPadding(
+                  padding: EdgeInsets.symmetric(horizontal: gutter),
+                  sliver: SliverReorderableList(
+                    proxyDecorator: (child, _, _) => child,
+                    onReorderItem: (oldIndex, newIndex) => _reorderGroups(
+                      wireGuardEntries.map((entry) => entry.key.id).toList(),
+                      controller.reorderWireGuardGroups,
+                      oldIndex,
+                      newIndex,
+                    ),
+                    itemCount: wireGuardEntries.length,
+                    itemBuilder: (context, index) {
+                      final entry = wireGuardEntries[index];
+                      return Padding(
+                        key: ValueKey(entry.key.id),
                         padding: const EdgeInsets.only(bottom: 12),
                         child: WireGuardGroupCard(
                           controller: controller,
                           group: entry.key,
                           profiles: entry.value,
+                          reorderIndex: index,
+                          reorderEnabled: !_savingGroupOrder,
+                          expanded:
+                              _query.isNotEmpty ||
+                              !_collapsedWireGuard.contains(entry.key.id),
+                          onToggleExpanded: () => setState(() {
+                            if (!_collapsedWireGuard.remove(entry.key.id)) {
+                              _collapsedWireGuard.add(entry.key.id);
+                            }
+                          }),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
-              ],
+                );
+              },
             ),
           ),
       ],
     );
   }
 
-  Future<void> _reorderSubscriptions(
-    AppController controller,
-    List<_NodeGroup> groups,
+  Future<void> _reorderGroups(
+    List<String?> groupIds,
+    Future<void> Function(List<String>) saveOrder,
     int oldIndex,
     int newIndex,
   ) async {
-    if (_savingSubscriptionOrder || oldIndex == newIndex) return;
-    final reordered = groups.toList();
-    reordered.insert(newIndex, reordered.removeAt(oldIndex));
-    setState(() => _savingSubscriptionOrder = true);
+    if (_savingGroupOrder || oldIndex == newIndex) return;
+    groupIds.insert(newIndex, groupIds.removeAt(oldIndex));
+    setState(() => _savingGroupOrder = true);
     try {
-      await controller.reorderSubscriptions([
-        for (final group in reordered)
-          if (group.subscription?.isUrlSubscription == true) group.id,
-      ]);
+      await saveOrder(groupIds.nonNulls.toList());
     } finally {
-      if (mounted) setState(() => _savingSubscriptionOrder = false);
+      if (mounted) setState(() => _savingGroupOrder = false);
     }
   }
 
@@ -440,18 +472,31 @@ class _NodesPageState extends State<NodesPage> {
     AppController controller,
     List<ProxyNode> nodes, {
     String? groupId,
+    List<WireGuardProfile> wireGuardProfiles = const [],
   }) {
     if (!controller.canQueueNodeTest) {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('正在应用设置，请稍候')));
       return;
     }
-    if (nodes.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('没有可测试的节点')));
+    if (nodes.isEmpty &&
+        !wireGuardProfiles.any(controller.canTestWireGuardProfile)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            controller.running && wireGuardProfiles.isNotEmpty
+                ? '断开连接后可测速其他 WireGuard 节点'
+                : '没有可测试的节点',
+          ),
+        ),
+      );
       return;
     }
-    controller.queueNodeTest(nodes, groupId: groupId);
+    controller.queueNodeTest(
+      nodes,
+      groupId: groupId,
+      wireGuardProfiles: wireGuardProfiles,
+    );
   }
 
   Future<void> _updateSubscription(
@@ -1344,27 +1389,6 @@ int? _updateMinutesFromHours(String value) {
   return (hours * 60).round();
 }
 
-String _protocolBadge(String protocol) => switch (protocol.toLowerCase()) {
-  'shadowsocks' => 'SS',
-  'shadowsocksr' => 'SSR',
-  'vmess' => 'VM',
-  'vless' => 'VLESS',
-  'trojan' => 'TR',
-  'hysteria' => 'HY',
-  'hysteria2' => 'HY2',
-  'tuic' => 'TUIC',
-  'wireguard' => 'WG',
-  'socks' => 'SOCKS',
-  'http' => 'HTTP',
-  'ssh' => 'SSH',
-  'tor' => 'TOR',
-  'anytls' => 'ANY',
-  _ =>
-    protocol.length <= 4
-        ? protocol.toUpperCase()
-        : protocol.substring(0, 3).toUpperCase(),
-};
-
 class _NodeGroup {
   const _NodeGroup({
     required this.id,
@@ -1438,20 +1462,23 @@ class _GroupCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) =>
-      _GroupCardSurface(active: group.active, builder: _buildContent);
+      NodeGroupSurface(active: group.active, builder: _buildContent);
 
   Widget _buildContent(
     BuildContext context,
     bool hovered,
     ValueChanged<bool> onPressedChanged,
   ) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     final subscription = group.subscription;
     final testRequested =
         controller.isNodeTestRequested(group.id) ||
         controller.isNodeTestRequested(null);
-    final actionStyle = _groupActionStyle(scheme, background: false, size: 32);
+    final actionStyle = nodeGroupActionStyle(
+      scheme,
+      background: false,
+      size: 32,
+    );
     final isUrlSubscription = subscription?.isUrlSubscription ?? false;
     final filterActive =
         subscription != null &&
@@ -1464,533 +1491,193 @@ class _GroupCard extends StatelessWidget {
         : isUrlSubscription
         ? '订阅'
         : '节点集合';
-    final content = Padding(
-      padding: EdgeInsets.only(left: reorderIndex == null ? 0 : 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: onToggleExpanded,
-              onHighlightChanged: onPressedChanged,
-              hoverColor: Colors.transparent,
-              highlightColor: Colors.transparent,
-              splashFactory: NoSplash.splashFactory,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 38,
-                      height: 38,
-                      decoration: BoxDecoration(
-                        color: scheme.surfaceContainerHighest,
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Icon(
-                        isUrlSubscription
-                            ? Icons.cloud_outlined
-                            : Icons.folder_outlined,
-                        size: 19,
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  group.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
-                              if (subscription?.lastError != null) ...[
-                                const SizedBox(width: 6),
-                                Tooltip(
-                                  message: subscription!.lastError!,
-                                  child: Icon(
-                                    Icons.error_outline_rounded,
-                                    size: 16,
-                                    color: scheme.error,
-                                  ),
-                                ),
-                              ],
-                            ],
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '$typeLabel · $countLabel',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    if (subscription != null && !subscription.autoEnabled) ...[
-                      _GroupActionButton(
-                        tooltip: '已移出自动候选，点击恢复',
-                        onPressed: onToggleGroupAuto,
-                        child: Icon(
-                          Icons.playlist_remove_rounded,
-                          size: 17,
-                          color: scheme.tertiary,
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                    ],
-                    _GroupActionButton(
-                      tooltip: '测试本组节点',
-                      onPressed: testRequested || group.nodes.isEmpty
-                          ? null
-                          : onTest,
-                      child: testRequested
-                          ? const SizedBox(
-                              width: 15,
-                              height: 15,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.speed_rounded, size: 18),
-                    ),
-                    if (onEditGroup != null ||
-                        onDeleteGroup != null ||
-                        onAddNode != null ||
-                        onUpdate != null ||
-                        onFilter != null ||
-                        onSort != null ||
-                        onToggleGroupAuto != null) ...[
-                      const SizedBox(width: 2),
-                      PopupMenuButton<String>(
-                        tooltip: '分组设置',
-                        iconSize: 18,
-                        padding: EdgeInsets.zero,
-                        menuPadding: const EdgeInsets.symmetric(vertical: 6),
-                        style: actionStyle,
-                        icon: updating
-                            ? const SizedBox(
-                                width: 15,
-                                height: 15,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : Icon(
-                                Icons.more_vert_rounded,
-                                size: 18,
-                                color: scheme.onSurfaceVariant,
-                              ),
-                        onSelected: (value) {
-                          switch (value) {
-                            case 'update':
-                              onUpdate?.call();
-                            case 'edit':
-                              onEditGroup?.call();
-                            case 'addNode':
-                              onAddNode?.call();
-                            case 'filter':
-                              onFilter?.call();
-                            case 'sort':
-                              onSort?.call();
-                            case 'groupAuto':
-                              onToggleGroupAuto?.call();
-                            case 'delete':
-                              onDeleteGroup?.call();
-                          }
-                        },
-                        itemBuilder: (context) => [
-                          if (onUpdate != null)
-                            _menuItem(
-                              value: 'update',
-                              icon: Icons.refresh_rounded,
-                              label: updating ? '正在更新…' : '更新订阅',
-                              enabled: !updating,
-                            ),
-                          if (onEditGroup != null)
-                            _menuItem(
-                              value: 'edit',
-                              icon: Icons.edit_outlined,
-                              label: isUrlSubscription ? '编辑订阅' : '重命名分组',
-                            ),
-                          if (onAddNode != null)
-                            _menuItem(
-                              value: 'addNode',
-                              icon: Icons.add_rounded,
-                              label: '添加节点',
-                            ),
-                          if (onFilter != null)
-                            _menuItem(
-                              value: 'filter',
-                              icon: Icons.filter_alt_outlined,
-                              label: '节点过滤',
-                              trailing: filterActive
-                                  ? '${group.filteredCount}/${group.totalCount}'
-                                  : null,
-                            ),
-                          if (onSort != null)
-                            _menuItem(
-                              value: 'sort',
-                              icon: Icons.sort_rounded,
-                              label: '节点排序',
-                              trailing: sortActive
-                                  ? _sortLabel(
-                                      subscription.sortMode,
-                                      subscription.sortDescending,
-                                    )
-                                  : null,
-                            ),
-                          if (onToggleGroupAuto != null)
-                            _menuItem(
-                              value: 'groupAuto',
-                              icon: subscription!.autoEnabled
-                                  ? Icons.playlist_remove_rounded
-                                  : Icons.playlist_add_check_rounded,
-                              label: subscription.autoEnabled
-                                  ? '移出自动候选'
-                                  : '加入自动候选',
-                            ),
-                          if (onDeleteGroup != null) ...[
-                            const PopupMenuDivider(height: 9),
-                            _menuItem(
-                              value: 'delete',
-                              icon: Icons.delete_outline_rounded,
-                              label: isUrlSubscription ? '删除订阅' : '删除分组',
-                              color: scheme.error,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
-                    const SizedBox(width: 4),
-                    Container(
-                      width: 36,
-                      height: 36,
-                      alignment: Alignment.center,
-                      decoration: BoxDecoration(
-                        color: hovered
-                            ? actionStyle.overlayColor?.resolve({
-                                WidgetState.hovered,
-                              })
-                            : scheme.surfaceContainerHighest.withValues(
-                                alpha: 0.55,
-                              ),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: AnimatedRotation(
-                        turns: expanded ? 0.5 : 0,
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        child: Icon(
-                          Icons.expand_more_rounded,
-                          size: 20,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          if (subscription != null)
-            _SubscriptionMeta(subscription: subscription),
-          AnimatedSize(
-            duration: const Duration(milliseconds: 240),
-            curve: Curves.easeOutCubic,
-            alignment: Alignment.topCenter,
-            child: expanded
-                ? Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Divider(
-                        height: 1,
-                        indent: 16,
-                        endIndent: 16,
-                        color: scheme.outlineVariant.withValues(alpha: 0.4),
-                      ),
-                      if (group.nodes.isEmpty)
-                        _EmptyGroup(
-                          filterActive: group.filterActive,
-                          canAdd: onAddNode != null,
-                          onFilter: onFilter,
-                          onAdd: onAddNode,
-                        )
-                      else
-                        LayoutBuilder(
-                          builder: (context, constraints) {
-                            final columns = constraints.maxWidth >= 940
-                                ? 4
-                                : constraints.maxWidth >= 620
-                                ? 3
-                                : 2;
-                            return GridView.builder(
-                              shrinkWrap: true,
-                              primary: false,
-                              physics: const NeverScrollableScrollPhysics(),
-                              padding: const EdgeInsets.fromLTRB(10, 8, 10, 12),
-                              itemCount: group.nodes.length,
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: columns,
-                                    mainAxisExtent: 74,
-                                    crossAxisSpacing: 8,
-                                    mainAxisSpacing: 8,
-                                  ),
-                              itemBuilder: (context, index) {
-                                final node = group.nodes[index];
-                                return _NodeTile(
-                                  node: node,
-                                  controller: controller,
-                                  current: node.id == highlightedId,
-                                  onSelect: () => onSelectNode(node.id),
-                                  onToggleAuto: () => onToggleAuto(node.id),
-                                  onToggleFavorite: () =>
-                                      onToggleFavorite(node.id),
-                                  onEdit: () => onEditNode(node),
-                                  onDelete: () => onDeleteNode(node),
-                                );
-                              },
-                            );
-                          },
-                        ),
-                    ],
-                  )
-                : const SizedBox(width: double.infinity),
-          ),
-        ],
-      ),
-    );
-    return Stack(
-      alignment: Alignment.centerLeft,
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        content,
-        if (reorderIndex case final index?)
-          Positioned(
-            left: 0,
-            child: ReorderableDragStartListener(
-              index: index,
-              enabled: reorderEnabled,
-              child: Tooltip(
-                message: '拖拽调整订阅顺序',
-                child: MouseRegion(
-                  cursor: reorderEnabled
-                      ? SystemMouseCursors.grab
-                      : MouseCursor.defer,
-                  child: SizedBox(
-                    width: 30,
-                    height: 44,
-                    child: Icon(
-                      Icons.drag_indicator_rounded,
-                      size: 20,
-                      color: scheme.onSurfaceVariant,
-                    ),
+        NodeGroupHeader(
+          icon: isUrlSubscription
+              ? Icons.cloud_outlined
+              : Icons.folder_outlined,
+          title: group.name,
+          subtitle: '$typeLabel · $countLabel',
+          titleTrailing: subscription?.lastError == null
+              ? null
+              : Tooltip(
+                  message: subscription!.lastError!,
+                  child: Icon(
+                    Icons.error_outline_rounded,
+                    size: 16,
+                    color: scheme.error,
                   ),
                 ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _GroupCardSurface extends StatefulWidget {
-  const _GroupCardSurface({required this.active, required this.builder});
-
-  final bool active;
-  final Widget Function(
-    BuildContext context,
-    bool hovered,
-    ValueChanged<bool> onPressedChanged,
-  )
-  builder;
-
-  @override
-  State<_GroupCardSurface> createState() => _GroupCardSurfaceState();
-}
-
-class _GroupCardSurfaceState extends State<_GroupCardSurface>
-    with SingleTickerProviderStateMixin {
-  late final _pressOpacity = AnimationController(
-    vsync: this,
-    reverseDuration: const Duration(milliseconds: 200),
-  );
-  bool _hovered = false;
-
-  @override
-  void dispose() {
-    _pressOpacity.dispose();
-    super.dispose();
-  }
-
-  void _updatePressHighlight(bool pressed) {
-    if (pressed) {
-      // Even a quick tap that ends before the next frame leaves a visible fade.
-      _pressOpacity.value = 1;
-    } else {
-      _pressOpacity.reverse();
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final background = scheme.surfaceContainerLow;
-    return MouseRegion(
-      onEnter: (_) => setState(() => _hovered = true),
-      onExit: (_) => setState(() => _hovered = false),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: _hovered
-              ? Color.alphaBlend(theme.hoverColor, background)
-              : background,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            width: widget.active ? 1.4 : 1,
-            color: widget.active
-                ? scheme.primary.withValues(alpha: 0.65)
-                : scheme.outlineVariant.withValues(alpha: 0.35),
-          ),
-        ),
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: IgnorePointer(
-                child: FadeTransition(
-                  opacity: _pressOpacity,
-                  child: ColoredBox(color: theme.highlightColor),
+          expanded: expanded,
+          hovered: hovered,
+          onToggle: onToggleExpanded,
+          onHighlightChanged: onPressedChanged,
+          actions: [
+            if (subscription != null && !subscription.autoEnabled) ...[
+              NodeGroupActionButton(
+                tooltip: '已移出自动候选，点击恢复',
+                onPressed: onToggleGroupAuto,
+                child: Icon(
+                  Icons.playlist_remove_rounded,
+                  size: 17,
+                  color: scheme.tertiary,
                 ),
               ),
+              const SizedBox(width: 2),
+            ],
+            NodeGroupActionButton(
+              tooltip: '测试本组节点',
+              onPressed: testRequested || group.nodes.isEmpty ? null : onTest,
+              child: testRequested
+                  ? const SizedBox(
+                      width: 15,
+                      height: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.speed_rounded, size: 18),
             ),
-            widget.builder(context, _hovered, _updatePressHighlight),
+            if (onEditGroup != null ||
+                onDeleteGroup != null ||
+                onAddNode != null ||
+                onUpdate != null ||
+                onFilter != null ||
+                onSort != null ||
+                onToggleGroupAuto != null) ...[
+              const SizedBox(width: 2),
+              PopupMenuButton<String>(
+                tooltip: '分组设置',
+                iconSize: 18,
+                padding: EdgeInsets.zero,
+                menuPadding: const EdgeInsets.symmetric(vertical: 6),
+                style: actionStyle,
+                icon: updating
+                    ? const SizedBox(
+                        width: 15,
+                        height: 15,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        Icons.more_vert_rounded,
+                        size: 18,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                onSelected: (value) {
+                  switch (value) {
+                    case 'update':
+                      onUpdate?.call();
+                    case 'edit':
+                      onEditGroup?.call();
+                    case 'addNode':
+                      onAddNode?.call();
+                    case 'filter':
+                      onFilter?.call();
+                    case 'sort':
+                      onSort?.call();
+                    case 'groupAuto':
+                      onToggleGroupAuto?.call();
+                    case 'delete':
+                      onDeleteGroup?.call();
+                  }
+                },
+                itemBuilder: (context) => [
+                  if (onUpdate != null)
+                    nodeMenuItem(
+                      value: 'update',
+                      icon: Icons.refresh_rounded,
+                      label: updating ? '正在更新…' : '更新订阅',
+                      enabled: !updating,
+                    ),
+                  if (onEditGroup != null)
+                    nodeMenuItem(
+                      value: 'edit',
+                      icon: Icons.edit_outlined,
+                      label: isUrlSubscription ? '编辑订阅' : '重命名分组',
+                    ),
+                  if (onAddNode != null)
+                    nodeMenuItem(
+                      value: 'addNode',
+                      icon: Icons.add_rounded,
+                      label: '添加节点',
+                    ),
+                  if (onFilter != null)
+                    nodeMenuItem(
+                      value: 'filter',
+                      icon: Icons.filter_alt_outlined,
+                      label: '节点过滤',
+                      trailing: filterActive
+                          ? '${group.filteredCount}/${group.totalCount}'
+                          : null,
+                    ),
+                  if (onSort != null)
+                    nodeMenuItem(
+                      value: 'sort',
+                      icon: Icons.sort_rounded,
+                      label: '节点排序',
+                      trailing: sortActive
+                          ? _sortLabel(
+                              subscription.sortMode,
+                              subscription.sortDescending,
+                            )
+                          : null,
+                    ),
+                  if (onToggleGroupAuto != null)
+                    nodeMenuItem(
+                      value: 'groupAuto',
+                      icon: subscription!.autoEnabled
+                          ? Icons.playlist_remove_rounded
+                          : Icons.playlist_add_check_rounded,
+                      label: subscription.autoEnabled ? '移出自动候选' : '加入自动候选',
+                    ),
+                  if (onDeleteGroup != null) ...[
+                    const PopupMenuDivider(height: 9),
+                    nodeMenuItem(
+                      value: 'delete',
+                      icon: Icons.delete_outline_rounded,
+                      label: isUrlSubscription ? '删除订阅' : '删除分组',
+                      color: scheme.error,
+                    ),
+                  ],
+                ],
+              ),
+            ],
           ],
         ),
-      ),
-    );
-  }
-}
-
-ButtonStyle _groupActionStyle(
-  ColorScheme scheme, {
-  bool background = true,
-  double size = 36,
-}) {
-  return IconButton.styleFrom(
-    backgroundColor: background
-        ? scheme.surfaceContainerHighest.withValues(alpha: 0.55)
-        : Colors.transparent,
-    foregroundColor: scheme.onSurfaceVariant,
-    disabledBackgroundColor: background
-        ? scheme.surfaceContainerHighest.withValues(alpha: 0.3)
-        : Colors.transparent,
-    disabledForegroundColor: scheme.onSurfaceVariant.withValues(alpha: 0.45),
-    fixedSize: Size(size, size),
-    minimumSize: Size(size, size),
-    padding: EdgeInsets.zero,
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-  );
-}
-
-class _GroupActionButton extends StatelessWidget {
-  const _GroupActionButton({
-    required this.tooltip,
-    required this.onPressed,
-    required this.child,
-  });
-
-  final String tooltip;
-  final VoidCallback? onPressed;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return IconButton(
-      tooltip: tooltip,
-      onPressed: onPressed,
-      style: _groupActionStyle(scheme, background: false, size: 32),
-      icon: child,
-    );
-  }
-}
-
-PopupMenuItem<String> _menuItem({
-  required String value,
-  required IconData icon,
-  required String label,
-  String? trailing,
-  Color? color,
-  bool enabled = true,
-}) {
-  return PopupMenuItem<String>(
-    value: value,
-    enabled: enabled,
-    height: 38,
-    padding: const EdgeInsets.symmetric(horizontal: 12),
-    child: _MenuRow(icon: icon, label: label, trailing: trailing, color: color),
-  );
-}
-
-class _MenuRow extends StatelessWidget {
-  const _MenuRow({
-    required this.icon,
-    required this.label,
-    this.trailing,
-    this.color,
-  });
-
-  final IconData icon;
-  final String label;
-  final String? trailing;
-  final Color? color;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    final foreground = color ?? scheme.onSurface;
-    return Row(
-      children: [
-        Icon(icon, size: 17, color: color ?? scheme.onSurfaceVariant),
-        const SizedBox(width: 10),
-        Expanded(
-          child: Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: foreground,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
+        if (subscription != null) _SubscriptionMeta(subscription: subscription),
+        NodeGroupBody(
+          expanded: expanded,
+          child: group.nodes.isEmpty
+              ? NodeGroupEmpty(
+                  filterActive: group.filterActive,
+                  showAdd: onAddNode != null,
+                  onFilter: onFilter,
+                  onAdd: onAddNode,
+                )
+              : NodeGrid(
+                  itemCount: group.nodes.length,
+                  itemBuilder: (context, index) {
+                    final node = group.nodes[index];
+                    return _NodeTile(
+                      node: node,
+                      controller: controller,
+                      current: node.id == highlightedId,
+                      onSelect: () => onSelectNode(node.id),
+                      onToggleAuto: () => onToggleAuto(node.id),
+                      onToggleFavorite: () => onToggleFavorite(node.id),
+                      onEdit: () => onEditNode(node),
+                      onDelete: () => onDeleteNode(node),
+                    );
+                  },
+                ),
         ),
-        if (trailing != null) ...[
-          const SizedBox(width: 12),
-          Text(
-            trailing!,
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
-          ),
-        ],
       ],
+    );
+    return ReorderableNodeGroup(
+      index: reorderIndex,
+      enabled: reorderEnabled,
+      tooltip: isUrlSubscription ? '拖拽调整订阅顺序' : '拖拽调整节点集合顺序',
+      child: content,
     );
   }
 }
@@ -2005,55 +1692,6 @@ String _sortLabel(NodeSortMode mode, bool descending) {
     NodeSortMode.favorite => '收藏',
   };
   return '$label ${descending ? '↓' : '↑'}';
-}
-
-class _EmptyGroup extends StatelessWidget {
-  const _EmptyGroup({
-    required this.filterActive,
-    required this.canAdd,
-    required this.onFilter,
-    required this.onAdd,
-  });
-
-  final bool filterActive;
-  final bool canAdd;
-  final VoidCallback? onFilter;
-  final VoidCallback? onAdd;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 12, 14, 16),
-      child: Row(
-        children: [
-          Icon(
-            filterActive ? Icons.filter_alt_off_outlined : Icons.inbox_outlined,
-            size: 18,
-            color: scheme.onSurfaceVariant,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              filterActive ? '过滤后没有节点' : '暂无节点',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          if (filterActive && onFilter != null)
-            TextButton(onPressed: onFilter, child: const Text('调整过滤'))
-          else if (canAdd && onAdd != null)
-            TextButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add_rounded, size: 18),
-              label: const Text('添加节点'),
-            ),
-        ],
-      ),
-    );
-  }
 }
 
 class _EditSubscriptionResult {
@@ -2398,22 +2036,6 @@ String _updatedText(DateTime time) {
   return '更新于 ${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
 }
 
-class _NodeStatusTooltip extends StatelessWidget {
-  const _NodeStatusTooltip({required this.message, required this.child});
-
-  final String message;
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    // Keep adjacent tooltip overlays from sharing a semantics traversal parent.
-    return Semantics(
-      container: true,
-      child: Tooltip(message: message, child: child),
-    );
-  }
-}
-
 class _NodeTile extends StatelessWidget {
   const _NodeTile({
     required this.node,
@@ -2437,223 +2059,96 @@ class _NodeTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+    final scheme = Theme.of(context).colorScheme;
     final latency = controller.latencies[node.id];
     final latencyError = controller.latencyErrors[node.id];
-    final latencyColor = latency == null
-        ? scheme.outline
-        : latency < 150
-        ? const Color(0xFF1B9E63)
-        : latency < 350
-        ? const Color(0xFFC68A00)
-        : scheme.error;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onSelect,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 220),
-          curve: Curves.easeOutCubic,
-          padding: const EdgeInsets.fromLTRB(10, 6, 6, 4),
-          decoration: BoxDecoration(
-            color: current
-                ? scheme.primaryContainer.withValues(alpha: 0.5)
-                : scheme.surfaceContainerHighest.withValues(alpha: 0.42),
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: current
-                  ? scheme.primary.withValues(alpha: 0.6)
-                  : scheme.outlineVariant.withValues(alpha: 0.3),
+    final testing = controller.isSingleNodeTestRequested(node.id);
+    return NodeTile(
+      name: node.name,
+      protocol: node.protocol,
+      address: '${node.server}:${node.port}',
+      current: current,
+      onSelect: onSelect,
+      footer: Row(
+        children: [
+          NodeLatency(delay: latency, error: latencyError, testing: testing),
+          const Spacer(),
+          if (node.favorite) ...[
+            NodeStatusTooltip(
+              message: '已收藏',
+              child: Icon(Icons.star_rounded, size: 14, color: scheme.tertiary),
+            ),
+            const SizedBox(width: 3),
+          ],
+          if (!node.autoEnabled) ...[
+            NodeStatusTooltip(
+              message: '已移出自动候选',
+              child: Icon(
+                Icons.playlist_remove_rounded,
+                size: 15,
+                color: scheme.outline,
+              ),
+            ),
+            const SizedBox(width: 3),
+          ],
+          SizedBox(
+            width: 24,
+            height: 24,
+            child: PopupMenuButton<String>(
+              tooltip: '节点操作',
+              padding: EdgeInsets.zero,
+              iconSize: 17,
+              onSelected: (value) {
+                switch (value) {
+                  case 'test':
+                    controller.queueSingleNodeTest(node);
+                  case 'edit':
+                    onEdit();
+                  case 'delete':
+                    onDelete();
+                  case 'favorite':
+                    onToggleFavorite();
+                  case 'auto':
+                    onToggleAuto();
+                }
+              },
+              itemBuilder: (context) => [
+                nodeMenuItem(
+                  value: 'test',
+                  icon: Icons.speed_rounded,
+                  label: '测试节点延迟',
+                  enabled: !testing && controller.canQueueNodeTest,
+                ),
+                nodeMenuItem(
+                  value: 'edit',
+                  icon: Icons.edit_outlined,
+                  label: '编辑节点',
+                ),
+                nodeMenuItem(
+                  value: 'favorite',
+                  icon: node.favorite
+                      ? Icons.star_outline_rounded
+                      : Icons.star_rounded,
+                  label: node.favorite ? '取消收藏' : '收藏',
+                ),
+                nodeMenuItem(
+                  value: 'auto',
+                  icon: node.autoEnabled
+                      ? Icons.remove_done_rounded
+                      : Icons.playlist_add_check_rounded,
+                  label: node.autoEnabled ? '移出自动候选' : '加入自动候选',
+                ),
+                const PopupMenuDivider(height: 9),
+                nodeMenuItem(
+                  value: 'delete',
+                  icon: Icons.delete_outline_rounded,
+                  label: '删除',
+                  color: Theme.of(context).colorScheme.error,
+                ),
+              ],
             ),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      node.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 2),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 5,
-                      vertical: 1,
-                    ),
-                    decoration: BoxDecoration(
-                      color: current
-                          ? scheme.primary
-                          : scheme.surfaceContainerHighest,
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: Text(
-                      _protocolBadge(node.protocol),
-                      style: TextStyle(
-                        fontSize: 8,
-                        fontWeight: FontWeight.w800,
-                        color: current
-                            ? scheme.onPrimary
-                            : scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      '${node.server}:${node.port}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 3),
-              Row(
-                children: [
-                  if (latencyError != null)
-                    _NodeStatusTooltip(
-                      message: latencyError,
-                      child: AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: scheme.error.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          '失败',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.error,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    )
-                  else if (latency == null)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      child: Text(
-                        '—',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: latencyColor,
-                        ),
-                      ),
-                    )
-                  else
-                    AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: latencyColor.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        formatLatency(latency),
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: latencyColor,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  const Spacer(),
-                  if (node.favorite) ...[
-                    _NodeStatusTooltip(
-                      message: '已收藏',
-                      child: Icon(
-                        Icons.star_rounded,
-                        size: 14,
-                        color: scheme.tertiary,
-                      ),
-                    ),
-                    const SizedBox(width: 3),
-                  ],
-                  if (!node.autoEnabled) ...[
-                    _NodeStatusTooltip(
-                      message: '已移出自动候选',
-                      child: Icon(
-                        Icons.playlist_remove_rounded,
-                        size: 15,
-                        color: scheme.outline,
-                      ),
-                    ),
-                    const SizedBox(width: 3),
-                  ],
-                  SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: PopupMenuButton<String>(
-                      tooltip: '节点操作',
-                      padding: EdgeInsets.zero,
-                      iconSize: 17,
-                      onSelected: (value) {
-                        switch (value) {
-                          case 'edit':
-                            onEdit();
-                          case 'delete':
-                            onDelete();
-                          case 'favorite':
-                            onToggleFavorite();
-                          case 'auto':
-                            onToggleAuto();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        _menuItem(
-                          value: 'edit',
-                          icon: Icons.edit_outlined,
-                          label: '编辑节点',
-                        ),
-                        _menuItem(
-                          value: 'favorite',
-                          icon: node.favorite
-                              ? Icons.star_outline_rounded
-                              : Icons.star_rounded,
-                          label: node.favorite ? '取消收藏' : '收藏',
-                        ),
-                        _menuItem(
-                          value: 'auto',
-                          icon: node.autoEnabled
-                              ? Icons.remove_done_rounded
-                              : Icons.playlist_add_check_rounded,
-                          label: node.autoEnabled ? '移出自动候选' : '加入自动候选',
-                        ),
-                        const PopupMenuDivider(height: 9),
-                        _menuItem(
-                          value: 'delete',
-                          icon: Icons.delete_outline_rounded,
-                          label: '删除',
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
+        ],
       ),
     );
   }

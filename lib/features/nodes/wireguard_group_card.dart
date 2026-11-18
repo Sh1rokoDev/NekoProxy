@@ -7,16 +7,16 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../services/qr_service.dart';
 import '../../state/app_controller.dart';
+import 'node_group_widgets.dart';
 import 'wireguard_profile_editor.dart';
 import 'wireguard_qr_scanner.dart';
 
-enum _ProfileAction { editFields, editSource, exportFile, delete }
+enum _ProfileAction { test, editFields, editSource, exportFile, delete }
 
-enum _GroupAction { rename, delete }
+enum _GroupAction { rename, add, delete }
 
 enum _QrSource { camera, image }
 
@@ -38,11 +38,19 @@ class WireGuardGroupCard extends StatefulWidget {
     required this.controller,
     required this.group,
     required this.profiles,
+    required this.reorderIndex,
+    required this.reorderEnabled,
+    required this.expanded,
+    required this.onToggleExpanded,
   });
 
   final AppController controller;
   final WireGuardGroup group;
   final List<WireGuardProfile> profiles;
+  final int reorderIndex;
+  final bool reorderEnabled;
+  final bool expanded;
+  final VoidCallback onToggleExpanded;
 
   @override
   State<WireGuardGroupCard> createState() => _WireGuardGroupCardState();
@@ -322,6 +330,8 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
                 widget.controller.saveWireGuardGroup(name, id: widget.group.id),
           );
         }
+      case _GroupAction.add:
+        await _add();
       case _GroupAction.delete:
         if (await _confirmDelete(widget.group.name) && mounted) {
           await _run(
@@ -336,6 +346,8 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
     _ProfileAction action,
   ) async {
     switch (action) {
+      case _ProfileAction.test:
+        widget.controller.queueWireGuardTest([profile]);
       case _ProfileAction.editFields:
         await _edit(profile: profile);
       case _ProfileAction.editSource:
@@ -356,74 +368,205 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
     final controller = widget.controller;
     final enabled = !_busy && !controller.busy && !controller.changingWireGuard;
     final scheme = Theme.of(context).colorScheme;
-    return SectionCard(
-      title: widget.group.name,
-      icon: Icons.vpn_key_outlined,
-      trailing: PopupMenuButton<_GroupAction>(
-        tooltip: 'WireGuard 分组操作',
-        enabled: enabled,
-        onSelected: _groupAction,
-        itemBuilder: (_) => const [
-          PopupMenuItem(value: _GroupAction.rename, child: Text('重命名分组')),
-          PopupMenuItem(value: _GroupAction.delete, child: Text('删除分组')),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        spacing: 8,
-        children: [
-          if (widget.profiles.isEmpty) const Text('暂无 WireGuard 节点'),
-          for (final profile in widget.profiles)
-            Material(
-              type: MaterialType.transparency,
-              child: ListTile(
-                title: Text(profile.name),
-                selected: controller.activeWireGuard?.id == profile.id,
-                selectedTileColor: scheme.secondaryContainer,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
+    final activeProfile = controller.activeWireGuard;
+    final hasProfiles = controller.snapshot.wireGuardProfiles.any(
+      (profile) => profile.groupId == widget.group.id,
+    );
+    final testing = widget.profiles.any(
+      (profile) => controller.isWireGuardTestRequested(profile.id),
+    );
+    final canTest = widget.profiles.any(controller.canTestWireGuardProfile);
+    final hasInactiveProfiles =
+        controller.running &&
+        widget.profiles.any((profile) => profile.id != activeProfile?.id);
+    return NodeGroupSurface(
+      active: activeProfile?.groupId == widget.group.id,
+      builder: (context, hovered, onHighlightChanged) => ReorderableNodeGroup(
+        index: widget.reorderIndex,
+        enabled: enabled && widget.reorderEnabled,
+        tooltip: '拖拽调整 WireGuard 分组顺序',
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            NodeGroupHeader(
+              title: widget.group.name,
+              subtitle: 'WireGuard · ${widget.profiles.length} 节点',
+              icon: Icons.vpn_key_outlined,
+              expanded: widget.expanded,
+              hovered: hovered,
+              onToggle: widget.onToggleExpanded,
+              onHighlightChanged: onHighlightChanged,
+              actions: [
+                NodeGroupActionButton(
+                  tooltip: !hasInactiveProfiles
+                      ? '测试本组 WireGuard 节点'
+                      : canTest
+                      ? '测试本组当前连接的 WireGuard 节点'
+                      : '断开连接后可测试本组 WireGuard 节点',
+                  onPressed: canTest && !testing
+                      ? () => controller.queueWireGuardTest(
+                          widget.profiles,
+                          groupId: widget.group.id,
+                        )
+                      : null,
+                  child: testing
+                      ? const SizedBox.square(
+                          dimension: 15,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.speed_rounded, size: 18),
                 ),
-                leading: Icon(
-                  controller.activeWireGuard?.id == profile.id
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_off,
-                ),
-                onTap: enabled && !controller.snapshot.useCustomConfig
-                    ? () => _run(() => controller.selectWireGuard(profile.id))
-                    : null,
-                trailing: PopupMenuButton<_ProfileAction>(
-                  tooltip: '配置操作：${profile.name}',
+                const SizedBox(width: 2),
+                PopupMenuButton<_GroupAction>(
+                  tooltip: 'WireGuard 分组操作',
                   enabled: enabled,
-                  onSelected: (action) => _profileAction(profile, action),
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(
-                      value: _ProfileAction.editFields,
-                      child: Text('编辑节点'),
+                  iconSize: 18,
+                  padding: EdgeInsets.zero,
+                  menuPadding: const EdgeInsets.symmetric(vertical: 6),
+                  style: nodeGroupActionStyle(
+                    scheme,
+                    background: false,
+                    size: 32,
+                  ),
+                  icon: Icon(
+                    Icons.more_vert_rounded,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  onSelected: _groupAction,
+                  itemBuilder: (_) => [
+                    nodeMenuItem(
+                      value: _GroupAction.rename,
+                      icon: Icons.edit_outlined,
+                      label: '重命名分组',
                     ),
-                    PopupMenuItem(
-                      value: _ProfileAction.editSource,
-                      child: Text('编辑 .conf'),
-                    ),
-                    PopupMenuItem(
-                      value: _ProfileAction.exportFile,
-                      child: Text('导出 .conf'),
-                    ),
-                    PopupMenuItem(
-                      value: _ProfileAction.delete,
-                      child: Text('删除节点'),
+                    if (hasProfiles)
+                      nodeMenuItem(
+                        value: _GroupAction.add,
+                        icon: Icons.add_rounded,
+                        label: '添加 WireGuard 节点',
+                      ),
+                    const PopupMenuDivider(height: 9),
+                    nodeMenuItem(
+                      value: _GroupAction.delete,
+                      icon: Icons.delete_outline_rounded,
+                      label: '删除分组',
+                      color: scheme.error,
                     ),
                   ],
                 ),
+              ],
+            ),
+            NodeGroupBody(
+              expanded: widget.expanded,
+              child: widget.profiles.isEmpty
+                  ? NodeGroupEmpty(
+                      message: hasProfiles ? '没有匹配的节点' : '暂无 WireGuard 节点',
+                      addLabel: '添加 WireGuard 节点',
+                      showAdd: !hasProfiles,
+                      onAdd: enabled ? _add : null,
+                    )
+                  : NodeGrid(
+                      itemCount: widget.profiles.length,
+                      itemBuilder: (context, index) {
+                        final profile = widget.profiles[index];
+                        return _profileTile(
+                          profile,
+                          current: activeProfile?.id == profile.id,
+                          enabled: enabled,
+                        );
+                      },
+                    ),
+            ),
+            if (_error case final error?)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Text(error, style: TextStyle(color: scheme.error)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _profileTile(
+    WireGuardProfile profile, {
+    required bool current,
+    required bool enabled,
+  }) {
+    final controller = widget.controller;
+    final latency = controller.wireGuardLatencyFor(profile);
+    final testing = controller.isWireGuardTestRequested(profile.id);
+    String address;
+    try {
+      address = profile.parse().firstEndpoint;
+    } on FormatException {
+      // Keep saved profiles with invalid configuration editable.
+      address = '—';
+    }
+    return Semantics(
+      selected: current,
+      child: NodeTile(
+        name: profile.name,
+        protocol: 'wireguard',
+        address: address,
+        current: current,
+        onSelect: enabled && !widget.controller.snapshot.useCustomConfig
+            ? () => _run(() => widget.controller.selectWireGuard(profile.id))
+            : null,
+        footer: Row(
+          children: [
+            NodeLatency(
+              delay: latency?.delay,
+              error: latency?.error,
+              testing: testing,
+            ),
+            const Spacer(),
+            SizedBox(
+              width: 24,
+              height: 24,
+              child: PopupMenuButton<_ProfileAction>(
+                tooltip: '配置操作：${profile.name}',
+                enabled: enabled,
+                padding: EdgeInsets.zero,
+                iconSize: 17,
+                onSelected: (action) => _profileAction(profile, action),
+                itemBuilder: (context) => [
+                  nodeMenuItem(
+                    value: _ProfileAction.test,
+                    icon: Icons.speed_rounded,
+                    label: controller.running && !current
+                        ? '断开连接后可测速'
+                        : '测试节点延迟',
+                    enabled:
+                        !testing && controller.canTestWireGuardProfile(profile),
+                  ),
+                  nodeMenuItem(
+                    value: _ProfileAction.editFields,
+                    icon: Icons.edit_outlined,
+                    label: '编辑节点',
+                  ),
+                  nodeMenuItem(
+                    value: _ProfileAction.editSource,
+                    icon: Icons.code_rounded,
+                    label: '编辑 .conf',
+                  ),
+                  nodeMenuItem(
+                    value: _ProfileAction.exportFile,
+                    icon: Icons.file_download_outlined,
+                    label: '导出 .conf',
+                  ),
+                  const PopupMenuDivider(height: 9),
+                  nodeMenuItem(
+                    value: _ProfileAction.delete,
+                    icon: Icons.delete_outline_rounded,
+                    label: '删除节点',
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ],
               ),
             ),
-          OutlinedButton.icon(
-            onPressed: enabled ? _add : null,
-            icon: const Icon(Icons.add),
-            label: const Text('添加 WireGuard 节点'),
-          ),
-          if (_error case final error?)
-            Text(error, style: TextStyle(color: scheme.error)),
-        ],
+          ],
+        ),
       ),
     );
   }

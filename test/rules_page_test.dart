@@ -52,6 +52,29 @@ void main() {
     expect(find.text('私网地址直连'), findsOneWidget);
     expect(find.text('识别流量协议'), findsOneWidget);
     expect(find.text('默认出站'), findsOneWidget);
+    final editableTitleX = tester.getTopLeft(find.text('私网地址直连')).dx;
+    expect(tester.getTopLeft(find.text('识别流量协议')).dx, editableTitleX);
+    expect(tester.getTopLeft(find.text('默认出站')).dx, editableTitleX);
+    for (final title in ['私网地址直连', '默认出站']) {
+      final row = find.text(title);
+      final feedback = tester.widget<InkWell>(
+        find.ancestor(of: row, matching: find.byType(InkWell)),
+      );
+      expect(feedback.onTapDown, isNotNull);
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsNothing);
+    }
+    expect(find.text('核心规则'), findsNothing);
+    expect(find.text('可编辑规则'), findsNothing);
+    expect(find.text('规则列表'), findsNothing);
+    expect(find.text('动作'), findsNothing);
+    expect(
+      find.byType(Divider),
+      findsNWidgets(
+        controller.previewRouting().coreRules.length + snapshot.rules.length,
+      ),
+    );
     expect(
       tester.getTopLeft(find.text('识别流量协议')).dy,
       lessThan(tester.getTopLeft(firstCard).dy),
@@ -105,10 +128,17 @@ void main() {
     ]);
   });
 
-  testWidgets('窄屏内联显示规则动作，工具栏仍可添加规则', (tester) async {
+  testWidgets('窄屏显示胶囊动作和右下角悬浮添加按钮', (tester) async {
     await tester.binding.setSurfaceSize(const Size(360, 720));
     addTearDown(() => tester.binding.setSurfaceSize(null));
-    final controller = AppController()..snapshot = AppSnapshot.empty();
+    final snapshot = AppSnapshot.empty();
+    final directRule = snapshot.rules.first;
+    final proxyRule = snapshot.rules.firstWhere(
+      (rule) => rule.target == RuleTarget.proxy,
+    );
+    snapshot.rules = [directRule, proxyRule];
+    snapshot.settings.splitMode = SplitMode.direct;
+    final controller = AppController()..snapshot = snapshot;
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
@@ -117,18 +147,75 @@ void main() {
       ),
     );
 
-    final firstRow = find.byKey(ValueKey(controller.snapshot.rules.first.id));
+    Finder actionPill(Finder row, String label) => find.ancestor(
+      of: find.descendant(of: row, matching: find.text(label)),
+      matching: find.byWidgetPredicate(
+        (widget) => switch (widget) {
+          DecoratedBox(decoration: ShapeDecoration(shape: StadiumBorder())) =>
+            true,
+          _ => false,
+        },
+      ),
+    );
+
+    final firstRow = find.byKey(ValueKey(directRule.id));
+    final proxyRow = find.byKey(ValueKey(proxyRule.id));
+    final edit = find.descendant(
+      of: firstRow,
+      matching: find.byTooltip('编辑规则'),
+    );
+    final pill = actionPill(firstRow, '直连');
+    expect(pill, findsOneWidget);
     expect(
-      find.descendant(of: firstRow, matching: find.text('直连 · 私网地址')),
+      tester.getTopRight(pill).dx,
+      lessThanOrEqualTo(tester.getTopLeft(edit).dx),
+    );
+    final scheme = Theme.of(tester.element(pill)).colorScheme;
+    final directDecoration = tester.widget<DecoratedBox>(pill).decoration;
+    final proxyDecoration = tester
+        .widget<DecoratedBox>(actionPill(proxyRow, '代理'))
+        .decoration;
+    expect(
+      directDecoration,
+      isA<ShapeDecoration>().having(
+        (decoration) => decoration.color,
+        'color',
+        scheme.tertiaryContainer,
+      ),
+    );
+    expect(
+      proxyDecoration,
+      isA<ShapeDecoration>().having(
+        (decoration) => decoration.color,
+        'color',
+        scheme.primaryContainer,
+      ),
+    );
+    expect(proxyDecoration, isNot(directDecoration));
+    expect(
+      find.descendant(of: firstRow, matching: find.text('未生效 · 私网地址')),
       findsOneWidget,
     );
-    await tester.tap(find.widgetWithText(FilledButton, '添加规则'));
+    await tester.tap(find.text('识别流量协议'));
+    await tester.pumpAndSettle();
+    final details = find.descendant(
+      of: find.widgetWithText(AlertDialog, '识别流量协议'),
+      matching: find.byType(SelectableText),
+    );
+    expect(tester.widget<SelectableText>(details).data, contains('"sniff"'));
+    await tester.tap(find.widgetWithText(TextButton, '关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+
+    final add = find.widgetWithText(FloatingActionButton, '添加');
+    expect(tester.getBottomRight(add), const Offset(336, 696));
+    await tester.tap(add);
     await tester.pumpAndSettle();
     expect(find.widgetWithText(AlertDialog, '添加规则'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('JSON 接管时列出实际规则和默认出站', (tester) async {
+  testWidgets('JSON 接管时弹窗显示规则详情，列表保留默认出站', (tester) async {
     final controller = AppController()
       ..snapshot = (AppSnapshot.empty()
         ..useCustomConfig = true
@@ -150,17 +237,26 @@ void main() {
       ),
     );
     expect(find.text('路由由 JSON 配置接管'), findsOneWidget);
+    expect(find.text('JSON 规则'), findsOneWidget);
     expect(find.text('识别流量协议'), findsNothing);
     expect(find.text('未命中规则时：wan'), findsOneWidget);
     final reject = find.byKey(const ValueKey('compiled-rule-0'));
     final route = find.byKey(const ValueKey('compiled-rule-1'));
-    expect(tester.getTopLeft(reject).dy, lessThan(tester.getTopLeft(route).dy));
+    final routePosition = tester.getTopLeft(route);
+    expect(tester.getTopLeft(reject).dy, lessThan(routePosition.dy));
     await tester.tap(find.descendant(of: reject, matching: find.text('阻断')));
     await tester.pumpAndSettle();
     final details = tester.widget<SelectableText>(
-      find.descendant(of: reject, matching: find.byType(SelectableText)),
+      find.descendant(
+        of: find.widgetWithText(AlertDialog, '阻断'),
+        matching: find.byType(SelectableText),
+      ),
     );
     expect(details.data, contains('blocked.test'));
+    expect(tester.getTopLeft(route), routePosition);
+    await tester.tap(find.widgetWithText(TextButton, '关闭'));
+    await tester.pumpAndSettle();
+    expect(find.byType(SelectableText), findsNothing);
   });
 }
 

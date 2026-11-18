@@ -11,8 +11,11 @@ import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/app/app_shell.dart';
 import 'package:nekoproxy/app/navigation_dock.dart';
 import 'package:nekoproxy/data/app_storage.dart';
+import 'package:nekoproxy/domain/config_compiler.dart';
 import 'package:nekoproxy/domain/models.dart';
+import 'package:nekoproxy/features/nodes/node_group_widgets.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
+import 'package:nekoproxy/runtime/runtime_client.dart';
 import 'package:nekoproxy/services/rule_set_manager.dart';
 import 'package:nekoproxy/services/qr_service.dart';
 import 'package:nekoproxy/state/app_controller.dart';
@@ -162,6 +165,10 @@ void main() {
       await _tap(tester, find.text('WireGuard 分组'));
       await tester.enterText(_field('分组名称'), '校园');
       await _tap(tester, find.text('保存'));
+      expect(
+        find.widgetWithText(TextButton, '添加 WireGuard 节点'),
+        findsOneWidget,
+      );
       await _tap(tester, find.text('添加 WireGuard 节点'));
       expect(find.text('从剪贴板导入'), findsOneWidget);
       expect(find.text('从文件导入'), findsOneWidget);
@@ -178,6 +185,9 @@ void main() {
       expect(controller.snapshot.wireGuardProfileId, isNull);
 
       await _tap(tester, find.byTooltip('配置操作：手写配置'));
+      expect(find.byIcon(Icons.code_rounded), findsOneWidget);
+      expect(find.byIcon(Icons.file_download_outlined), findsOneWidget);
+      expect(find.byType(PopupMenuDivider), findsOneWidget);
       await _tap(tester, find.text('编辑节点'));
       await tester.ensureVisible(_field('对端地址（Endpoint）'));
       await tester.enterText(_field('对端地址（Endpoint）'), '[2001:db8::1]:51820');
@@ -187,6 +197,7 @@ void main() {
         controller.snapshot.wireGuardProfiles.single.parse().firstEndpoint,
         '[2001:db8::1]:51820',
       );
+      expect(find.text('[2001:db8::1]:51820'), findsOneWidget);
     },
   );
 
@@ -212,8 +223,85 @@ void main() {
     await _tap(tester, find.text('保存节点'));
     final profile = controller.snapshot.wireGuardProfiles.single;
     expect(profile.name, '表单配置');
-    expect(profile.parse().firstEndpoint, 'vpn.example.com:53');
+    expect(find.text('vpn.example.com:53'), findsOneWidget);
   });
+
+  testWidgets(
+    'WireGuard uses the same grid and collapse behavior as proxy groups',
+    (tester) async {
+      final controller = _newController(withProxy: true);
+      await controller.saveWireGuardGroup('校园', id: WireGuardGroup.legacy.id);
+      await controller.saveWireGuardProfile(_profile('a'));
+      await controller.saveWireGuardProfile(_profile('b'));
+      await _openNodes(tester, controller);
+
+      final proxy = find.widgetWithText(NodeTile, '代理 a');
+      final tunnel = find.widgetWithText(NodeTile, '隧道 a');
+      // The active group has a slightly thicker border.
+      expect(
+        tester.getSize(tunnel).width,
+        closeTo(tester.getSize(proxy).width, 1),
+      );
+      expect(tester.getSize(tunnel).height, tester.getSize(proxy).height);
+      expect(
+        tester.getTopLeft(tunnel).dy,
+        tester.getTopLeft(find.widgetWithText(NodeTile, '隧道 b')).dy,
+      );
+      expect(find.text('WireGuard · 2 节点'), findsOneWidget);
+      expect(
+        find.descendant(of: tunnel, matching: find.text('192.0.2.1:53')),
+        findsOneWidget,
+      );
+
+      await _tap(tester, find.text('校园'));
+      expect(tunnel, findsNothing);
+      expect(proxy, findsOneWidget);
+      await _tap(tester, find.text('校园'));
+      await _tap(tester, find.text('隧道 a'));
+      expect(controller.activeWireGuard?.id, 'a');
+      expect(tester.widget<NodeTile>(tunnel).current, isTrue);
+    },
+  );
+
+  testWidgets(
+    'WireGuard-only nodes can test a group, a node and all nodes offline',
+    (tester) async {
+      final runtime = _WireGuardTestRuntime();
+      final controller = _newController()..runtime = runtime;
+      await controller.saveWireGuardGroup('校园', id: WireGuardGroup.legacy.id);
+      await controller.saveWireGuardProfile(_profile('a'));
+      await controller.saveWireGuardProfile(
+        WireGuardProfile(
+          id: 'b',
+          name: '隧道 b',
+          configuration: _configuration.replaceFirst(':53', ':54'),
+        ),
+      );
+      await _openNodes(tester, controller);
+      Finder inNode(String id, Finder matching) => find.descendant(
+        of: find.widgetWithText(NodeTile, '隧道 $id'),
+        matching: matching,
+      );
+
+      expect(inNode('a', find.text('—')), findsOneWidget);
+      await _tap(tester, find.byTooltip('测试本组 WireGuard 节点'));
+      expect(runtime.ports, [53, 54]);
+      expect(inNode('a', find.text('41ms')), findsOneWidget);
+      expect(inNode('b', find.text('失败')), findsOneWidget);
+      expect(inNode('b', find.byTooltip('请求超时')), findsOneWidget);
+
+      await _tap(tester, find.byTooltip('配置操作：隧道 a'));
+      await _tap(tester, find.text('测试节点延迟'));
+      expect(runtime.ports, [53, 54, 53]);
+      expect(inNode('a', find.text('43ms')), findsOneWidget);
+
+      await _tap(tester, find.byTooltip('测速所有分组节点'));
+      expect(runtime.ports, [53, 54, 53, 53, 54]);
+      expect(runtime.stops, 5);
+      expect(controller.snapshot.wireGuardProfileId, isNull);
+      expect(controller.running, isFalse);
+    },
+  );
 
   testWidgets('file and clipboard imports stay in the chosen group', (
     tester,
@@ -237,6 +325,11 @@ void main() {
     await _tap(tester, find.text('添加 WireGuard 节点'));
     await _tap(tester, find.text('从文件导入'));
     expect(controller.snapshot.wireGuardProfiles.single.name, '文件配置');
+    expect(find.text('添加 WireGuard 节点'), findsNothing);
+    await _tap(tester, find.byTooltip('WireGuard 分组操作'));
+    expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
+    expect(find.byIcon(Icons.delete_outline_rounded), findsOneWidget);
+    expect(find.byType(PopupMenuDivider), findsOneWidget);
     await _tap(tester, find.text('添加 WireGuard 节点'));
     await _tap(tester, find.text('从剪贴板导入'));
     await tester.enterText(_field('名称'), '剪贴板配置');
@@ -300,7 +393,7 @@ void main() {
       expect(proxyTile, findsOneWidget);
       await tester.ensureVisible(find.text('隧道 a'));
       expect(
-        tester.widget<ListTile>(find.widgetWithText(ListTile, '隧道 a')).selected,
+        tester.widget<NodeTile>(find.widgetWithText(NodeTile, '隧道 a')).current,
         isTrue,
       );
       await _tap(tester, find.byTooltip('高级'));
@@ -346,4 +439,41 @@ void main() {
     expect(controller.canConnect, isFalse);
     expect(controller.snapshot.wireGuardProfiles, isEmpty);
   });
+}
+
+class _WireGuardTestRuntime extends RuntimeClient {
+  final ports = <int>[];
+  int stops = 0;
+
+  @override
+  Future<void> startTest({required String config}) async {
+    final json = jsonDecode(config) as Map<String, dynamic>;
+    expect(json['inbounds'], isEmpty);
+    expect(json.containsKey('experimental'), isFalse);
+    final endpoint = (json['endpoints'] as List).single as Map;
+    expect(endpoint['tag'], ConfigCompiler.wireGuardTag);
+    expect(endpoint['system'], isFalse);
+    final peer = (endpoint['peers'] as List).single as Map;
+    ports.add(peer['port'] as int);
+  }
+
+  @override
+  Future<Map<String, RuntimeTestResult>> test(
+    List<String> tags,
+    String url,
+  ) async {
+    expect(tags, [ConfigCompiler.wireGuardTag]);
+    expect(url, isNotEmpty);
+    return {
+      tags.single: ports.last == 54
+          ? const RuntimeTestResult(error: '请求超时')
+          : RuntimeTestResult(delay: 40 + ports.length),
+    };
+  }
+
+  @override
+  Future<void> stopTest() async => stops++;
+
+  @override
+  Object? noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }

@@ -118,7 +118,8 @@ class AppController extends ChangeNotifier {
   int testCompleted = 0;
   int testTotal = 0;
   int _testGeneration = 0;
-  final _nodeTestRequests = <String?, Set<String>>{};
+  final _nodeTestRequests =
+      <Object?, ({Set<String> proxyIds, Set<String> wireGuardIds})>{};
   bool _drainingNodeTests = false;
   final Map<String, ServiceCheckResult> serviceChecks = {};
   final Set<String> _servicesChecking = {};
@@ -132,6 +133,20 @@ class AppController extends ChangeNotifier {
   HttpClient? _exitInfoClient;
   int _exitInfoGeneration = 0;
   ({String tag, int generation, Object token})? _connectionProbe;
+  final _wireGuardLatencies =
+      <String, ({String configuration, RuntimeTestResult result})>{};
+  RuntimeTestResult? get wireGuardLatency {
+    final profile = activeWireGuard;
+    return running && profile != null ? wireGuardLatencyFor(profile) : null;
+  }
+
+  RuntimeTestResult? wireGuardLatencyFor(WireGuardProfile profile) {
+    final measurement = _wireGuardLatencies[profile.id];
+    return measurement?.configuration == profile.configuration
+        ? measurement?.result
+        : null;
+  }
+
   bool _disposed = false;
   final List<HomeActivity> homeActivities = [];
   CompiledConfig? _compiled;
@@ -140,6 +155,7 @@ class AppController extends ChangeNotifier {
   String? _effectiveTag;
   bool _unexpectedStop = false;
   bool _temporaryTestRuntime = false;
+  Future<void>? _temporaryWireGuardStart;
   List<String> _systemDns = const [];
 
   Timer? _pollTimer;
@@ -241,9 +257,15 @@ class AppController extends ChangeNotifier {
 
   Future<void> _refreshConnectionLatency() async {
     if (!running || busy || _disposed) return;
-    final node = reportedNode;
-    final tag = _effectiveTag;
-    if (node == null || tag == null) return;
+    final onlyWireGuard = outboundMode == OutboundMode.wireGuard;
+    final profile = onlyWireGuard ? activeWireGuard : null;
+    final node = onlyWireGuard ? null : reportedNode;
+    if (profile == null && node == null) return;
+    if (profile != null && isWireGuardTestRequested(profile.id)) return;
+    // Dial the endpoint directly so split-tunnel profiles cannot measure the
+    // physical connection when the test URL is outside AllowedIPs.
+    final tag = profile != null ? ConfigCompiler.wireGuardTag : _effectiveTag;
+    if (tag == null) return;
     final generation = _pollGeneration;
     final previous = _connectionProbe;
     if (previous?.generation == generation && previous?.tag == tag) return;
@@ -268,7 +290,14 @@ class AppController extends ChangeNotifier {
     if (_connectionProbe != probe) return;
     _connectionProbe = null;
     if (_disposed || !running || generation != _pollGeneration) return;
-    if (identical(snapshot.nodeById(node.id), node)) {
+    if (profile != null) {
+      final active = activeWireGuard;
+      if (outboundMode == OutboundMode.wireGuard &&
+          active?.id == profile.id &&
+          active?.configuration == profile.configuration) {
+        _saveWireGuardLatency(profile, result, requestError);
+      }
+    } else if (node != null && identical(snapshot.nodeById(node.id), node)) {
       _saveNodeLatency(node.id, result, requestError);
     }
     notifyListeners();
@@ -313,6 +342,17 @@ class AppController extends ChangeNotifier {
   /// Includes both running and waiting requests. A null ID is the global request.
   bool isNodeTestRequested(String? groupId) =>
       _nodeTestRequests.containsKey(groupId);
+
+  bool isSingleNodeTestRequested(String nodeId) =>
+      _nodeTestRequests.containsKey((proxyNodeId: nodeId));
+
+  bool isWireGuardTestRequested(String profileId) => _nodeTestRequests.values
+      .any((request) => request.wireGuardIds.contains(profileId));
+
+  bool canTestWireGuardProfile(WireGuardProfile profile) =>
+      canQueueNodeTest &&
+      !changingWireGuard &&
+      (!running || activeWireGuard?.id == profile.id);
 
   ProxyNode? get currentNode {
     return reportedNode ?? snapshot.nodeById(settings.manualNodeId);
@@ -677,6 +717,13 @@ class AppController extends ChangeNotifier {
         ..wireGuardProfileId = draft.wireGuardProfileId
         ..wireGuardGroups = draft.wireGuardGroups
         ..wireGuardProfiles = draft.wireGuardProfiles;
+      final profilesById = {
+        for (final profile in draft.wireGuardProfiles) profile.id: profile,
+      };
+      _wireGuardLatencies.removeWhere(
+        (id, measurement) =>
+            profilesById[id]?.configuration != measurement.configuration,
+      );
       settings
         ..manualNodeId = draft.settings.manualNodeId
         ..selectionMode = draft.settings.selectionMode;
@@ -1149,16 +1196,49 @@ class AppController extends ChangeNotifier {
   Future<void> _stopTemporaryTestRuntime() async {
     if (!_temporaryTestRuntime) return;
     _temporaryTestRuntime = false;
+    final starting = _temporaryWireGuardStart;
+    if (starting != null) {
+      // The worker may still be launching when a shutdown cancels this test.
+      await starting;
+    }
     try {
       await runtime.stopTest();
     } catch (_) {}
   }
 
-  void queueNodeTest(Iterable<ProxyNode> nodes, {String? groupId}) {
-    if (!canQueueNodeTest || isNodeTestRequested(groupId)) return;
-    final nodeIds = {for (final node in nodes) node.id};
-    if (nodeIds.isEmpty) return;
-    _nodeTestRequests[groupId] = nodeIds;
+  void queueNodeTest(
+    Iterable<ProxyNode> nodes, {
+    String? groupId,
+    Iterable<WireGuardProfile> wireGuardProfiles = const [],
+  }) => _queueNodeTest(groupId, nodes, wireGuardProfiles);
+
+  void queueSingleNodeTest(ProxyNode node) =>
+      _queueNodeTest((proxyNodeId: node.id), [node], const []);
+
+  void queueWireGuardTest(
+    Iterable<WireGuardProfile> profiles, {
+    String? groupId,
+  }) => _queueNodeTest(
+    (groupId, groupId == null ? profiles.firstOrNull?.id : null),
+    const [],
+    profiles,
+  );
+
+  void _queueNodeTest(
+    Object? key,
+    Iterable<ProxyNode> nodes,
+    Iterable<WireGuardProfile> profiles,
+  ) {
+    if (_disposed || !canQueueNodeTest || _nodeTestRequests.containsKey(key)) {
+      return;
+    }
+    final proxyIds = {for (final node in nodes) node.id};
+    final wireGuardIds = {
+      for (final profile in profiles)
+        if (canTestWireGuardProfile(profile)) profile.id,
+    };
+    if (proxyIds.isEmpty && wireGuardIds.isEmpty) return;
+    _nodeTestRequests[key] = (proxyIds: proxyIds, wireGuardIds: wireGuardIds);
     notifyListeners();
     if (!_drainingNodeTests) {
       unawaited(_drainNodeTests());
@@ -1169,20 +1249,41 @@ class AppController extends ChangeNotifier {
     _drainingNodeTests = true;
     try {
       while (_nodeTestRequests.isNotEmpty) {
-        final MapEntry(key: groupId, value: nodeIds) =
-            _nodeTestRequests.entries.first;
+        final MapEntry(:key, value: request) = _nodeTestRequests.entries.first;
         try {
           // Use the current configuration for nodes still present when their turn starts.
-          await testNodes(
-            nodes: snapshot.allNodes.where((node) => nodeIds.contains(node.id)),
-          );
+          final profiles = snapshot.wireGuardProfiles
+              .where(
+                (profile) =>
+                    request.wireGuardIds.contains(profile.id) &&
+                    canTestWireGuardProfile(profile),
+              )
+              .toList();
+          var completed = 0;
+          if (request.proxyIds.isNotEmpty) {
+            await testNodes(
+              nodes: snapshot.allNodes.where(
+                (node) => request.proxyIds.contains(node.id),
+              ),
+              additionalTests: profiles.length,
+            );
+            completed = testCompleted;
+          }
+          if (profiles.isNotEmpty &&
+              identical(_nodeTestRequests[key], request)) {
+            await _testWireGuardProfiles(
+              profiles,
+              pendingIds: request.wireGuardIds,
+              completed: completed,
+            );
+          }
         } catch (error) {
-          if (identical(_nodeTestRequests[groupId], nodeIds)) {
+          if (identical(_nodeTestRequests[key], request)) {
             _setError(_friendlyError(error));
           }
         } finally {
-          if (identical(_nodeTestRequests[groupId], nodeIds)) {
-            _nodeTestRequests.remove(groupId);
+          if (identical(_nodeTestRequests[key], request)) {
+            _nodeTestRequests.remove(key);
             notifyListeners();
           }
         }
@@ -1198,7 +1299,10 @@ class AppController extends ChangeNotifier {
     _nodeTestRequests.clear();
   }
 
-  Future<void> testNodes({Iterable<ProxyNode>? nodes}) async {
+  Future<void> testNodes({
+    Iterable<ProxyNode>? nodes,
+    int additionalTests = 0,
+  }) async {
     if (testingNodes || busy) return;
     if (outboundMode == OutboundMode.wireGuard) {
       _setError('仅 WireGuard 模式不使用代理节点。');
@@ -1242,7 +1346,7 @@ class AppController extends ChangeNotifier {
     final url = settings.advancedOrDefault.urlTestUrl;
     testingNodes = true;
     testCompleted = 0;
-    testTotal = queue.length;
+    testTotal = queue.length + additionalTests;
     if (temporary) {
       _temporaryTestRuntime = true;
       busy = true;
@@ -1325,6 +1429,107 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  Future<void> _testWireGuardProfiles(
+    List<WireGuardProfile> profiles, {
+    required Set<String> pendingIds,
+    required int completed,
+  }) async {
+    if (busy || testingNodes || _disposed) return;
+    final run = ++_testGeneration;
+    final temporary = !running;
+    final url = settings.advancedOrDefault.urlTestUrl;
+    testingNodes = true;
+    testCompleted = completed;
+    testTotal = completed + profiles.length;
+    notifyListeners();
+    try {
+      if (temporary) await _refreshSystemDns();
+      for (final profile in profiles) {
+        if (run != _testGeneration) break;
+        RuntimeTestResult? result;
+        String? requestError;
+        try {
+          if (temporary) {
+            final config = ConfigCompiler.compile(
+              AppSnapshot(
+                settings: AppSettings(),
+                subscriptions: [],
+                outboundMode: OutboundMode.wireGuard,
+                wireGuardProfileId: profile.id,
+                wireGuardProfiles: [profile],
+              ),
+              target: isAndroid ? CompileTarget.android : CompileTarget.windows,
+              cachePath: paths.runtime.path,
+              testOnly: true,
+              systemDnsServers: _systemDns,
+            );
+            final started = Completer<void>();
+            _temporaryWireGuardStart = started.future;
+            _temporaryTestRuntime = true;
+            busy = true;
+            notifyListeners();
+            try {
+              await runtime.startTest(config: config.encoded);
+            } finally {
+              started.complete();
+              _temporaryWireGuardStart = null;
+              if (run == _testGeneration) {
+                busy = false;
+                notifyListeners();
+              }
+            }
+          } else if (activeWireGuard?.id != profile.id ||
+              activeWireGuard?.configuration != profile.configuration) {
+            continue;
+          } else if (_connectionProbe?.tag == ConfigCompiler.wireGuardTag) {
+            // A manual retest takes precedence over an older homepage probe.
+            _connectionProbe = null;
+          }
+          if (run != _testGeneration) break;
+          const tag = ConfigCompiler.wireGuardTag;
+          result = (await runtime.test([tag], url))[tag];
+        } catch (error) {
+          requestError = _friendlyError(error);
+        } finally {
+          if (temporary && run == _testGeneration && _temporaryTestRuntime) {
+            busy = true;
+            await _stopTemporaryTestRuntime();
+            if (run == _testGeneration) busy = false;
+          }
+        }
+        if (run != _testGeneration) break;
+        final current = snapshot.wireGuardProfiles
+            .where((candidate) => candidate.id == profile.id)
+            .firstOrNull;
+        if (current?.configuration == profile.configuration) {
+          _saveWireGuardLatency(profile, result, requestError);
+        }
+        pendingIds.remove(profile.id);
+        testCompleted++;
+        notifyListeners();
+      }
+    } finally {
+      if (run == _testGeneration) {
+        testingNodes = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  void _saveWireGuardLatency(
+    WireGuardProfile profile,
+    RuntimeTestResult? result,
+    String? requestError,
+  ) {
+    _wireGuardLatencies[profile.id] = (
+      configuration: profile.configuration,
+      result: switch (result?.delay) {
+        final int delay => RuntimeTestResult(delay: delay),
+        null => RuntimeTestResult(error: _probeError(result, requestError)),
+      },
+    );
+  }
+
   void _saveNodeLatency(
     String nodeId,
     RuntimeTestResult? result,
@@ -1335,11 +1540,14 @@ class AppController extends ChangeNotifier {
       _latencies[nodeId] = delay;
       _latencyErrors.remove(nodeId);
     } else {
-      final message = result?.error?.trim();
-      _latencyErrors[nodeId] =
-          requestError ??
-          (message == null || message.isEmpty ? '测速失败' : message);
+      _latencyErrors[nodeId] = _probeError(result, requestError);
     }
+  }
+
+  String _probeError(RuntimeTestResult? result, String? requestError) {
+    final message = result?.error?.trim();
+    return requestError ??
+        (message == null || message.isEmpty ? '测速失败' : message);
   }
 
   Future<void> _refreshAutoSelection(Map<String, int?> delays) async {
@@ -1629,28 +1837,17 @@ class AppController extends ChangeNotifier {
     return group;
   }
 
-  /// Reorders the visible subscriptions while preserving other group slots.
+  /// Reorders visible node groups while preserving the slots of hidden groups.
   Future<void> reorderSubscriptions(List<String> orderedIds) async {
     final source = snapshot;
     final previous = source.subscriptions;
-    final visibleIds = orderedIds.toSet();
-    final visibleById = {
-      for (final group in previous)
-        if (group.isUrlSubscription && visibleIds.contains(group.id))
-          group.id: group,
-    };
-    if (visibleById.length != orderedIds.length) return;
-
-    var nextIndex = 0;
-    final reordered = [
-      for (final group in previous)
-        if (visibleById.containsKey(group.id))
-          visibleById[orderedIds[nextIndex++]] ?? group
-        else
-          group,
-    ];
+    final reordered = _reorderVisibleGroups(
+      previous,
+      orderedIds,
+      (group) => group.id,
+    );
     if (listEquals(previous, reordered)) return;
-    source.subscriptions = List.of(reordered);
+    source.subscriptions = reordered;
     try {
       await storage.save(source);
     } catch (exception) {
@@ -1658,10 +1855,49 @@ class AppController extends ChangeNotifier {
       if (listEquals(source.subscriptions, reordered)) {
         source.subscriptions = previous;
       }
-      _setError('订阅顺序保存失败：${_friendlyError(exception)}');
+      _setError('分组顺序保存失败：${_friendlyError(exception)}');
       return;
     }
     if (identical(snapshot, source)) notifyListeners();
+  }
+
+  Future<void> reorderWireGuardGroups(List<String> orderedIds) async {
+    try {
+      await _changeWireGuard((draft) {
+        draft.wireGuardGroups = _reorderVisibleGroups(
+          draft.wireGuardGroups,
+          orderedIds,
+          (group) => group.id,
+        );
+      });
+    } on Exception catch (exception) {
+      if (!_disposed) {
+        _setError('WireGuard 分组顺序保存失败：${_friendlyError(exception)}');
+      }
+    }
+  }
+
+  List<T> _reorderVisibleGroups<T>(
+    List<T> groups,
+    List<String> orderedIds,
+    String Function(T) idOf,
+  ) {
+    final visibleIds = orderedIds.toSet();
+    if (visibleIds.length != orderedIds.length) return groups;
+    final visibleById = {
+      for (final group in groups)
+        if (visibleIds.contains(idOf(group))) idOf(group): group,
+    };
+    if (visibleById.length != orderedIds.length) return groups;
+
+    var nextIndex = 0;
+    return [
+      for (final group in groups)
+        if (visibleIds.contains(idOf(group)))
+          visibleById[orderedIds[nextIndex++]] ?? group
+        else
+          group,
+    ];
   }
 
   Future<void> updateGroupPreferences(
@@ -2026,6 +2262,7 @@ class AppController extends ChangeNotifier {
     _invalidateConnectionRefresh();
     _cancelNodeTests();
     systemProxy?.disable();
+    await _stopTemporaryTestRuntime();
     await runtime.shutdown();
   }
 
@@ -2174,6 +2411,7 @@ class AppController extends ChangeNotifier {
     _uiTimer = null;
     _pollGeneration++;
     _invalidateConnectionRefresh();
+    _cancelNodeTests();
     _polling = false;
     connectedAt = null;
     error = message;

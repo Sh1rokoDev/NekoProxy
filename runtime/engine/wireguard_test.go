@@ -125,6 +125,18 @@ func TestWireGuardRouteThroughRealPeer(t *testing.T) {
 	get("direct", "10.67.0.1:"+serverPort, "via peer")
 	get("direct", "wireguard.test:"+serverPort, "via peer")
 	get("proxy", "192.0.2.1:80", "via proxy")
+	probe := func(destination string) map[string]any {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return client.Test(ctx, []string{"wg"}, "http://"+destination)["wg"].(map[string]any)
+	}
+	if result := probe("wireguard.test:" + serverPort); result["delay"] == nil {
+		t.Fatalf("WireGuard endpoint probe failed: %v", result)
+	}
+	if result := probe(httpServer.Listener.Addr().String()); result["error"] == nil || result["delay"] != nil {
+		t.Fatalf("WireGuard endpoint probe reached an uncovered destination: %v", result)
+	}
 	t.Run("TLS over IPv4 packets", func(t *testing.T) {
 		testWireGuardHTTPSFromTun(t, client.instance.Router(), "127.0.0.1:0", "172.19.0.1/30", "10.67.0.1", ipv4.ProtocolNumber)
 	})

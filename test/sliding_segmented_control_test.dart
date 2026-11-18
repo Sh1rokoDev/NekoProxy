@@ -58,6 +58,16 @@ final _highlight = find.byWidgetPredicate(
       (widget.decoration as BoxDecoration).color == _highlightColor,
 );
 
+final _track = find.ancestor(
+  of: _highlight,
+  matching: find.byWidgetPredicate(
+    (widget) =>
+        widget is DecoratedBox &&
+        widget.decoration is BoxDecoration &&
+        (widget.decoration as BoxDecoration).border != null,
+  ),
+);
+
 void main() {
   for (final kind in [PointerDeviceKind.touch, PointerDeviceKind.mouse]) {
     testWidgets('$kind 拖动时高亮跟随，松开后仅提交最终选项', (tester) async {
@@ -73,6 +83,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(tester.getCenter(_highlight).dx, closeTo(between.dx, 2));
+      _expectHighlightPastTrack(tester);
       expect(changes, isEmpty);
 
       await pointer.moveTo(end + const Offset(40, 0));
@@ -101,7 +112,7 @@ void main() {
       tester.getCenter(find.text('规则')),
     );
     await tester.pumpAndSettle();
-    expect(highlightHeight(), greaterThan(restingHeight));
+    _expectHighlightPastTrack(tester);
     expect(
       tester.getCenter(_highlight).dx,
       closeTo(tester.getCenter(find.text('规则')).dx, 2),
@@ -174,4 +185,11 @@ void main() {
       closeTo(tester.getCenter(find.text('直连')).dx, 1),
     );
   });
+}
+
+void _expectHighlightPastTrack(WidgetTester tester) {
+  final highlight = tester.getRect(_highlight);
+  final track = tester.getRect(_track);
+  expect(track.top - highlight.top, greaterThan(1));
+  expect(highlight.bottom - track.bottom, greaterThan(1));
 }

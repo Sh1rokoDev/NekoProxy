@@ -29,7 +29,6 @@ class _RulesPageState extends State<RulesPage> {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
-    final theme = Theme.of(context);
     RoutingPreview? preview;
     try {
       preview = controller.previewRouting();
@@ -40,119 +39,94 @@ class _RulesPageState extends State<RulesPage> {
     return PageFrame(
       title: '规则',
       actions: SplitModeSwitch(controller: controller),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showEditor(context, controller),
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('添加规则'),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          SectionCard(
-            title: '规则列表',
-            icon: Icons.rule_folder_outlined,
-            trailing: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 180),
-              child: Text(
-                '$ruleCount 条',
-                key: ValueKey(ruleCount),
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-            padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
-            child: Material(
-              type: MaterialType.transparency,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  if (preview == null)
-                    const ListTile(title: Text('无法预览生效规则，请检查配置')),
-                  if (preview?.overridden == true)
-                    const ListTile(
-                      title: Text('路由由 JSON 配置接管'),
-                      subtitle: Text('下方保留的可编辑规则暂未生效。'),
+      wrapHeader: true,
+      child: SectionCard(
+        padding: EdgeInsets.zero,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(16),
+          child: Material(
+            type: MaterialType.transparency,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final showActionColumn = constraints.maxWidth >= 520;
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _RulesToolbar(
+                      count: ruleCount,
+                      onAdd: () => _showEditor(context, controller),
                     ),
-                  if (preview != null)
-                    for (final (index, rule) in preview.coreRules.indexed)
-                      _CompiledRuleTile(
-                        key: ValueKey('compiled-rule-$index'),
-                        rule: rule,
-                        fromJson: preview.overridden,
+                    if (preview == null)
+                      const ListTile(title: Text('无法预览生效规则，请检查配置')),
+                    if (preview?.overridden == true)
+                      const ListTile(
+                        title: Text('路由由 JSON 配置接管'),
+                        subtitle: Text('下方可编辑规则暂未生效'),
                       ),
-                  AnimatedSize(
-                    duration: const Duration(milliseconds: 240),
-                    curve: Curves.easeOutCubic,
-                    alignment: Alignment.topCenter,
-                    child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 200),
-                      child: _rules.isEmpty
-                          ? _EmptyRules(
-                              key: const ValueKey('empty-rules'),
-                              color: theme.colorScheme.onSurfaceVariant,
-                            )
-                          : ReorderableListView.builder(
-                              key: const ValueKey('rules-list'),
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              buildDefaultDragHandles: false,
-                              proxyDecorator: (child, index, animation) =>
-                                  child,
-                              itemCount: _rules.length,
-                              onReorderItem: (oldIndex, newIndex) async {
-                                setState(() {
-                                  final item = _rules.removeAt(oldIndex);
-                                  _rules.insert(newIndex, item);
-                                });
-                                await controller.saveRules(List.of(_rules));
-                              },
-                              itemBuilder: (context, index) {
-                                final rule = _rules[index];
-                                return Padding(
-                                  key: ValueKey(rule.id),
-                                  padding: EdgeInsets.only(
-                                    bottom: index == _rules.length - 1 ? 0 : 8,
-                                  ),
-                                  child: _RuleCard(
-                                    rule: rule,
-                                    rulesActive:
-                                        preview?.activeRuleIds.contains(
-                                          rule.id,
-                                        ) ??
-                                        false,
-                                    index: index,
-                                    onToggle: (value) async {
-                                      setState(() => rule.enabled = value);
-                                      await controller.saveRules(
-                                        List.of(_rules),
-                                      );
-                                    },
-                                    onEdit: () => _showEditor(
-                                      context,
-                                      controller,
-                                      rule: rule,
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                    ),
-                  ),
-                  if (preview != null)
-                    ListTile(
-                      dense: true,
-                      leading: const Icon(Icons.alt_route_rounded, size: 19),
-                      title: const Text('默认出站'),
-                      subtitle: Text(
-                        '未命中规则时：${preview.overridden && preview.finalOutbound != null ? preview.finalOutbound : _outboundLabel(preview.finalOutbound)}',
+                    if (preview != null && preview.coreRules.isNotEmpty)
+                      _RuleGroupHeader(
+                        title: preview.overridden ? 'JSON 规则' : '核心规则',
                       ),
+                    if (preview != null)
+                      for (final (index, rule) in preview.coreRules.indexed)
+                        _CompiledRuleTile(
+                          key: ValueKey('compiled-rule-$index'),
+                          rule: rule,
+                          fromJson: preview.overridden,
+                        ),
+                    _RuleGroupHeader(
+                      title: '可编辑规则',
+                      showActionColumn: showActionColumn && _rules.isNotEmpty,
                     ),
-                ],
-              ),
+                    if (_rules.isEmpty)
+                      const _EmptyRules()
+                    else
+                      ReorderableListView.builder(
+                        key: const ValueKey('rules-list'),
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        buildDefaultDragHandles: false,
+                        proxyDecorator: (child, index, animation) => child,
+                        itemCount: _rules.length,
+                        onReorderItem: (oldIndex, newIndex) async {
+                          setState(() {
+                            final item = _rules.removeAt(oldIndex);
+                            _rules.insert(newIndex, item);
+                          });
+                          await controller.saveRules(List.of(_rules));
+                        },
+                        itemBuilder: (context, index) {
+                          final rule = _rules[index];
+                          return _EditableRuleRow(
+                            key: ValueKey(rule.id),
+                            showActionColumn: showActionColumn,
+                            showDivider: index < _rules.length - 1,
+                            rule: rule,
+                            rulesActive:
+                                preview?.activeRuleIds.contains(rule.id) ??
+                                false,
+                            index: index,
+                            onToggle: (value) async {
+                              setState(() => rule.enabled = value);
+                              await controller.saveRules(List.of(_rules));
+                            },
+                            onEdit: () =>
+                                _showEditor(context, controller, rule: rule),
+                          );
+                        },
+                      ),
+                    if (preview != null)
+                      _DefaultOutbound(
+                        label: preview.overridden
+                            ? preview.finalOutbound ?? _outboundLabel(null)
+                            : _outboundLabel(preview.finalOutbound),
+                      ),
+                  ],
+                );
+              },
             ),
           ),
-        ],
+        ),
       ),
     );
   }
@@ -687,6 +661,7 @@ class _CompiledRuleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final action = rule['action'];
     final (title, description) = switch (action) {
       'sniff' => ('识别流量协议', '按 DNS 设置执行流量嗅探，继续匹配后续规则'),
@@ -704,15 +679,20 @@ class _CompiledRuleTile extends StatelessWidget {
     };
     return ExpansionTile(
       dense: true,
+      minTileHeight: 56,
+      tilePadding: const EdgeInsets.symmetric(horizontal: 16),
+      shape: const Border(),
+      textColor: theme.colorScheme.onSurface,
+      iconColor: theme.colorScheme.onSurfaceVariant,
       leading: const Icon(Icons.lock_outline_rounded, size: 18),
-      title: Text(title),
-      subtitle: Text('${fromJson ? 'JSON 规则' : '核心规则'} · $description'),
+      title: Text(title, style: theme.textTheme.titleSmall),
+      subtitle: Text(description, style: _ruleDetailStyle(theme)),
       expandedAlignment: AlignmentDirectional.topStart,
-      childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      childrenPadding: const EdgeInsets.fromLTRB(56, 0, 16, 12),
       children: [
         SelectableText(
           const JsonEncoder.withIndent('  ').convert(rule),
-          style: Theme.of(context).textTheme.bodySmall,
+          style: theme.textTheme.bodySmall,
         ),
       ],
     );
@@ -728,24 +708,46 @@ String _outboundLabel(String? tag) => switch (tag) {
   _ => tag,
 };
 
-class _EmptyRules extends StatelessWidget {
-  const _EmptyRules({super.key, required this.color});
+TextStyle? _ruleDetailStyle(ThemeData theme) => theme.textTheme.bodySmall
+    ?.copyWith(color: theme.colorScheme.onSurfaceVariant);
 
-  final Color color;
+class _RulesToolbar extends StatelessWidget {
+  const _RulesToolbar({required this.count, required this.onAdd});
+
+  final int count;
+  final VoidCallback onAdd;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 24),
-      child: Column(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: OverflowBar(
+        alignment: MainAxisAlignment.spaceBetween,
+        overflowAlignment: OverflowBarAlignment.start,
+        spacing: 12,
         children: [
-          Icon(Icons.rule_folder_outlined, size: 30, color: color),
-          const SizedBox(height: 8),
-          Text(
-            '暂无可编辑规则，点击右下角添加',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(color: color),
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            children: [
+              Text('规则列表', style: theme.textTheme.titleMedium),
+              Text(
+                '$count 条',
+                style: _ruleDetailStyle(
+                  theme,
+                )?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+              ),
+            ],
+          ),
+          FilledButton.icon(
+            onPressed: onAdd,
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              iconSize: 18,
+            ),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('添加规则'),
           ),
         ],
       ),
@@ -753,10 +755,98 @@ class _EmptyRules extends StatelessWidget {
   }
 }
 
-class _RuleCard extends StatelessWidget {
-  const _RuleCard({
+// Keep the wide layout's action header and values on the same axis.
+const _ruleActionWidth = 80.0;
+const _ruleControlsWidth = 112.0;
+
+class _RuleGroupHeader extends StatelessWidget {
+  const _RuleGroupHeader({required this.title, this.showActionColumn = false});
+
+  final String title;
+  final bool showActionColumn;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = _ruleDetailStyle(theme)
+        ?.copyWith(fontWeight: FontWeight.w600);
+    return ColoredBox(
+      color: Color.alphaBlend(
+        theme.colorScheme.onSurface.withValues(alpha: 0.04),
+        theme.colorScheme.surfaceContainerLow,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: Semantics(header: true, child: Text(title, style: style)),
+            ),
+            if (showActionColumn) ...[
+              SizedBox(
+                width: _ruleActionWidth,
+                child: Text('动作', style: style),
+              ),
+              const SizedBox(width: _ruleControlsWidth),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DefaultOutbound extends StatelessWidget {
+  const _DefaultOutbound({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return ColoredBox(
+      color: theme.colorScheme.surfaceContainer,
+      child: ListTile(
+        dense: true,
+        minTileHeight: 56,
+        minLeadingWidth: 24,
+        horizontalTitleGap: 16,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+        leading: Icon(
+          Icons.alt_route_rounded,
+          size: 18,
+          color: theme.colorScheme.onSurfaceVariant,
+        ),
+        title: Text('默认出站', style: theme.textTheme.titleSmall),
+        subtitle: Text('未命中规则时：$label', style: _ruleDetailStyle(theme)),
+      ),
+    );
+  }
+}
+
+class _EmptyRules extends StatelessWidget {
+  const _EmptyRules();
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Text(
+        '暂无可编辑规则',
+        textAlign: TextAlign.center,
+        style: _ruleDetailStyle(Theme.of(context)),
+      ),
+    );
+  }
+}
+
+class _EditableRuleRow extends StatelessWidget {
+  const _EditableRuleRow({
+    super.key,
     required this.rule,
     required this.rulesActive,
+    required this.showActionColumn,
+    required this.showDivider,
     required this.index,
     required this.onToggle,
     required this.onEdit,
@@ -764,6 +854,8 @@ class _RuleCard extends StatelessWidget {
 
   final RoutingRule rule;
   final bool rulesActive;
+  final bool showActionColumn;
+  final bool showDivider;
   final int index;
   final ValueChanged<bool> onToggle;
   final VoidCallback onEdit;
@@ -772,153 +864,123 @@ class _RuleCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final actionColors = _actionColors(scheme, rule.target);
-    return AnimatedOpacity(
-      duration: const Duration(milliseconds: 180),
-      opacity: rulesActive && rule.enabled ? 1 : 0.5,
-      child: Material(
-        color: scheme.surfaceContainerLowest,
-        clipBehavior: Clip.antiAlias,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-          side: BorderSide(
-            color: scheme.outlineVariant.withValues(alpha: 0.45),
-          ),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(2, 6, 8, 6),
-          child: Row(
-            children: [
-              ReorderableDragStartListener(
-                index: index,
-                child: SizedBox(
-                  width: 28,
-                  height: 40,
-                  child: Icon(
-                    Icons.drag_indicator_rounded,
-                    size: 17,
-                    color: scheme.outline,
+    final active = rulesActive && rule.enabled;
+    final details = _ruleDetailStyle(theme);
+    final actionStyle = details?.copyWith(
+      fontWeight: FontWeight.w500,
+      color: active && rule.target == RuleTarget.block ? scheme.error : null,
+    );
+    final action = _ruleTargetShortLabel(rule.target);
+    final preview = _rulePreview(rule);
+    return Material(
+      color: scheme.surfaceContainerLow,
+      child: Column(
+        children: [
+          Padding(
+            padding: EdgeInsets.fromLTRB(8, 4, showActionColumn ? 16 : 8, 4),
+            child: Row(
+              children: [
+                ReorderableDragStartListener(
+                  index: index,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.grab,
+                    child: Tooltip(
+                      message: '拖动调整顺序',
+                      child: SizedBox(
+                        width: 40,
+                        height: 48,
+                        child: Icon(
+                          Icons.drag_indicator_rounded,
+                          size: 18,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
+                const SizedBox(width: 8),
+                Expanded(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(
+                      minHeight: showActionColumn ? 0 : 56,
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: MainAxisSize.min,
                       children: [
-                        Flexible(
-                          child: Text(
-                            rule.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodyMedium?.copyWith(
-                              fontWeight: FontWeight.w600,
-                              height: 1.25,
-                            ),
+                        Text(
+                          rule.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall?.copyWith(
+                            color: active
+                                ? scheme.onSurface
+                                : scheme.onSurfaceVariant,
                           ),
                         ),
-                        const SizedBox(width: 6),
-                        _ActionPill(
-                          label: _ruleTargetShortLabel(rule.target),
-                          colors: actionColors,
+                        const SizedBox(height: 4),
+                        Text.rich(
+                          TextSpan(
+                            children: [
+                              if (!showActionColumn)
+                                TextSpan(
+                                  text: '$action · ',
+                                  style: actionStyle,
+                                ),
+                              if (rule.enabled && !rulesActive)
+                                const TextSpan(text: '未生效 · '),
+                              TextSpan(text: preview),
+                            ],
+                          ),
+                          maxLines: showActionColumn ? 1 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: details,
                         ),
                       ],
                     ),
-                    const SizedBox(height: 3),
-                    Text(
-                      _rulePreview(rule),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                        fontWeight: FontWeight.w500,
-                        height: 1.25,
+                  ),
+                ),
+                if (showActionColumn)
+                  SizedBox(
+                    width: _ruleActionWidth,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 8),
+                      child: Text(action, style: actionStyle),
+                    ),
+                  ),
+                IconButton(
+                  tooltip: '编辑规则',
+                  onPressed: onEdit,
+                  color: scheme.onSurfaceVariant,
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                ),
+                SizedBox(
+                  width: _ruleControlsWidth - 48,
+                  child: Center(
+                    child: Semantics(
+                      label: '启用 ${rule.name}',
+                      child: Switch(
+                        value: rule.enabled,
+                        onChanged: onToggle,
+                        activeTrackColor: rulesActive
+                            ? null
+                            : scheme.surfaceContainerHighest,
+                        activeThumbColor: rulesActive
+                            ? null
+                            : scheme.onSurfaceVariant,
                       ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-              const SizedBox(width: 2),
-              IconButton(
-                tooltip: '编辑规则',
-                onPressed: onEdit,
-                style: IconButton.styleFrom(
-                  minimumSize: const Size(32, 32),
-                  fixedSize: const Size(32, 32),
-                  padding: EdgeInsets.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  foregroundColor: scheme.onSurfaceVariant,
-                ),
-                icon: const Icon(Icons.edit_outlined, size: 18),
-              ),
-              Transform.scale(
-                scale: 0.8,
-                child: Switch(
-                  value: rule.enabled,
-                  onChanged: onToggle,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+          if (showDivider) const Divider(height: 1, indent: 56, endIndent: 16),
+        ],
       ),
     );
   }
-}
-
-class _ActionPill extends StatelessWidget {
-  const _ActionPill({required this.label, required this.colors});
-
-  final String label;
-  final ({Color background, Color foreground}) colors;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-      decoration: BoxDecoration(
-        color: colors.background,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: colors.foreground,
-          fontWeight: FontWeight.w600,
-          fontSize: 10,
-          height: 1.2,
-        ),
-      ),
-    );
-  }
-}
-
-({Color background, Color foreground}) _actionColors(
-  ColorScheme scheme,
-  RuleTarget target,
-) {
-  return switch (target) {
-    RuleTarget.direct => (
-      background: scheme.tertiaryContainer,
-      foreground: scheme.onTertiaryContainer,
-    ),
-    RuleTarget.block => (
-      background: scheme.errorContainer,
-      foreground: scheme.onErrorContainer,
-    ),
-    RuleTarget.proxy => (
-      background: scheme.primaryContainer,
-      foreground: scheme.onPrimaryContainer,
-    ),
-    RuleTarget.manualGroup || RuleTarget.autoGroup => (
-      background: scheme.secondaryContainer,
-      foreground: scheme.onSecondaryContainer,
-    ),
-  };
 }
 
 String _rulePreview(RoutingRule rule) {

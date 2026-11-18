@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app_scope.dart';
@@ -34,19 +35,20 @@ void main() {
       of: firstCard,
       matching: find.byType(Switch),
     );
-    double opacity(Finder card) => tester
-        .widget<AnimatedOpacity>(
-          find.descendant(of: card, matching: find.byType(AnimatedOpacity)),
-        )
-        .opacity;
+    Finder inactiveLabel(Finder card) =>
+        find.descendant(of: card, matching: find.textContaining('未生效'));
+    bool isEnabled(Finder row) => tester
+        .widget<Switch>(find.descendant(of: row, matching: find.byType(Switch)))
+        .value;
 
     Future<void> selectMode(String label) async {
       await tester.tap(find.descendant(of: modes, matching: find.text(label)));
       await tester.pumpAndSettle();
     }
 
-    expect(opacity(firstCard), 1);
-    expect(opacity(secondCard), 0.5);
+    expect(isEnabled(firstCard), isTrue);
+    expect(isEnabled(secondCard), isFalse);
+    expect(inactiveLabel(firstCard), findsNothing);
     expect(find.text('私网地址直连'), findsOneWidget);
     expect(find.text('识别流量协议'), findsOneWidget);
     expect(find.text('默认出站'), findsOneWidget);
@@ -57,8 +59,8 @@ void main() {
 
     await selectMode('直连');
     expect(find.text('未命中规则时：直连'), findsOneWidget);
-    expect(opacity(firstCard), 0.5);
-    expect(opacity(secondCard), 0.5);
+    expect(inactiveLabel(firstCard), findsOneWidget);
+    expect(inactiveLabel(secondCard), findsNothing);
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(enabled.enabled, isFalse);
@@ -67,8 +69,8 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(enabled.enabled, isTrue);
-    expect(opacity(firstCard), 0.5);
-    expect(opacity(secondCard), 0.5);
+    expect(inactiveLabel(firstCard), findsOneWidget);
+    expect(isEnabled(secondCard), isFalse);
 
     await tester.tap(
       find.descendant(of: firstCard, matching: find.byTooltip('编辑规则')),
@@ -80,8 +82,50 @@ void main() {
     await tester.pumpAndSettle();
 
     await selectMode('规则');
-    expect(opacity(firstCard), 1);
-    expect(opacity(secondCard), 0.5);
+    expect(inactiveLabel(firstCard), findsNothing);
+    expect(isEnabled(secondCard), isFalse);
+
+    final dragHandle = find.descendant(
+      of: firstCard,
+      matching: find.byTooltip('拖动调整顺序'),
+    );
+    final drag = await tester.startGesture(
+      tester.getCenter(dragHandle),
+      kind: PointerDeviceKind.mouse,
+    );
+    for (var step = 0; step < 12; step++) {
+      await drag.moveBy(const Offset(0, 8));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await drag.up();
+    await tester.pumpAndSettle();
+    expect(controller.snapshot.rules.map((rule) => rule.id), [
+      disabled.id,
+      enabled.id,
+    ]);
+  });
+
+  testWidgets('窄屏内联显示规则动作，工具栏仍可添加规则', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(360, 720));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final controller = AppController()..snapshot = AppSnapshot.empty();
+    addTearDown(controller.dispose);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const RulesPage()),
+      ),
+    );
+
+    final firstRow = find.byKey(ValueKey(controller.snapshot.rules.first.id));
+    expect(
+      find.descendant(of: firstRow, matching: find.text('直连 · 私网地址')),
+      findsOneWidget,
+    );
+    await tester.tap(find.widgetWithText(FilledButton, '添加规则'));
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(AlertDialog, '添加规则'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('JSON 接管时列出实际规则和默认出站', (tester) async {

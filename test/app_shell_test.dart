@@ -9,7 +9,7 @@ import 'package:nekoproxy/features/tools/tools_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
-  testWidgets('窄屏内容从底栏后方滚过，末项和浮动按钮可在底栏上方操作', (tester) async {
+  testWidgets('窄屏内容从底栏后方滚过，列表末项和添加规则入口不被遮挡', (tester) async {
     const size = Size(390, 680);
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = size;
@@ -41,9 +41,23 @@ void main() {
 
     await tester.tap(_destination('规则'));
     await _finishTransition(tester);
-    final addRule = find.widgetWithText(FloatingActionButton, '添加规则');
+    final addRule = find.widgetWithText(FilledButton, '添加规则');
     expect(tester.getRect(addRule).bottom, lessThan(dock.top));
     expect(addRule.hitTestable(), findsOneWidget);
+
+    final rulesScroll = tester.state<ScrollableState>(
+      find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    rulesScroll.position.jumpTo(rulesScroll.position.maxScrollExtent);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    final fallback = find.widgetWithText(ListTile, '默认出站');
+    expect(tester.getRect(fallback).bottom, lessThan(dock.top));
+    expect(fallback.hitTestable(), findsOneWidget);
   });
 
   testWidgets('窗口缩放仅布局可见页面，切换标签保留首页滚动位置', (tester) async {

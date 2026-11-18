@@ -788,6 +788,7 @@ class AppSettings {
     List<String>? perAppPackages,
     this.systemProxyEnabled = false,
     this.tunEnabled = false,
+    this.vpnEnabled = true,
     this.autoConnect = false,
     this.startAtLogin = false,
     this.minimizeToTray = true,
@@ -812,6 +813,7 @@ class AppSettings {
   List<String> perAppPackages;
   bool systemProxyEnabled;
   bool tunEnabled;
+  bool vpnEnabled;
   bool autoConnect;
   bool startAtLogin;
   bool minimizeToTray;
@@ -840,6 +842,7 @@ class AppSettings {
     'perAppPackages': perAppPackages,
     'systemProxyEnabled': systemProxyEnabled,
     'tunEnabled': tunEnabled,
+    'vpnEnabled': vpnEnabled,
     'autoConnect': autoConnect,
     'startAtLogin': startAtLogin,
     'minimizeToTray': minimizeToTray,
@@ -880,6 +883,7 @@ class AppSettings {
           .toList(growable: false),
       systemProxyEnabled: json['systemProxyEnabled'] as bool? ?? false,
       tunEnabled: json['tunEnabled'] as bool? ?? false,
+      vpnEnabled: json['vpnEnabled'] as bool? ?? true,
       autoConnect: json['autoConnect'] as bool? ?? false,
       startAtLogin: json['startAtLogin'] as bool? ?? false,
       minimizeToTray: json['minimizeToTray'] as bool? ?? true,

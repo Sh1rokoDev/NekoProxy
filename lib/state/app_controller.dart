@@ -59,6 +59,9 @@ class AppController extends ChangeNotifier {
   bool initialized = false;
   bool busy = false;
   bool running = false;
+  bool _savingTakeover = false;
+  bool _applyingTunTakeover = false;
+  bool get applyingTunTakeover => _applyingTunTakeover;
   bool _changingSplitMode = false;
   bool get canChangeSplitMode => !busy && !_changingSplitMode && !_disposed;
   String? _error;
@@ -185,6 +188,14 @@ class AppController extends ChangeNotifier {
   bool get isAndroid => Platform.isAndroid;
   bool get supportsSystemProxy => Platform.isWindows;
   bool get supportsTun => Platform.isWindows || Platform.isAndroid;
+  bool get canChangeTakeover => !busy && !_savingTakeover && !_rebuilding;
+  bool get tunManagedByConfig =>
+      snapshot.useCustomConfig || snapshot.advancedJson.containsKey('inbounds');
+  bool get tunTakeoverEnabled =>
+      isAndroid ? settings.vpnEnabled : settings.tunEnabled;
+  bool get usesTun => running
+      ? (_compiled?.hasTunInbound ?? tunTakeoverEnabled)
+      : tunTakeoverEnabled;
   bool get hasNodes => snapshot.hasNodes;
   OutboundMode get outboundMode =>
       snapshot.useCustomConfig ? OutboundMode.proxy : snapshot.outboundMode;
@@ -359,8 +370,10 @@ class AppController extends ChangeNotifier {
   }
 
   /// Returns the URL subscription that owns the current node, or the sole URL
-  /// subscription when no node is selected.
+  /// subscription when no node is selected. WireGuard-only mode has no
+  /// subscription.
   Subscription? get currentSubscription {
+    if (outboundMode == OutboundMode.wireGuard) return null;
     final node = currentNode;
     final subscriptionId = node?.subscriptionId;
     if (subscriptionId != null) {
@@ -442,9 +455,6 @@ class AppController extends ChangeNotifier {
           jsonEncode(snapshot.advancedJson).contains(directory),
     );
     loadWarning = loaded.warning;
-    if (Platform.isAndroid) {
-      settings.tunEnabled = true;
-    }
     runtime = Platform.isAndroid
         ? AndroidRuntimeClient(paths)
         : WindowsRuntimeClient(paths);
@@ -597,9 +607,7 @@ class AppController extends ChangeNotifier {
   CompiledConfig compile([AppSnapshot? candidate]) {
     return ConfigCompiler.compile(
       candidate ?? snapshot,
-      target: Platform.isAndroid
-          ? CompileTarget.android
-          : CompileTarget.windows,
+      target: isAndroid ? CompileTarget.android : CompileTarget.windows,
       cachePath: '${paths.runtime.path}${Platform.pathSeparator}cache.db',
       logPath: paths.logFile.path,
       systemDnsServers: _systemDns,
@@ -759,6 +767,10 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> connect() async {
+    if (!_rebuilding) await _connect();
+  }
+
+  Future<void> _connect() async {
     if (busy || running || (_changingWireGuard && !_rebuilding)) return;
     if (!canConnect) {
       _setError(
@@ -766,12 +778,6 @@ class AppController extends ChangeNotifier {
             ? '请在节点页选择 WireGuard 节点。'
             : '还没有可用节点，请先导入订阅或节点。',
       );
-      return;
-    }
-    if (Platform.isAndroid &&
-        settings.perAppMode == PerAppMode.allow &&
-        settings.perAppPackages.isEmpty) {
-      _setError('分应用代理已选择“仅所选”，但还没有勾选任何应用。');
       return;
     }
     busy = true;
@@ -785,6 +791,12 @@ class AppController extends ChangeNotifier {
       await _refreshSystemDns();
       ruleSets.pinActiveSnapshotForCore();
       final compiled = compile();
+      if (isAndroid &&
+          compiled.hasTunInbound &&
+          settings.perAppMode == PerAppMode.allow &&
+          settings.perAppPackages.isEmpty) {
+        throw const RuntimeException('分应用代理已选择“仅所选”，但还没有勾选任何应用。');
+      }
       await ruleSets.prepareLocalFiles(compiled.localRuleSetPaths);
       _compiled = compiled;
       final namesById = <String, String>{};
@@ -806,8 +818,7 @@ class AppController extends ChangeNotifier {
       _nodeIdsByTag = nodeIdsByTag;
       _effectiveTag = null;
       if (compiled.warnings.isNotEmpty) notice = compiled.warnings.first;
-      final tunMode =
-          Platform.isWindows && (settings.tunEnabled || compiled.hasTunInbound);
+      final tunMode = compiled.hasTunInbound;
       await runtime.start(
         config: compiled.encoded,
         mode: tunMode ? 'tun' : 'normal',
@@ -830,7 +841,7 @@ class AppController extends ChangeNotifier {
       _lastDownTotal = 0;
       _lastTrafficAt = null;
       samples = const [];
-      _recordHomeActivity('代理已连接');
+      if (!_applyingTunTakeover) _recordHomeActivity('代理已连接');
       _startPolling();
       try {
         await _refreshStatus();
@@ -841,13 +852,12 @@ class AppController extends ChangeNotifier {
         final result = systemProxy!.enable(settings.inboundOrDefault.localPort);
         if (!result.ok) {
           error = result.error;
-          settings.systemProxyEnabled = false;
         }
       }
     } catch (e) {
       running = false;
       _cancelExitInfo();
-      _recordHomeActivity('代理连接失败', failed: true);
+      if (!_applyingTunTakeover) _recordHomeActivity('代理连接失败', failed: true);
       _pollTimer?.cancel();
       _uiTimer?.cancel();
       _setError(_friendlyError(e));
@@ -869,6 +879,8 @@ class AppController extends ChangeNotifier {
   Future<void> disconnect({bool silent = false}) async {
     _cancelExitInfo();
     final wasRunning = running;
+    busy = true;
+    if (!silent) notifyListeners();
     _pollTimer?.cancel();
     _pollTimer = null;
     _uiTimer?.cancel();
@@ -880,14 +892,16 @@ class AppController extends ChangeNotifier {
     _pollFailures = 0;
     await _stopTemporaryTestRuntime();
     if (!running && !silent) {
-      notifyListeners();
-      await runtime.shutdown();
-      _connectionNodeNames = const {};
-      _nodeIdsByTag = const {};
+      try {
+        await runtime.shutdown();
+      } finally {
+        _connectionNodeNames = const {};
+        _nodeIdsByTag = const {};
+        busy = false;
+        notifyListeners();
+      }
       return;
     }
-    busy = true;
-    if (!silent) notifyListeners();
     try {
       systemProxy?.disable();
       await runtime.shutdown();
@@ -904,13 +918,14 @@ class AppController extends ChangeNotifier {
       _nodeIdsByTag = const {};
       _effectiveTag = null;
       connectedAt = null;
-      if (wasRunning) _recordHomeActivity('代理已断开');
+      if (wasRunning && !_applyingTunTakeover) _recordHomeActivity('代理已断开');
       busy = false;
       notifyListeners();
     }
   }
 
   Future<void> toggleConnection() async {
+    if (busy || _rebuilding) return;
     if (running) {
       await disconnect();
     } else {
@@ -919,14 +934,15 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> restartCore() async {
-    if (_rebuilding) return;
+    if (_rebuilding || busy) return;
     _rebuilding = true;
     try {
       final wasRunning = running;
       await disconnect(silent: true);
-      if (wasRunning) await connect();
+      if (wasRunning) await _connect();
     } finally {
       _rebuilding = false;
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -1056,49 +1072,89 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setSystemProxy(bool enabled) async {
-    if (!supportsSystemProxy) return;
-    settings.systemProxyEnabled = enabled;
-    await storage.save(snapshot);
-    notifyListeners();
-    if (enabled) {
-      if (!running) {
-        await connect();
-      } else {
-        final result = systemProxy!.enable(settings.inboundOrDefault.localPort);
+    if (!supportsSystemProxy ||
+        !canChangeTakeover ||
+        settings.systemProxyEnabled == enabled) {
+      return;
+    }
+    _savingTakeover = true;
+    final current = settings;
+    current.systemProxyEnabled = enabled;
+    try {
+      await storage.save(snapshot);
+      final proxy = systemProxy;
+      if (running && !busy && proxy != null) {
+        final result = enabled
+            ? proxy.enable(current.inboundOrDefault.localPort)
+            : proxy.disable();
         if (!result.ok) {
-          settings.systemProxyEnabled = false;
-          _setError(result.error ?? '设置系统代理失败');
+          current.systemProxyEnabled = !enabled;
           await storage.save(snapshot);
+          _setError(result.error ?? '切换系统代理失败');
         }
       }
-    } else {
-      final result = systemProxy!.disable();
-      if (!result.ok) _setError(result.error ?? '恢复系统代理失败');
+    } catch (error) {
+      current.systemProxyEnabled = !enabled;
+      _setError('系统代理设置保存失败：${_friendlyError(error)}');
+    } finally {
+      _savingTakeover = false;
+      if (!_disposed) notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> setTun(bool enabled) async {
-    if (settings.tunEnabled == enabled) return;
-    final wasRunning = running;
-    settings.tunEnabled = enabled;
-    await storage.save(snapshot);
-    notifyListeners();
-    if (!Platform.isAndroid && running) {
-      await restartCore();
-      if (wasRunning && !running) {
-        settings.tunEnabled = !enabled;
+    if (!canChangeTakeover ||
+        tunManagedByConfig ||
+        tunTakeoverEnabled == enabled) {
+      return;
+    }
+    if (running &&
+        enabled &&
+        isAndroid &&
+        settings.perAppMode == PerAppMode.allow &&
+        settings.perAppPackages.isEmpty) {
+      _setError('分应用代理已选择“仅所选”，请先选择应用再开启 VPN。');
+      return;
+    }
+    final current = settings;
+    void update(bool value) {
+      if (isAndroid) {
+        current.vpnEnabled = value;
+      } else {
+        current.tunEnabled = value;
+      }
+    }
+
+    _savingTakeover = true;
+    update(enabled);
+    try {
+      try {
         await storage.save(snapshot);
-        await connect();
-        error ??= enabled ? 'TUN 未能启动，已恢复原接管方式。' : '已恢复连接。';
-        notifyListeners();
+      } catch (error) {
+        update(!enabled);
+        _setError('接管设置保存失败：${_friendlyError(error)}');
+        return;
       }
-    } else if (Platform.isAndroid) {
-      if (enabled && !running) {
+      if (_disposed || busy || !running) return;
+      final type = isAndroid ? 'VPN' : 'TUN';
+      _applyingTunTakeover = true;
+      notifyListeners();
+      await restartCore();
+      if (running) {
+        _recordHomeActivity('$type 已${enabled ? '开启' : '关闭'}');
+      } else {
+        final failure = error ?? '内核启动失败';
+        update(!enabled);
         await connect();
-      } else if (!enabled && running) {
-        await disconnect();
+        final result = running ? '已恢复原接管方式' : '原连接恢复失败';
+        final message = '$type 切换失败，$result：$failure';
+        _recordHomeActivity(message, failed: true);
+        _setError(message);
       }
+    } finally {
+      _applyingTunTakeover = false;
+      _savingTakeover = false;
+      if (!_disposed) notifyListeners();
     }
   }
 
@@ -1569,9 +1625,8 @@ class AppController extends ChangeNotifier {
 
   bool get checksViaTun =>
       running &&
-      (Platform.isAndroid
-          ? settings.perAppMode != PerAppMode.allow
-          : settings.tunEnabled || (_compiled?.hasTunInbound ?? false));
+      usesTun &&
+      (!isAndroid || settings.perAppMode != PerAppMode.allow);
 
   bool get checksViaProxy => running && !checksViaTun;
 
@@ -2233,7 +2288,6 @@ class AppController extends ChangeNotifier {
     final restored = await BackupService.import(content, password: password);
     await disconnect();
     snapshot = restored;
-    if (Platform.isAndroid) settings.tunEnabled = true;
     await storage.save(snapshot);
     notifyListeners();
   }
@@ -2241,7 +2295,6 @@ class AppController extends ChangeNotifier {
   Future<void> resetAll() async {
     await disconnect();
     snapshot = AppSnapshot.empty();
-    if (Platform.isAndroid) settings.tunEnabled = true;
     await storage.save(snapshot);
     notifyListeners();
   }
@@ -2419,8 +2472,6 @@ class AppController extends ChangeNotifier {
     // Stop the host runtime as well; on Android the VpnService and its TUN
     // survive an engine crash and would blackhole all device traffic.
     await runtime.shutdown();
-    settings.systemProxyEnabled = false;
-    await storage.save(snapshot);
     notifyListeners();
   }
 

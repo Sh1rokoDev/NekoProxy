@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.net.ConnectivityManager
 import android.net.Network
@@ -19,6 +20,7 @@ import com.nekoproxy.mobile.Mobile
 import com.nekoproxy.mobile.Protector
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.Executors
 
 class NekoVpnService : VpnService() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -31,6 +33,7 @@ class NekoVpnService : VpnService() {
         private const val EXTRA_CONFIG = "config"
         private const val EXTRA_CACHE = "cache"
         private const val EXTRA_LOG = "log"
+        private const val EXTRA_USE_VPN = "use_vpn"
         private const val EXTRA_PER_APP_MODE = "per_app_mode"
         private const val EXTRA_PER_APP_PACKAGES = "per_app_packages"
 
@@ -55,12 +58,24 @@ class NekoVpnService : VpnService() {
 
         @Volatile
         private var instance: NekoVpnService? = null
+        // A restart must release the old listener before binding the same port.
+        private val lifecycle = Executors.newSingleThreadExecutor()
 
+        private fun stopEngine(core: Engine?) {
+            if (core == null) return
+            lifecycle.execute {
+                runCatching { core.stop() }
+                    .onFailure { Log.w(TAG, "could not stop sing-box", it) }
+            }
+        }
+
+        @Synchronized
         fun start(
             context: Context,
             config: String,
             cachePath: String,
             logPath: String,
+            useVpn: Boolean,
             perAppMode: String,
             perAppPackages: List<String>,
         ) {
@@ -72,6 +87,7 @@ class NekoVpnService : VpnService() {
                 putExtra(EXTRA_CONFIG, config)
                 putExtra(EXTRA_CACHE, cachePath)
                 putExtra(EXTRA_LOG, logPath)
+                putExtra(EXTRA_USE_VPN, useVpn)
                 putExtra(EXTRA_PER_APP_MODE, perAppMode)
                 putStringArrayListExtra(EXTRA_PER_APP_PACKAGES, ArrayList(perAppPackages))
             }
@@ -82,6 +98,7 @@ class NekoVpnService : VpnService() {
             }
         }
 
+        @Synchronized
         fun stop(context: Context) {
             startToken++
             val current = engine
@@ -93,9 +110,7 @@ class NekoVpnService : VpnService() {
             lastError = null
             // Engine shutdown can block while the TUN reader drains; never wait
             // for it on the caller (main) thread or stopSelf would be skipped.
-            current?.let { stale ->
-                Thread({ runCatching { stale.stop() } }, "nekoproxy-stop").start()
-            }
+            stopEngine(current)
         }
 
         fun status(): Map<String, Any?> {
@@ -165,7 +180,9 @@ class NekoVpnService : VpnService() {
     }
 
     private var tunInterface: ParcelFileDescriptor? = null
-    private var worker: Thread? = null
+    private var queuedToken: Int? = null
+    @Volatile
+    private var usesVpn = false
 
     @Volatile
     private var destroyed = false
@@ -186,11 +203,27 @@ class NekoVpnService : VpnService() {
         if (destroyed) {
             // A quick stop/start can reuse this instance before onDestroy runs.
             destroyed = false
-            worker = null
             state = STATE_STARTING
             lastError = null
         }
-        startForeground(NOTIFICATION_ID, buildNotification("正在启动 sing-box…"))
+        val useVpn = intent.getBooleanExtra(EXTRA_USE_VPN, true)
+        usesVpn = useVpn
+        val notification = buildNotification("正在启动 sing-box…")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification,
+                    if (useVpn) ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                    else ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (error: RuntimeException) {
+            fail(error.message ?: "前台服务启动失败")
+            return START_NOT_STICKY
+        }
         val config = intent.getStringExtra(EXTRA_CONFIG) ?: ""
         val logPath = intent.getStringExtra(EXTRA_LOG) ?: ""
         val perAppMode = intent.getStringExtra(EXTRA_PER_APP_MODE) ?: "off"
@@ -199,18 +232,14 @@ class NekoVpnService : VpnService() {
             fail("缺少内核配置")
             return START_NOT_STICKY
         }
-        if (engine == null && worker?.isAlive != true) {
-            val token = startToken
-            worker = Thread(
-                {
-                    try {
-                        startEngine(config, logPath, perAppMode, perAppPackages, token)
-                    } finally {
-                        if (token == startToken) worker = null
-                    }
-                },
-                "nekoproxy-core",
-            ).also { it.start() }
+        val token = startToken
+        if (engine == null && queuedToken != token) {
+            queuedToken = token
+            lifecycle.execute {
+                if (!destroyed && token == startToken) {
+                    startEngine(config, logPath, useVpn, perAppMode, perAppPackages, token)
+                }
+            }
         }
         return START_NOT_STICKY
     }
@@ -218,6 +247,7 @@ class NekoVpnService : VpnService() {
     private fun startEngine(
         config: String,
         logPath: String,
+        useVpn: Boolean,
         perAppMode: String,
         perAppPackages: List<String>,
         token: Int,
@@ -226,92 +256,111 @@ class NekoVpnService : VpnService() {
         try {
             val parsed = JSONObject(config)
             resolveManagedWireGuardPeers(parsed)
-            val tunOptions = findTunInbound(parsed)
-                ?: throw IllegalStateException("配置中没有 TUN 入站")
-            val addresses = tunOptions.optJSONArray("address") ?: JSONArray()
-            val mtu = if (tunOptions.has("mtu")) tunOptions.optInt("mtu", 9000) else 9000
-            val ipv6 = (0 until addresses.length()).any {
-                addresses.optString(it).contains(':')
-            }
-            val autoRoute = tunOptions.optBoolean("auto_route", true)
-
-            val builder = Builder()
-                .setSession("NekoProxy")
-                .setMtu(mtu)
-                .setBlocking(true)
-            val addressValues = ArrayList<String>(addresses.length())
-            for (index in 0 until addresses.length()) {
-                val value = addresses.optString(index)
-                val slash = value.indexOf('/')
-                if (slash > 0) {
-                    builder.addAddress(value.substring(0, slash), value.substring(slash + 1).toInt())
-                } else {
-                    builder.addAddress(value, if (value.contains(':')) 128 else 32)
-                }
-                addressValues.add(value)
-            }
-            if (autoRoute) {
-                val routes = tunOptions.optJSONArray("route_address")
-                if (routes == null || routes.length() == 0) {
-                    builder.addRoute("0.0.0.0", 0)
-                    if (ipv6) builder.addRoute("::", 0)
-                } else {
-                    for (index in 0 until routes.length()) {
-                        val route = routes.getString(index)
-                        builder.addRoute(route.substringBefore('/'), route.substringAfter('/').toInt())
-                    }
-                    builder.addRoute("172.19.0.2", 32)
-                    if (ipv6) builder.addRoute("fdfe:dcba:9876::2", 128)
-                }
-            }
-            applyPerAppSelection(builder, perAppMode, perAppPackages)
-            builder.addDnsServer("172.19.0.2")
-            if (ipv6) builder.addDnsServer("fdfe:dcba:9876::2")
-            parsed.optJSONObject("dns")?.optJSONArray("servers")?.let { servers ->
-                for (i in 0 until servers.length()) {
-                    val server = servers.optJSONObject(i) ?: continue
-                    if (server.optString("type") != "neko-wireguard-dns") continue
-                    server.optJSONArray("search_domains")?.let { domains ->
-                        for (j in 0 until domains.length()) builder.addSearchDomain(domains.getString(j))
-                    }
-                }
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                builder.setMetered(false)
-            }
-            val pfd = builder.establish() ?: throw IllegalStateException("VpnService 未能建立 TUN 接口")
-            tunInterface = pfd
-
-            val protector = object : Protector {
+            val protector = if (useVpn) object : Protector {
                 override fun protect(fd: Int): Boolean = this@NekoVpnService.protect(fd)
-            }
-            core = Mobile.newEngine(protector, VpnOwnerFinder(this))
-            core.prepareTun(pfd.fd, JSONArray(addressValues).toString())
-            Log.i(TAG, "starting sing-box core, log=$logPath")
+            } else null
+            core = Mobile.newEngine(protector, if (useVpn) VpnOwnerFinder(this) else null)
+            if (useVpn) prepareVpn(core, parsed, perAppMode, perAppPackages)
+            Log.i(TAG, "starting sing-box core")
             core.start(parsed.toString())
-            if (destroyed || token != startToken) {
+            val published = synchronized(Companion) {
+                if (destroyed || token != startToken) {
+                    false
+                } else {
+                    engine = core
+                    if (parsed.optJSONArray("endpoints")?.let { endpoints ->
+                        (0 until endpoints.length()).any { endpoints.optJSONObject(it)?.optString("type") == "wireguard" }
+                    } == true) observeWireGuardNetwork(core)
+                    state = STATE_RUNNING
+                    lastError = null
+                    updateNotification(if (useVpn) "VPN 已连接" else "本地代理已启动")
+                    true
+                }
+            }
+            if (!published) {
+                closeTun()
                 core.stop()
-                pfd.close()
-                if (tunInterface === pfd) tunInterface = null
                 return
             }
-            engine = core
-            if (parsed.optJSONArray("endpoints")?.let { endpoints ->
-                (0 until endpoints.length()).any { endpoints.optJSONObject(it)?.optString("type") == "wireguard" }
-            } == true) observeWireGuardNetwork(core)
-            state = STATE_RUNNING
-            lastError = null
             Log.i(TAG, "sing-box started, log=$logPath")
-            updateNotification("已连接")
         } catch (error: Throwable) {
             Log.e(TAG, "failed to start sing-box", error)
             closeTun()
-            core?.let { stale ->
-                Thread({ runCatching { stale.stop() } }, "nekoproxy-stop").start()
+            if (engine === core) engine = null
+            try {
+                core?.stop()
+            } catch (stopError: Exception) {
+                Log.w(TAG, "could not stop failed sing-box engine", stopError)
             }
-            if (token != startToken) return
-            fail(error.message ?: "启动失败")
+            synchronized(Companion) {
+                if (!destroyed && token == startToken) fail(error.message ?: "启动失败")
+            }
         }
+    }
+
+    private fun prepareVpn(
+        core: Engine,
+        parsed: JSONObject,
+        perAppMode: String,
+        perAppPackages: List<String>,
+    ) {
+        val tunOptions = findTunInbound(parsed)
+            ?: throw IllegalStateException("配置中没有 TUN 入站")
+        val addresses = tunOptions.optJSONArray("address") ?: JSONArray()
+        val mtu = if (tunOptions.has("mtu")) tunOptions.optInt("mtu", 9000) else 9000
+        val ipv6 = (0 until addresses.length()).any {
+            addresses.optString(it).contains(':')
+        }
+        val autoRoute = tunOptions.optBoolean("auto_route", true)
+
+        val builder = Builder()
+            .setSession("NekoProxy")
+            .setMtu(mtu)
+            .setBlocking(true)
+        val addressValues = ArrayList<String>(addresses.length())
+        for (index in 0 until addresses.length()) {
+            val value = addresses.optString(index)
+            val slash = value.indexOf('/')
+            if (slash > 0) {
+                builder.addAddress(value.substring(0, slash), value.substring(slash + 1).toInt())
+            } else {
+                builder.addAddress(value, if (value.contains(':')) 128 else 32)
+            }
+            addressValues.add(value)
+        }
+        if (autoRoute) {
+            val routes = tunOptions.optJSONArray("route_address")
+            if (routes == null || routes.length() == 0) {
+                builder.addRoute("0.0.0.0", 0)
+                if (ipv6) builder.addRoute("::", 0)
+            } else {
+                for (index in 0 until routes.length()) {
+                    val route = routes.getString(index)
+                    builder.addRoute(route.substringBefore('/'), route.substringAfter('/').toInt())
+                }
+                builder.addRoute("172.19.0.2", 32)
+                if (ipv6) builder.addRoute("fdfe:dcba:9876::2", 128)
+            }
+        }
+        applyPerAppSelection(builder, perAppMode, perAppPackages)
+        builder.addDnsServer("172.19.0.2")
+        if (ipv6) builder.addDnsServer("fdfe:dcba:9876::2")
+        parsed.optJSONObject("dns")?.optJSONArray("servers")?.let { servers ->
+            for (i in 0 until servers.length()) {
+                val server = servers.optJSONObject(i) ?: continue
+                if (server.optString("type") != "neko-wireguard-dns") continue
+                server.optJSONArray("search_domains")?.let { domains ->
+                    for (j in 0 until domains.length()) builder.addSearchDomain(domains.getString(j))
+                }
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            builder.setMetered(false)
+        }
+        val pfd = builder.establish() ?: throw IllegalStateException("VpnService 未能建立 TUN 接口")
+        tunInterface = pfd
+
+        core.prepareTun(pfd.fd, JSONArray(addressValues).toString())
     }
 
     private fun applyPerAppSelection(builder: Builder, mode: String, packages: List<String>) {
@@ -351,9 +400,7 @@ class NekoVpnService : VpnService() {
         state = STATE_ERROR
         val current = engine
         engine = null
-        current?.let { stale ->
-            Thread({ runCatching { stale.stop() } }, "nekoproxy-stop").start()
-        }
+        stopEngine(current)
         closeTun()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -426,6 +473,7 @@ class NekoVpnService : VpnService() {
     }
 
     override fun onRevoke() {
+        if (!usesVpn) return
         stopSelf()
         super.onRevoke()
     }
@@ -435,16 +483,17 @@ class NekoVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        destroyed = true
-        closeTun()
-        val current = engine
-        engine = null
-        current?.let { stale ->
-            Thread({ runCatching { stale.stop() } }, "nekoproxy-stop").start()
-        }
-        instance = null
-        if (state != STATE_ERROR) {
-            state = STATE_IDLE
+        synchronized(Companion) {
+            destroyed = true
+            closeTun()
+            if (instance === this) {
+                stopEngine(engine)
+                engine = null
+                instance = null
+                if (state != STATE_ERROR && queuedToken == startToken) {
+                    state = STATE_IDLE
+                }
+            }
         }
         super.onDestroy()
     }

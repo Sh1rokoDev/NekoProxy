@@ -325,34 +325,29 @@ class _NetworkTakeoverActions extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final enabled = !controller.busy;
+    final enabled = controller.canChangeTakeover;
+    final tunSwitch = _CompactSwitch(
+      icon: controller.isAndroid ? Icons.vpn_key_rounded : Icons.lan_outlined,
+      label: controller.isAndroid ? 'VPN' : 'TUN',
+      value: controller.tunManagedByConfig
+          ? controller.running && controller.usesTun
+          : controller.tunTakeoverEnabled,
+      enabled: enabled && !controller.tunManagedByConfig,
+      onChanged: (value) => controller.setTun(value),
+    );
     final items = <Widget>[
-      if (controller.isAndroid)
+      if (controller.tunManagedByConfig)
+        Tooltip(message: '由配置中的入站设置控制', child: tunSwitch)
+      else
+        tunSwitch,
+      if (controller.supportsSystemProxy)
         _CompactSwitch(
-          icon: Icons.vpn_key_rounded,
-          label: 'VPN',
-          value: controller.running,
+          icon: Icons.language_rounded,
+          label: '系统代理',
+          value: controller.settings.systemProxyEnabled,
           enabled: enabled,
-          onChanged: (value) =>
-              value ? controller.connect() : controller.disconnect(),
-        )
-      else ...[
-        _CompactSwitch(
-          icon: Icons.lan_outlined,
-          label: 'TUN',
-          value: controller.settings.tunEnabled,
-          enabled: enabled,
-          onChanged: (value) => controller.setTun(value),
+          onChanged: (value) => controller.setSystemProxy(value),
         ),
-        if (controller.supportsSystemProxy)
-          _CompactSwitch(
-            icon: Icons.language_rounded,
-            label: '系统代理',
-            value: controller.settings.systemProxyEnabled,
-            enabled: enabled,
-            onChanged: (value) => controller.setSystemProxy(value),
-          ),
-      ],
     ];
     return Container(
       height: 42,
@@ -408,7 +403,7 @@ class _CompactSwitch extends StatelessWidget {
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
-      onTap: toggle,
+      onTap: enabled ? toggle : null,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(7, 2, 3, 2),
         child: Row(

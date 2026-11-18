@@ -25,8 +25,8 @@ class ConnectionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final running = controller.running;
-    final busy = controller.busy;
+    final running = controller.running || controller.applyingTunTakeover;
+    final busy = controller.busy || controller.applyingTunTakeover;
     final profile = controller.activeWireGuard;
     final onlyWireGuard = controller.outboundMode == OutboundMode.wireGuard;
     final node = onlyWireGuard ? null : controller.currentNode;
@@ -65,9 +65,7 @@ class ConnectionCard extends StatelessWidget {
           ? Icons.bolt_outlined
           : Icons.touch_app_outlined,
       label: onlyWireGuard
-          ? (controller.isAndroid || controller.settings.tunEnabled
-                ? '按 AllowedIPs 路由'
-                : '仅接管代理流量')
+          ? (controller.usesTun ? '按 AllowedIPs 路由' : '仅接管代理流量')
           : chain
           ? '链式代理 · ${controller.currentGroupLabel}'
           : controller.currentGroupLabel,
@@ -196,11 +194,7 @@ class ConnectionCard extends StatelessWidget {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _ConnectionInfoStrip(
-                  controller: controller,
-                  info: exitInfo,
-                  wide: wide,
-                ),
+                _ConnectionInfoStrip(controller: controller, info: exitInfo),
                 if (wide) const Spacer(),
                 const SizedBox(height: 12),
                 Row(
@@ -495,7 +489,10 @@ class _ConnectionPowerButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    final label = controller.busy
+    final busy = controller.busy || controller.applyingTunTakeover;
+    final label = controller.applyingTunTakeover
+        ? '断开'
+        : busy
         ? '请稍候'
         : running
         ? '断开'
@@ -503,7 +500,7 @@ class _ConnectionPowerButton extends StatelessWidget {
         ? '连接'
         : '导入节点';
     final foreground = scheme.onPrimary;
-    final icon = controller.busy
+    final icon = busy
         ? SizedBox(
             width: 18,
             height: 18,
@@ -528,7 +525,7 @@ class _ConnectionPowerButton extends StatelessWidget {
     );
     return FilledButton(
       key: const ValueKey('connection-power'),
-      onPressed: controller.busy ? null : onPressed,
+      onPressed: busy ? null : onPressed,
       style: FilledButton.styleFrom(
         minimumSize: const Size(112, _connectionActionSize),
         padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -599,15 +596,10 @@ class _ConnectionRefreshButton extends StatelessWidget {
 }
 
 class _ConnectionInfoStrip extends StatelessWidget {
-  const _ConnectionInfoStrip({
-    required this.controller,
-    required this.info,
-    required this.wide,
-  });
+  const _ConnectionInfoStrip({required this.controller, required this.info});
 
   final AppController controller;
   final ExitInfo? info;
-  final bool wide;
 
   @override
   Widget build(BuildContext context) {
@@ -628,28 +620,25 @@ class _ConnectionInfoStrip extends StatelessWidget {
     final exitError = controller.exitInfoError;
     final exitCell = _ConnectionDataCell(
       label: '出口 IP',
-      value: info != null
-          ? SelectionArea(child: Text(info.ip, style: _infoAddressStyle))
-          : Text(
-              exitError ??
-                  (controller.checkingExitInfo
-                      ? '正在检测出口…'
-                      : controller.running
-                      ? '出口信息待检测'
-                      : '连接后检测出口信息'),
-              style: TextStyle(
-                color: exitError != null
-                    ? scheme.error
-                    : controller.checkingExitInfo
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant,
-              ),
-            ),
+      value: switch ((info, exitError)) {
+        (final ExitInfo info, _) => SelectionArea(
+          child: Text(info.ip, style: _infoAddressStyle),
+        ),
+        (_, final String error) => Text(
+          error,
+          style: TextStyle(color: scheme.error),
+        ),
+        _ when controller.checkingExitInfo => Text(
+          '正在检测出口…',
+          style: TextStyle(color: scheme.primary),
+        ),
+        _ => const Text('未知'),
+      },
     );
     final providerCell = _ConnectionDataCell(
       key: const ValueKey('connection-provider'),
       label: '运营商',
-      value: Text(provider.isEmpty ? '未提供' : provider),
+      value: Text(provider.isEmpty ? '未知' : provider),
     );
     final latencyCell = _ConnectionDataCell(
       key: const ValueKey('connection-latency'),
@@ -667,23 +656,11 @@ class _ConnectionInfoStrip extends StatelessWidget {
       key: const ValueKey('connection-info-strip'),
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (wide) ...[
-          exitCell,
-          const SizedBox(height: 8),
-          providerCell,
-          const SizedBox(height: 8),
-          latencyCell,
-        ] else ...[
-          Row(
-            children: [
-              Expanded(flex: 3, child: exitCell),
-              const SizedBox(width: 12),
-              Flexible(flex: 2, child: latencyCell),
-            ],
-          ),
-          const SizedBox(height: 8),
-          providerCell,
-        ],
+        exitCell,
+        const SizedBox(height: 8),
+        providerCell,
+        const SizedBox(height: 8),
+        latencyCell,
       ],
     );
   }

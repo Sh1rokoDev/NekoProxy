@@ -193,6 +193,9 @@ class ConfigCompiler {
 
     final warnings = <String>[];
     final settings = snapshot.settings;
+    final useTun = target == CompileTarget.android
+        ? settings.vpnEnabled
+        : settings.tunEnabled;
     final selectionAuto = settings.selectionMode == SelectionMode.auto;
     final autoNodes = autoCandidates(nodes, snapshot.subscriptions).toList();
     final useAuto = selectionAuto && autoNodes.isNotEmpty;
@@ -282,6 +285,7 @@ class ConfigCompiler {
         : _buildDns(
             snapshot,
             target,
+            useTun,
             proxyGroupTag,
             warnings,
             systemDns,
@@ -297,7 +301,7 @@ class ConfigCompiler {
           }
         : _buildRoute(
             snapshot,
-            target,
+            useTun,
             proxyGroupTag,
             autoNodes.isNotEmpty,
             warnings,
@@ -308,17 +312,16 @@ class ConfigCompiler {
           );
     final inbounds = <Map<String, dynamic>>[
       if (!testOnly) _buildMixedInbound(snapshot, target),
-      if (!testOnly && (settings.tunEnabled || target == CompileTarget.android))
-        _buildTunInbound(snapshot, target, warnings),
+      if (!testOnly && useTun) _buildTunInbound(snapshot, target, warnings),
     ];
     final effectiveInbounds =
         !testOnly && snapshot.advancedJson.containsKey('inbounds')
         ? snapshot.advancedJson['inbounds']
         : inbounds;
-    // Without a TUN to loop back into, let Windows route through VPN adapters
-    // such as WireGuard that sing-box's interface detection skips.
+    // Android's offline test host has its own interface control. Without a TUN,
+    // ordinary Windows sessions can follow the system's VPN routes directly.
     route['auto_detect_interface'] =
-        target == CompileTarget.android ||
+        (testOnly && target == CompileTarget.android) ||
         wireGuard != null ||
         _hasTunInbound(effectiveInbounds);
 
@@ -417,7 +420,9 @@ class ConfigCompiler {
           : proxyTag;
       final route = _buildRoute(
         snapshot,
-        target,
+        target == CompileTarget.android
+            ? snapshot.settings.vpnEnabled
+            : snapshot.settings.tunEnabled,
         proxyGroup,
         hasAutoGroup,
         [],
@@ -760,6 +765,7 @@ class ConfigCompiler {
   static Map<String, dynamic> _buildDns(
     AppSnapshot snapshot,
     CompileTarget target,
+    bool useTun,
     String proxyGroupTag,
     List<String> warnings,
     String? systemDns,
@@ -807,7 +813,9 @@ class ConfigCompiler {
     final finalServer = mode == SplitMode.direct ? 'dns-direct' : 'dns-proxy';
     // Without TUN IPv6, advertising AAAA only sends apps into a dead route.
     final strategy =
-        target == CompileTarget.android && !snapshot.settings.tunOrDefault.ipv6
+        target == CompileTarget.android &&
+            useTun &&
+            !snapshot.settings.tunOrDefault.ipv6
         ? 'ipv4_only'
         : dns.strategy;
     return {
@@ -900,7 +908,7 @@ class ConfigCompiler {
 
   static Map<String, dynamic> _buildRoute(
     AppSnapshot snapshot,
-    CompileTarget target,
+    bool useTun,
     String proxyGroupTag,
     bool hasAutoGroup,
     List<String> warnings,
@@ -922,7 +930,7 @@ class ConfigCompiler {
     if (settings.dnsOrDefault.sniff) {
       rules.add({'action': 'sniff'});
     }
-    if (settings.tunEnabled || target == CompileTarget.android) {
+    if (useTun) {
       rules.add({'protocol': 'dns', 'action': 'hijack-dns'});
     }
     if (mode == SplitMode.rule) {

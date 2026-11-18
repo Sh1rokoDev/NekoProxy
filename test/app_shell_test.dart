@@ -41,7 +41,7 @@ void main() {
 
     await tester.tap(_destination('规则'));
     await _finishTransition(tester);
-    final addRule = find.widgetWithText(FilledButton, '添加规则');
+    final addRule = find.widgetWithText(FloatingActionButton, '添加');
     expect(tester.getRect(addRule).bottom, lessThan(dock.top));
     expect(addRule.hitTestable(), findsOneWidget);
 
@@ -55,7 +55,7 @@ void main() {
     );
     rulesScroll.position.jumpTo(rulesScroll.position.maxScrollExtent);
     await tester.pump(Duration.zero, EnginePhase.paint);
-    final fallback = find.widgetWithText(ListTile, '默认出站');
+    final fallback = find.widgetWithText(InkWell, '默认出站');
     expect(tester.getRect(fallback).bottom, lessThan(dock.top));
     expect(fallback.hitTestable(), findsOneWidget);
   });

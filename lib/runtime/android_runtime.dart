@@ -30,6 +30,7 @@ class AndroidRuntimeClient implements RuntimeClient {
     await shutdown();
     final result = await _channel.invokeMethod<Map<Object?, Object?>>('start', {
       'config': config,
+      'mode': mode,
       'cachePath': paths.runtime.path,
       'logPath': paths.logFile.path,
       'perAppMode': perAppMode,

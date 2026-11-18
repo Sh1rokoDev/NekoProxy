@@ -21,11 +21,13 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newCachedThreadPool()
     private var pendingStart: PendingStart? = null
+    private var startAttempt = 0
 
     private data class PendingStart(
         val config: String,
         val cachePath: String,
         val logPath: String,
+        val useVpn: Boolean,
         val perAppMode: String,
         val perAppPackages: List<String>,
         val result: MethodChannel.Result,
@@ -95,6 +97,9 @@ class MainActivity : FlutterActivity() {
                     null
                 }
                 "stop" -> {
+                    startAttempt++
+                    pendingStart?.result?.error("vpn_start", "内核启动已取消", null)
+                    pendingStart = null
                     NekoVpnService.stop(this)
                     result.success(null)
                 }
@@ -130,29 +135,31 @@ class MainActivity : FlutterActivity() {
         val config = call.argument<String>("config") ?: ""
         val cachePath = call.argument<String>("cachePath") ?: ""
         val logPath = call.argument<String>("logPath") ?: ""
+        val useVpn = call.argument<String>("mode") != "normal"
         val perAppMode = call.argument<String>("perAppMode") ?: "off"
         val perAppPackages = call.argument<List<String>>("perAppPackages") ?: emptyList()
         if (config.isBlank()) {
             result.error("invalid_config", "内核配置为空", null)
             return
         }
-        val pending = PendingStart(config, cachePath, logPath, perAppMode, perAppPackages, result)
-        val prepareIntent = VpnService.prepare(this)
+        val pending = PendingStart(config, cachePath, logPath, useVpn, perAppMode, perAppPackages, result)
+        val prepareIntent = if (useVpn) VpnService.prepare(this) else null
         if (prepareIntent != null) {
             pendingStart = pending
             startActivityForResult(prepareIntent, VPN_PERMISSION_REQUEST)
         } else {
-            launchVpn(pending)
+            launchCore(pending)
         }
     }
 
-    private fun launchVpn(pending: PendingStart) {
+    private fun launchCore(pending: PendingStart) {
         try {
             NekoVpnService.start(
                 this,
                 pending.config,
                 pending.cachePath,
                 pending.logPath,
+                pending.useVpn,
                 pending.perAppMode,
                 pending.perAppPackages,
             )
@@ -160,10 +167,14 @@ class MainActivity : FlutterActivity() {
             pending.result.error("vpn_start", error.message, null)
             return
         }
-        awaitStarted(pending.result, System.currentTimeMillis())
+        awaitStarted(pending.result, System.currentTimeMillis(), ++startAttempt)
     }
 
-    private fun awaitStarted(result: MethodChannel.Result, startedAt: Long) {
+    private fun awaitStarted(result: MethodChannel.Result, startedAt: Long, attempt: Int) {
+        if (attempt != startAttempt) {
+            result.error("vpn_start", "内核启动已取消", null)
+            return
+        }
         val state = NekoVpnService.state
         if (state == NekoVpnService.STATE_RUNNING) {
             result.success(NekoVpnService.status())
@@ -176,10 +187,10 @@ class MainActivity : FlutterActivity() {
         if (System.currentTimeMillis() - startedAt > 60_000) {
             // Never leave a TUN up when the core never finished starting.
             NekoVpnService.stop(this)
-            result.error("vpn_start", "等待 VPN 启动超时", null)
+            result.error("vpn_start", "等待内核启动超时", null)
             return
         }
-        mainHandler.postDelayed({ awaitStarted(result, startedAt) }, 150)
+        mainHandler.postDelayed({ awaitStarted(result, startedAt, attempt) }, 150)
     }
 
     /**
@@ -240,7 +251,7 @@ class MainActivity : FlutterActivity() {
         val pending = pendingStart ?: return
         pendingStart = null
         if (resultCode == Activity.RESULT_OK) {
-            launchVpn(pending)
+            launchCore(pending)
         } else {
             pending.result.error("vpn_permission", "用户拒绝了 VPN 授权", null)
         }

@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -12,6 +14,8 @@ import 'package:nekoproxy/features/home/home_page.dart';
 import 'package:nekoproxy/features/status/service_status.dart';
 import 'package:nekoproxy/runtime/runtime_client.dart';
 import 'package:nekoproxy/services/exit_info_service.dart';
+import 'package:nekoproxy/services/rule_set_manager.dart';
+import 'package:nekoproxy/services/windows_system_proxy.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
@@ -176,6 +180,124 @@ void main() {
     expect(tester.widget<Switch>(tunSwitch).value, isFalse);
   });
 
+  for (final android in [false, true]) {
+    final label = android ? 'VPN' : 'TUN';
+    testWidgets('$label 在断开时只保存，连接中自动重启并保持电源按钮状态', (tester) async {
+      final controller = _TakeoverController(android: android);
+      if (android) {
+        controller.settings
+          ..perAppMode = PerAppMode.allow
+          ..perAppPackages = [];
+      }
+      final runtime = controller.testRuntime;
+      await showHome(
+        tester,
+        controller,
+        android ? const Size(460, 1000) : const Size(1280, 1000),
+      );
+      final takeover = find.descendant(
+        of: find.widgetWithText(Row, label).first,
+        matching: find.byType(Switch),
+      );
+      final power = find.byKey(const ValueKey('connection-power'));
+      Finder powerLabel(String text) =>
+          find.descendant(of: power, matching: find.text(text));
+
+      expect(tester.widget<Switch>(takeover).value, android);
+      await tester.tap(takeover);
+      await tester.pumpAndSettle();
+      expect(runtime.modes, isEmpty);
+      expect(powerLabel('连接'), findsOneWidget);
+      if (!android) {
+        await tester.tap(takeover);
+        await tester.pumpAndSettle();
+      }
+
+      await tester.tap(power);
+      await tester.pumpAndSettle();
+      expect(runtime.modes, ['normal']);
+      expect(runtime.hasTun, [false]);
+      expect(powerLabel('断开'), findsOneWidget);
+      if (android) {
+        await tester.tap(takeover);
+        await tester.pumpAndSettle();
+        expect(runtime.modes, ['normal']);
+        expect(controller.error, contains('请先选择应用'));
+        controller.settings.perAppPackages = ['com.example.app'];
+      }
+
+      final restart = runtime.nextStart = Completer<void>();
+      await tester.tap(takeover);
+      await tester.pump();
+      expect(runtime.modes, ['normal', 'tun']);
+      expect(runtime.hasTun, [false, true]);
+      expect(runtime.stops, 1);
+      expect(powerLabel('断开'), findsOneWidget);
+      expect(tester.widget<FilledButton>(power).onPressed, isNull);
+
+      restart.complete();
+      await tester.pumpAndSettle();
+      expect(controller.running, isTrue);
+      expect(controller.usesTun, isTrue);
+      expect(tester.widget<Switch>(takeover).value, isTrue);
+      await tester.tap(takeover);
+      await tester.pumpAndSettle();
+      expect(runtime.modes, ['normal', 'tun', 'normal']);
+      expect(controller.running, isTrue);
+      expect(controller.usesTun, isFalse);
+      expect(powerLabel('断开'), findsOneWidget);
+
+      await tester.tap(power);
+      await tester.pumpAndSettle();
+      expect(powerLabel('连接'), findsOneWidget);
+    });
+  }
+
+  test('Windows 系统代理在核心运行中即时切换，断开时只保存', () async {
+    final controller = _TakeoverController(android: false);
+    addTearDown(controller.dispose);
+    final proxy = _SystemProxy(controller.paths);
+    controller.systemProxy = proxy;
+    final runtime = controller.testRuntime;
+
+    await controller.setSystemProxy(true);
+    expect(controller.running, isFalse);
+    expect(runtime.modes, isEmpty);
+    expect(proxy.enabled, isFalse);
+
+    await controller.connect();
+    expect(proxy.enabled, isTrue);
+    await controller.setSystemProxy(false);
+    expect(proxy.enabled, isFalse);
+    await controller.setSystemProxy(true);
+    expect(proxy.enabled, isTrue);
+    expect(controller.running, isTrue);
+    expect(runtime.modes, ['normal']);
+    expect(runtime.stops, 0);
+
+    await controller.disconnect();
+    expect(proxy.enabled, isFalse);
+    expect(controller.settings.systemProxyEnabled, isTrue);
+  });
+
+  test('VPN 重启失败后恢复原先的本地代理连接', () async {
+    final controller = _TakeoverController(android: true)
+      ..settings.vpnEnabled = false;
+    addTearDown(controller.dispose);
+    await controller.connect();
+    controller.testRuntime.failTun = true;
+    await controller.setTun(true);
+    expect(controller.testRuntime.modes, ['normal', 'tun', 'normal']);
+    expect(controller.running, isTrue);
+    expect(controller.settings.vpnEnabled, isFalse);
+    expect(
+      (controller.storage as _Storage).saved?.settings.vpnEnabled,
+      isFalse,
+    );
+    expect(controller.error, contains('已恢复原接管方式'));
+    await controller.disconnect();
+  });
+
   testWidgets('仅 WireGuard 模式显示所属分组及隧道测速结果', (tester) async {
     final controller = _WireGuardConnectionController()
       ..running = true
@@ -211,6 +333,70 @@ void main() {
     expect(within('connection-source', find.text('校园隧道')), findsOneWidget);
     expect(within('connection-latency', find.text('42ms')), findsOneWidget);
     expect(within('connection-latency', find.text('999ms')), findsNothing);
+  });
+
+  testWidgets('订阅用量随订阅节点和 WireGuard 节点切换更新', (tester) async {
+    final controller = _TakeoverController(android: false);
+    final group = controller.snapshot.subscriptions.single;
+    final node = group.nodes.single.copyWith(subscriptionId: group.id);
+    final subscription = group.copyWith(
+      url: 'https://example.com/subscription',
+      nodes: [node],
+    );
+    final key = base64Encode(List.filled(32, 2));
+    controller.snapshot.subscriptions[0] = subscription;
+    controller.settings.manualNodeId = node.id;
+    controller.snapshot.wireGuardProfiles = [
+      WireGuardProfile(
+        id: 'wg',
+        name: '测试隧道',
+        configuration:
+            '''
+[Interface]
+PrivateKey = $key
+Address = 10.0.0.2/24
+[Peer]
+PublicKey = $key
+Endpoint = 192.0.2.1:51820
+AllowedIPs = 0.0.0.0/0
+''',
+      ),
+    ];
+    await showHome(tester, controller, const Size(1280, 1000));
+
+    final card = find.byType(HomeSubscriptionCard);
+    final overview = find.descendant(
+      of: card,
+      matching: find.text(subscription.name),
+    );
+    final emptyState = find.text('当前节点不属于订阅，请在节点页选择订阅节点');
+    IconButton refreshButton() => tester.widget<IconButton>(
+      find.descendant(of: card, matching: find.byType(IconButton)),
+    );
+
+    expect(overview, findsOneWidget);
+    expect(refreshButton().onPressed, isNotNull);
+
+    await controller.selectWireGuard('wg');
+    await tester.pumpAndSettle();
+    expect(overview, findsNothing);
+    expect(emptyState, findsOneWidget);
+    expect(refreshButton().onPressed, isNull);
+
+    await controller.setChainProxyEnabled(true);
+    await tester.pumpAndSettle();
+    expect(overview, findsOneWidget);
+    expect(emptyState, findsNothing);
+
+    await controller.setChainProxyEnabled(false);
+    await tester.pumpAndSettle();
+    expect(emptyState, findsOneWidget);
+
+    await controller.selectNode(node.id);
+    await tester.pumpAndSettle();
+    expect(overview, findsOneWidget);
+    expect(emptyState, findsNothing);
+    expect(refreshButton().onPressed, isNotNull);
   });
 
   testWidgets('链式代理按实际顺序展示各级节点、来源及分隔线', (tester) async {
@@ -298,7 +484,7 @@ void main() {
     }
   });
 
-  testWidgets('未连接卡片将状态与模式并入顶部信息行，出口提示保持单行且高度紧凑', (tester) async {
+  testWidgets('未连接卡片保持紧凑，三项诊断值统一显示为未知', (tester) async {
     final controller = _Controller();
     await showHome(tester, controller, const Size(1280, 1000));
     final card = find.byKey(const ValueKey(HomeCard.connection));
@@ -309,16 +495,17 @@ void main() {
           .abs(),
       lessThan(5),
     );
-    expect(find.byKey(const ValueKey('connection-info-strip')), findsOneWidget);
-    expect(find.text('连接后检测出口信息'), findsOneWidget);
-    expect(find.byTooltip('刷新出口、运营商和节点延迟'), findsNothing);
-    expect(
-      find.descendant(
-        of: find.byKey(const ValueKey('connection-latency')),
-        matching: find.text('未知'),
-      ),
-      findsOneWidget,
+    final unknownValues = find.descendant(
+      of: find.byKey(const ValueKey('connection-info-strip')),
+      matching: find.text('未知'),
     );
+    expect(unknownValues, findsNWidgets(3));
+    final styles = [
+      for (var i = 0; i < 3; i++)
+        paragraphOf(tester, unknownValues.at(i)).text.style,
+    ];
+    expect(styles, everyElement(styles.last));
+    expect(find.byTooltip('刷新出口、运营商和节点延迟'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 
@@ -505,11 +692,12 @@ void main() {
     final exit = tester.getTopLeft(inCard('出口 IP'));
     final provider = tester.getTopLeft(inCard('运营商'));
     final latency = tester.getTopLeft(inCard('节点延迟'));
-    expect(latency.dy, closeTo(exit.dy, 2));
-    expect(latency.dx, greaterThan(exit.dx));
+    expect(provider.dx, exit.dx);
+    expect(latency.dx, exit.dx);
     expect(provider.dy, greaterThan(exit.dy));
+    expect(latency.dy, greaterThan(provider.dy));
     expect(exit.dy, greaterThan(tester.getBottomLeft(address).dy));
-    expect(tester.getTopLeft(power).dy, greaterThan(provider.dy));
+    expect(tester.getTopLeft(power).dy, greaterThan(latency.dy));
     expectSingleLineIpAndBadgeBeforeAddress();
     expect(tester.takeException(), isNull);
   });
@@ -909,6 +1097,101 @@ class _ConnectedModeController extends _Controller {
 
   @override
   Future<void> restartCore() async => restarts++;
+}
+
+class _TakeoverController extends _Controller {
+  _TakeoverController({required super.android}) {
+    storage = _Storage();
+    paths = storage.paths;
+    runtime = testRuntime;
+    ruleSets = RuleSetManager(paths: paths, clientFactory: HttpClient.new);
+    snapshot.subscriptions.add(
+      Subscription(
+        id: 'proxy-group',
+        name: '测试分组',
+        nodes: [
+          ProxyNode(
+            id: 'proxy',
+            tag: 'proxy',
+            name: '测试代理',
+            outbound: const {
+              'type': 'trojan',
+              'server': 'example.com',
+              'server_port': 443,
+              'password': 'test',
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  final testRuntime = _TakeoverRuntime();
+
+  @override
+  Future<void> refreshExitInfo() async {}
+}
+
+class _TakeoverRuntime extends RuntimeClient {
+  final modes = <String>[];
+  final hasTun = <bool>[];
+  int stops = 0;
+  bool failTun = false;
+  Completer<void>? nextStart;
+
+  @override
+  Future<RuntimeStatus> start({
+    required String config,
+    required String mode,
+    String perAppMode = 'off',
+    List<String> perAppPackages = const [],
+  }) async {
+    modes.add(mode);
+    final decoded = jsonDecode(config) as Map<String, dynamic>;
+    final inbounds = decoded['inbounds'] as List;
+    hasTun.add(
+      inbounds.whereType<Map>().any((inbound) => inbound['type'] == 'tun'),
+    );
+    expect(
+      inbounds.whereType<Map>().any((inbound) => inbound['type'] == 'mixed'),
+      isTrue,
+    );
+    if (failTun && mode == 'tun') throw const RuntimeException('测试启动失败');
+    final pending = nextStart;
+    nextStart = null;
+    await pending?.future;
+    return fetchStatus();
+  }
+
+  @override
+  Future<RuntimeStatus> fetchStatus() async =>
+      const RuntimeStatus(running: true);
+
+  @override
+  Future<void> shutdown() async => stops++;
+
+  @override
+  Future<RuntimeTraffic> fetchTraffic() async => const RuntimeTraffic();
+
+  @override
+  Object? noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class _SystemProxy extends WindowsSystemProxy {
+  _SystemProxy(super.paths);
+  bool enabled = false;
+
+  @override
+  ProxyApplyResult enable(int port) {
+    enabled = true;
+    return const ProxyApplyResult(ok: true);
+  }
+
+  @override
+  ProxyApplyResult disable() {
+    enabled = false;
+    return const ProxyApplyResult(ok: true);
+  }
 }
 
 class _RefreshController extends _Controller {

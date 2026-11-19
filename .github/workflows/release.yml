@@ -63,12 +63,15 @@ jobs:
         if: matrix.platform == 'android'
         with:
           distribution: temurin
-          java-version: '17'
+          # Android Lint calls List.removeLast(), which was added in JDK 21.
+          java-version: '21'
 
       - name: Set up Android build tools
         if: matrix.platform == 'android'
         shell: pwsh
         run: |
+          flutter config --jdk-dir="$env:JAVA_HOME"
+          if ($LASTEXITCODE -ne 0) { throw 'Flutter JDK setup failed.' }
           $sdkManager = Join-Path $env:ANDROID_HOME 'cmdline-tools/latest/bin/sdkmanager.bat'
           & $sdkManager 'platforms;android-36' 'build-tools;36.0.0' 'ndk;28.2.13676358'
           if ($LASTEXITCODE -ne 0) { throw 'Android SDK setup failed.' }

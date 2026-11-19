@@ -72,7 +72,7 @@ flutter pub get
 | 目标平台 | 平台依赖 | 打包命令 |
 | :--- | :--- | :--- |
 | **Windows x64** | Visual Studio（C++ 桌面开发工作负载）、Windows SDK、NSIS 3.x、开启开发者模式 | `pwsh ./scripts/package-windows.ps1` |
-| **Android ARM64** | JDK 17+ (`JAVA_HOME`)、Android SDK 36 (`ANDROID_HOME`)、NDK `28.2.13676358`、`gomobile` / `gobind` | `pwsh ./scripts/package-android.ps1` |
+| **Android ARM64** | JDK 21+ (`JAVA_HOME`)、Android SDK 36 (`ANDROID_HOME`)、NDK `28.2.13676358`、`gomobile` / `gobind` | `pwsh ./scripts/package-android.ps1` |
 
 安装 `gomobile` 与 `gobind`：
 

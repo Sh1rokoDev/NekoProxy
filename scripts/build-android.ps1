@@ -69,7 +69,7 @@ if (-not (Test-Path $ndk)) {
 
 $jdk = Resolve-Jdk
 if (-not $jdk) {
-    throw "JDK not found. Set JAVA_HOME to a JDK 17+ installation."
+    throw "JDK not found. Set JAVA_HOME to a JDK 21+ installation."
 }
 
 $go = Resolve-Tool "go"

@@ -9,12 +9,16 @@ ThemeMode appThemeMode(ThemePreference preference) => switch (preference) {
   ThemePreference.dark => ThemeMode.dark,
 };
 
+Color appSurfaceColor(Brightness brightness) => brightness == Brightness.dark
+    ? const Color(0xFF151719)
+    : const Color(0xFFF6F7F8);
+
 ThemeData buildAppTheme(Brightness brightness, Color seed) {
   final dark = brightness == Brightness.dark;
   // The user's accent colors actions and selection; work surfaces stay neutral.
   final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: brightness)
       .copyWith(
-        surface: dark ? const Color(0xFF151719) : const Color(0xFFF6F7F8),
+        surface: appSurfaceColor(brightness),
         surfaceContainerLowest: dark ? const Color(0xFF111315) : Colors.white,
         surfaceContainerLow: dark ? const Color(0xFF1C1F22) : Colors.white,
         surfaceContainer: dark

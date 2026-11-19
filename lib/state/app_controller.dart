@@ -137,6 +137,8 @@ class AppController extends ChangeNotifier {
   String? exitInfoError;
   bool checkingExitInfo = false;
   HttpClient? _exitInfoClient;
+  HttpClient? _wireGuardEndpointClient;
+  String? wireGuardEndpointRegion;
   int _exitInfoGeneration = 0;
   ({String tag, int generation, Object token})? _connectionProbe;
   final _wireGuardLatencies =
@@ -225,6 +227,9 @@ class AppController extends ChangeNotifier {
     _exitInfoGeneration++;
     _exitInfoClient?.close(force: true);
     _exitInfoClient = null;
+    _wireGuardEndpointClient?.close(force: true);
+    _wireGuardEndpointClient = null;
+    wireGuardEndpointRegion = null;
     checkingExitInfo = false;
     exitInfo = null;
     exitInfoError = null;
@@ -235,6 +240,7 @@ class AppController extends ChangeNotifier {
     _cancelExitInfo();
     final generation = _exitInfoGeneration;
     final client = _exitInfoClient = _createManagedHttpClient();
+    final endpointRefresh = _refreshWireGuardEndpointRegion(generation);
     checkingExitInfo = true;
     notifyListeners();
     try {
@@ -259,10 +265,37 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
     }
+    await endpointRefresh;
+  }
+
+  Future<void> _refreshWireGuardEndpointRegion(int generation) async {
+    final profile = chainProxyEnabled ? activeWireGuard : null;
+    if (profile == null) return;
+    final String host;
+    try {
+      host = profile.parse().firstEndpointHost;
+    } on FormatException {
+      // Invalid profiles cannot provide an endpoint address.
+      return;
+    }
+    final client = _wireGuardEndpointClient = _createManagedHttpClient();
+    try {
+      final region = await fetchEndpointRegion(client, host);
+      if (running && generation == _exitInfoGeneration) {
+        wireGuardEndpointRegion = region;
+      }
+    } finally {
+      if (generation == _exitInfoGeneration) {
+        _wireGuardEndpointClient = null;
+        notifyListeners();
+      }
+    }
   }
 
   bool get refreshingConnectionInfo =>
-      checkingExitInfo || _connectionProbe?.generation == _pollGeneration;
+      checkingExitInfo ||
+      _wireGuardEndpointClient != null ||
+      _connectionProbe?.generation == _pollGeneration;
 
   Future<void> refreshConnectionInfo() async {
     if (!running || busy || _disposed || refreshingConnectionInfo) return;

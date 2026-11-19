@@ -29,6 +29,7 @@ class _RulesPageState extends State<RulesPage> {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
+    final showActionColors = controller.settings.splitMode == SplitMode.rule;
     RoutingPreview? preview;
     try {
       preview = controller.previewRouting();
@@ -101,6 +102,7 @@ class _RulesPageState extends State<RulesPage> {
                             compact: compact,
                             showDivider: index < _rules.length - 1,
                             rule: rule,
+                            showActionColors: showActionColors,
                             rulesActive:
                                 preview?.activeRuleIds.contains(rule.id) ??
                                 false,
@@ -868,6 +870,7 @@ class _EditableRuleRow extends StatelessWidget {
     super.key,
     required this.rule,
     required this.rulesActive,
+    required this.showActionColors,
     required this.compact,
     required this.showDivider,
     required this.index,
@@ -877,6 +880,7 @@ class _EditableRuleRow extends StatelessWidget {
 
   final RoutingRule rule;
   final bool rulesActive;
+  final bool showActionColors;
   final bool compact;
   final bool showDivider;
   final int index;
@@ -888,13 +892,19 @@ class _EditableRuleRow extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final active = rulesActive && rule.enabled;
-    final (actionBackground, actionForeground) = switch (rule.target) {
-      RuleTarget.direct => (
+    final (actionBackground, actionForeground) = switch ((
+      showActionColors,
+      rule.target,
+    )) {
+      (true, RuleTarget.direct) => (
         scheme.tertiaryContainer,
         scheme.onTertiaryContainer,
       ),
-      RuleTarget.proxy => (scheme.primaryContainer, scheme.onPrimaryContainer),
-      RuleTarget.block when active => (
+      (true, RuleTarget.proxy) => (
+        scheme.primaryContainer,
+        scheme.onPrimaryContainer,
+      ),
+      (true, RuleTarget.block) when active => (
         scheme.errorContainer,
         scheme.onErrorContainer,
       ),

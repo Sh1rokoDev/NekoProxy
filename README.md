@@ -53,6 +53,8 @@
 
 「节点 → 高级」可以启用链式代理。第一级是手动选择的 WireGuard，第二级仍在节点页手动或自动选择 sing-box 节点。直连目标 IP 和代理服务器 IP 各自按 WireGuard 的 `AllowedIPs` 决定是否进隧道；隧道故障时，命中的地址不会回退到物理网络。关闭链式后恢复原来的单独出站类型。
 
+链式代理连接后，首页将 WireGuard 首个对端的公网 IP 交由 IPQuery 查询地区。第二级显示检测到的最终出口地区。
+
 Android 也支持相机扫码。节点菜单可导出含密钥的 `.conf`。
 
 链式代理开启时，TUN 的「局域网直连」仅排除 WireGuard 的 `AllowedIPs` 未覆盖的局域网地址。被覆盖的地址仍交给 sing-box 规则和 WireGuard 出站处理。

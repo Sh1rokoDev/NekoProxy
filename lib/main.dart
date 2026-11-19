@@ -35,9 +35,11 @@ class NekoProxyBootstrap extends StatefulWidget {
   State<NekoProxyBootstrap> createState() => _NekoProxyBootstrapState();
 }
 
-class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
+class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
+    with WidgetsBindingObserver {
   late final AppController _controller = AppController();
   Window? _window;
+  Color? _windowBackground;
   ListenerId? _windowListener;
   tray.TrayIcon? _trayIcon;
   bool _ready = false;
@@ -48,6 +50,8 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
   void initState() {
     super.initState();
     if (Platform.isWindows) {
+      WidgetsBinding.instance.addObserver(this);
+      _controller.appearanceTick.addListener(_syncWindowBackground);
       // Native window changes can synchronously notify Flutter of new metrics.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) unawaited(_bootstrap());
@@ -68,9 +72,11 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
         _setupTray();
       }
       setState(() => _ready = true);
+      _syncWindowBackground();
     } catch (e) {
       if (!mounted) return;
       setState(() => _fatal = e);
+      _syncWindowBackground();
     }
   }
 
@@ -82,6 +88,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
     }
     _window = window;
     try {
+      _syncWindowBackground();
       window
         ..titleBarStyle = TitleBarStyle.normal
         ..title = 'NekoProxy'
@@ -94,6 +101,33 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
       _disposeWindow();
       rethrow;
     }
+  }
+
+  Brightness _effectiveBrightness(Brightness platformBrightness) =>
+      switch (appThemeMode(_controller.settings.theme)) {
+        ThemeMode.system => platformBrightness,
+        ThemeMode.light => Brightness.light,
+        ThemeMode.dark => Brightness.dark,
+      };
+
+  @override
+  void didChangePlatformBrightness() => _syncWindowBackground();
+
+  void _syncWindowBackground() {
+    final window = _window;
+    if (window == null) return;
+    final brightness = _effectiveBrightness(
+      WidgetsBinding.instance.platformDispatcher.platformBrightness,
+    );
+    final background = _fatal != null
+        ? appSurfaceColor(Brightness.light)
+        : _ready
+        ? appSurfaceColor(brightness)
+        : _splashBackground(brightness);
+    if (background == _windowBackground) return;
+    // The parent fills the exposed area while Flutter's resize is pending.
+    window.backgroundColor = background.toNative();
+    _windowBackground = background;
   }
 
   void _setupTray() {
@@ -200,6 +234,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
     final window = _window;
     final listener = _windowListener;
     _window = null;
+    _windowBackground = null;
     _windowListener = null;
     if (window == null) return;
     try {
@@ -212,6 +247,10 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
 
   @override
   void dispose() {
+    if (Platform.isWindows) {
+      WidgetsBinding.instance.removeObserver(this);
+      _controller.appearanceTick.removeListener(_syncWindowBackground);
+    }
     _disposeTray();
     _disposeWindow();
     _controller.dispose();
@@ -240,6 +279,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
                   FilledButton(
                     onPressed: () {
                       setState(() => _fatal = null);
+                      _syncWindowBackground();
                       unawaited(_bootstrap());
                     },
                     child: const Text('重试'),
@@ -256,13 +296,10 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
         valueListenable: _controller.appearanceTick,
         builder: (context, _, _) {
           final settings = _controller.settings;
-          final brightness = switch (appThemeMode(settings.theme)) {
-            ThemeMode.system => MediaQuery.platformBrightnessOf(context),
-            ThemeMode.light => Brightness.light,
-            ThemeMode.dark => Brightness.dark,
-          };
           return _SplashScreen(
-            brightness: brightness,
+            brightness: _effectiveBrightness(
+              MediaQuery.platformBrightnessOf(context),
+            ),
             seed: Color(settings.seedColor),
           );
         },
@@ -272,6 +309,9 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap> {
   }
 }
 
+Color _splashBackground(Brightness brightness) =>
+    brightness == Brightness.dark ? Colors.black : Colors.white;
+
 class _SplashScreen extends StatelessWidget {
   const _SplashScreen({required this.brightness, required this.seed});
 
@@ -280,13 +320,12 @@ class _SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final dark = brightness == Brightness.dark;
     final colors = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
     // The preparation screen does not need routing or the full app theme.
     return Directionality(
       textDirection: TextDirection.ltr,
       child: ColoredBox(
-        color: dark ? Colors.black : Colors.white,
+        color: _splashBackground(brightness),
         child: Center(
           child: SizedBox(
             width: 120,

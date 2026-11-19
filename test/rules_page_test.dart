@@ -138,8 +138,10 @@ void main() {
       (rule) => rule.target == RuleTarget.proxy,
     );
     snapshot.rules = [directRule, proxyRule, quicRule];
-    snapshot.settings.splitMode = SplitMode.direct;
-    final controller = AppController()..snapshot = snapshot;
+    snapshot.settings.splitMode = SplitMode.rule;
+    final controller = AppController()
+      ..snapshot = snapshot
+      ..storage = _Storage();
     addTearDown(controller.dispose);
 
     await tester.pumpWidget(
@@ -160,7 +162,6 @@ void main() {
     );
 
     final firstRow = find.byKey(ValueKey(directRule.id));
-    final proxyRow = find.byKey(ValueKey(proxyRule.id));
     final edit = find.descendant(
       of: firstRow,
       matching: find.byTooltip('编辑规则'),
@@ -172,27 +173,32 @@ void main() {
       lessThanOrEqualTo(tester.getTopLeft(edit).dx),
     );
     final scheme = Theme.of(tester.element(pill)).colorScheme;
-    final directDecoration = tester.widget<DecoratedBox>(pill).decoration;
-    final proxyDecoration = tester
-        .widget<DecoratedBox>(actionPill(proxyRow, '代理'))
-        .decoration;
-    expect(
-      directDecoration,
-      isA<ShapeDecoration>().having(
-        (decoration) => decoration.color,
-        'color',
-        scheme.tertiaryContainer,
-      ),
-    );
-    expect(
-      proxyDecoration,
-      isA<ShapeDecoration>().having(
-        (decoration) => decoration.color,
-        'color',
-        scheme.primaryContainer,
-      ),
-    );
-    expect(proxyDecoration, isNot(directDecoration));
+    final actions = [
+      (directRule, '直连', scheme.tertiaryContainer, scheme.onTertiaryContainer),
+      (proxyRule, '代理', scheme.primaryContainer, scheme.onPrimaryContainer),
+      (quicRule, '阻断', scheme.errorContainer, scheme.onErrorContainer),
+    ];
+    final modes = find.byType(SlidingSegmentedControl<SplitMode>);
+    for (final mode in ['直连', '全局', '规则']) {
+      await tester.tap(find.descendant(of: modes, matching: find.text(mode)));
+      await tester.pumpAndSettle();
+      for (final (rule, label, background, foreground) in actions) {
+        final action = actionPill(find.byKey(ValueKey(rule.id)), label);
+        expect(
+          tester.widget<DecoratedBox>(action).decoration,
+          isA<ShapeDecoration>().having(
+            (decoration) => decoration.color,
+            'color',
+            mode == '规则' ? background : scheme.surfaceContainerHighest,
+          ),
+        );
+        final text = find.descendant(of: action, matching: find.text(label));
+        expect(
+          tester.widget<Text>(text).style?.color,
+          mode == '规则' ? foreground : scheme.onSurfaceVariant,
+        );
+      }
+    }
     final quicSummary = tester.widget<Text>(
       find.descendant(
         of: find.byKey(ValueKey(quicRule.id)),

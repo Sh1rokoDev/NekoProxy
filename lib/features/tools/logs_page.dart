@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_scope.dart';
 import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
+import 'log_text.dart';
 
 class LogsPage extends StatefulWidget {
   const LogsPage({super.key});
@@ -179,14 +180,7 @@ class _LogsPageState extends State<LogsPage> {
                       controller: _scrollController,
                       child: SingleChildScrollView(
                         controller: _scrollController,
-                        child: SelectableText(
-                          _lines.join('\n'),
-                          style: const TextStyle(
-                            fontFamily: 'monospace',
-                            fontSize: 12,
-                            height: 1.55,
-                          ),
-                        ),
+                        child: LogText(lines: _lines),
                       ),
                     ),
             ),

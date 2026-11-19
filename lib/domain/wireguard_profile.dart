@@ -73,8 +73,10 @@ class WireGuardConfig {
   bool get windowsProtection =>
       peers.length == 1 && allowedIps.any((cidr) => cidr.endsWith('/0'));
 
+  String get firstEndpointHost => peers.first['address'] as String;
+
   String get firstEndpoint {
-    final host = peers.first['address'] as String;
+    final host = firstEndpointHost;
     final port = peers.first['port'];
     return host.contains(':') ? '[$host]:$port' : '$host:$port';
   }

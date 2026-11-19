@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/runtime/runtime_client.dart';
 import 'package:nekoproxy/services/exit_info_service.dart';
 import 'package:nekoproxy/state/app_controller.dart';
@@ -239,6 +240,86 @@ void main() {
         '{"ip":"203.0.113.24"}',
       ),
       throwsFormatException,
+    );
+  });
+
+  test('链式代理分别查询 WireGuard 对端和最终出口的地区', () async {
+    final exitClient = _Client()
+      ..responses['api.ip.sb'] = Future.value(
+        _jsonResponse({
+          'ip': '203.0.113.24',
+          'country': 'Hong Kong',
+          'country_code': 'HK',
+          'isp': 'Example ISP',
+        }),
+      );
+    final endpointClient = _Client();
+    final nextExitClient = _Client();
+    final nextEndpointClient = _Client();
+    final key = base64Encode(List.filled(32, 2));
+    final controller = AppController()
+      ..running = true
+      ..runtime = _Runtime()
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(),
+        subscriptions: [],
+        outboundMode: OutboundMode.wireGuardProxy,
+        wireGuardProfileId: 'wg',
+        wireGuardProfiles: [
+          WireGuardProfile(
+            id: 'wg',
+            name: '一级隧道',
+            configuration:
+                '''
+[Interface]
+PrivateKey = $key
+Address = 10.0.0.2/24
+[Peer]
+PublicKey = $key
+Endpoint = [2606:4700:4700::1111]:51820
+AllowedIPs = 0.0.0.0/0
+''',
+          ),
+        ],
+      );
+    addTearDown(controller.dispose);
+    await HttpOverrides.runWithHttpOverrides(
+      () async {
+        final refresh = controller.refreshExitInfo();
+        expect(endpointClient.requests.single.path, '/2606:4700:4700::1111');
+        endpointClient.response.complete(
+          _jsonResponse({
+            'ip': '2606:4700:4700::1111',
+            'location': {'country': 'China', 'country_code': 'CN'},
+          }),
+        );
+        await refresh;
+        expect(controller.wireGuardEndpointRegion, 'China');
+        expect(controller.exitInfo?.region, 'Hong Kong');
+        expect(endpointClient.closed, isTrue);
+
+        final nextRefresh = controller.refreshExitInfo();
+        await controller.disconnect();
+        expect(nextExitClient.closed, isTrue);
+        expect(nextEndpointClient.closed, isTrue);
+        nextExitClient.response.complete(_Response(503, []));
+        nextEndpointClient.response.complete(
+          _jsonResponse({
+            'ip': '2606:4700:4700::1111',
+            'location': {'country_code': 'US'},
+          }),
+        );
+        await nextRefresh;
+        expect(controller.wireGuardEndpointRegion, isNull);
+      },
+      _ClientQueueOverride(
+        [
+          exitClient,
+          endpointClient,
+          nextExitClient,
+          nextEndpointClient,
+        ].iterator,
+      ),
     );
   });
 

@@ -33,7 +33,7 @@ class EditableHomeCard extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) => LongPressDraggable<HomeCard>(
         data: kind,
-        delay: const Duration(milliseconds: 250),
+        delay: const Duration(milliseconds: 50),
         maxSimultaneousDrags: enabled ? 1 : 0,
         hitTestBehavior: HitTestBehavior.opaque,
         onDragStarted: () => onDragStarted(Scrollable.of(context)),

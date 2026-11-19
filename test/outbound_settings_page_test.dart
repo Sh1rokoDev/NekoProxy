@@ -165,11 +165,10 @@ void main() {
       await _tap(tester, find.text('WireGuard 分组'));
       await tester.enterText(_field('分组名称'), '校园');
       await _tap(tester, find.text('保存'));
-      expect(
-        find.widgetWithText(TextButton, '添加 WireGuard 节点'),
-        findsOneWidget,
-      );
-      await _tap(tester, find.text('添加 WireGuard 节点'));
+      final addButton = find.widgetWithText(TextButton, '添加节点');
+      expect(find.widgetWithText(NodeGroupEmpty, '暂无节点'), findsOneWidget);
+      expect(addButton, findsOneWidget);
+      await _tap(tester, addButton);
       expect(find.text('从剪贴板导入'), findsOneWidget);
       expect(find.text('从文件导入'), findsOneWidget);
       expect(find.text('从二维码图片导入'), findsOneWidget);
@@ -205,7 +204,7 @@ void main() {
     final controller = _newController();
     await controller.saveWireGuardGroup('校园', id: WireGuardGroup.legacy.id);
     await _openNodes(tester, controller);
-    await _tap(tester, find.text('添加 WireGuard 节点'));
+    await _tap(tester, find.widgetWithText(TextButton, '添加节点'));
     await _tap(tester, find.text('单个节点'));
     await _tap(tester, find.text('使用表单'));
     for (final entry in {
@@ -322,10 +321,11 @@ void main() {
     );
 
     await _openNodes(tester, controller);
-    await _tap(tester, find.text('添加 WireGuard 节点'));
+    final addButton = find.widgetWithText(TextButton, '添加节点');
+    await _tap(tester, addButton);
     await _tap(tester, find.text('从文件导入'));
     expect(controller.snapshot.wireGuardProfiles.single.name, '文件配置');
-    expect(find.text('添加 WireGuard 节点'), findsNothing);
+    expect(addButton, findsNothing);
     await _tap(tester, find.byTooltip('WireGuard 分组操作'));
     expect(find.byIcon(Icons.edit_outlined), findsOneWidget);
     expect(find.byIcon(Icons.delete_outline_rounded), findsOneWidget);

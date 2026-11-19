@@ -137,7 +137,29 @@ ExitInfo parseExitInfo(Uri source, String body) {
   );
 }
 
-/// Looks up the displayed DNS addresses, with one request per IP per batch.
+/// Resolves a WireGuard peer and looks up the first address's region.
+Future<String?> fetchEndpointRegion(HttpClient client, String host) async {
+  var ip = InternetAddress.tryParse(host);
+  if (ip == null) {
+    try {
+      final addresses = await InternetAddress.lookup(host)
+          .timeout(const Duration(seconds: 3));
+      ip = addresses.firstOrNull;
+    } on SocketException {
+      // Endpoint attribution is optional when DNS fails.
+    } on TimeoutException {
+      // Keep the connection card usable when DNS is slow.
+    }
+  }
+  if (ip == null) {
+    client.close(force: true);
+    return null;
+  }
+  final info = await fetchServiceAddressInfo(client, [ip.address]);
+  return info[ip.address]?.region;
+}
+
+/// Looks up IP attribution, with one request per IP per batch.
 /// Missing records are omitted and the client is closed at the shared deadline.
 Future<Map<String, IpAttribution>> fetchServiceAddressInfo(
   HttpClient client,

@@ -424,14 +424,47 @@ AllowedIPs = 0.0.0.0/0
             configuration: '',
           ),
         ],
+      )
+      ..wireGuardEndpointRegion = 'China · Hangzhou'
+      ..exitInfo = ExitInfo(
+        ip: '203.0.113.24',
+        region: 'Hong Kong',
+        provider: '',
+        checkedAt: DateTime.now(),
       );
     await showHome(tester, controller, const Size(880, 1000));
     final card = find.byKey(const ValueKey(HomeCard.connection));
     Finder inCard(String s) =>
         find.descendant(of: card, matching: find.text(s));
+    expect(
+      tester
+          .widget<RegionBadge>(
+            find.ancestor(
+              of: inCard('China · Hangzhou'),
+              matching: find.byType(RegionBadge),
+            ),
+          )
+          .semanticPrefix,
+      '对端地区',
+    );
+    expect(
+      tester
+          .widget<RegionBadge>(
+            find.ancestor(
+              of: inCard('Hong Kong'),
+              matching: find.byType(RegionBadge),
+            ),
+          )
+          .semanticPrefix,
+      '出口地区',
+    );
     for (final width in [1280.0, 760.0, 320.0]) {
       await tester.binding.setSurfaceSize(Size(width, 1000));
       await tester.pumpAndSettle();
+      expect(
+        tester.getCenter(inCard('China · Hangzhou')).dy,
+        lessThan(tester.getCenter(inCard('Hong Kong')).dy + 1),
+      );
       expect(
         tester.getCenter(inCard('第一级')).dy,
         closeTo(tester.getCenter(inCard('WireGuard')).dy, 1),
@@ -808,9 +841,9 @@ AllowedIPs = 0.0.0.0/0
     );
     final before = bounds(HomeCard.splitMode);
     final gesture = await tester.startGesture(tester.getCenter(trafficCard));
-    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 49));
     expect(trafficContent, findsOneWidget);
-    await tester.pump(const Duration(milliseconds: 60));
+    await tester.pump(const Duration(milliseconds: 1));
     expect(trafficContent, findsNWidgets(2));
     final floatingCard = find.byType(HomeTrafficCard).last;
     final floatingStart = tester.getRect(floatingCard);
@@ -861,6 +894,26 @@ AllowedIPs = 0.0.0.0/0
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.byType(HomeSubscriptionCard), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('编辑首页时从卡片上直接滑动可滚动页面', (tester) async {
+    await showHome(tester, _Controller(android: true), const Size(390, 600));
+    await tester.tap(find.byTooltip('编辑首页'));
+    await tester.pumpAndSettle();
+
+    final trafficCard = find.byKey(const ValueKey(HomeCard.traffic));
+    await tester.ensureVisible(trafficCard);
+    await tester.pumpAndSettle();
+    final position = Scrollable.of(tester.element(trafficCard)).position;
+    final before = position.pixels;
+    final gesture = await tester.startGesture(tester.getCenter(trafficCard));
+    await gesture.moveBy(const Offset(0, -30));
+    await gesture.moveBy(const Offset(0, -60));
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(position.pixels, greaterThan(before));
+    expect(find.byType(HomeTrafficCard), findsOneWidget);
+    await gesture.up();
+    await tester.pumpAndSettle();
   });
 
   testWidgets('保存失败保留编辑草稿，取消后恢复原布局', (tester) async {

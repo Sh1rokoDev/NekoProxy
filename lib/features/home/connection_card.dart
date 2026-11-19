@@ -102,7 +102,8 @@ class ConnectionCard extends StatelessWidget {
               level: chain ? '第一级' : null,
               name: profile?.name ?? '尚未选择 WireGuard 节点',
               address: endpoint ?? '选择一个 WireGuard 节点',
-              region: onlyWireGuard ? region : '',
+              region: chain ? controller.wireGuardEndpointRegion ?? '' : region,
+              regionSemanticPrefix: chain ? '对端地区' : '出口地区',
             ),
           if (!onlyWireGuard)
             _NodeDetails(
@@ -272,9 +273,11 @@ class _NodeDetails extends StatelessWidget {
     required this.name,
     required this.address,
     required this.region,
+    this.regionSemanticPrefix = '出口地区',
   });
   final double maxRegionWidth;
   final String type, name, address, region;
+  final String regionSemanticPrefix;
   final String? source, level;
   @override
   Widget build(BuildContext context) {
@@ -334,7 +337,7 @@ class _NodeDetails extends StatelessWidget {
                 constraints: BoxConstraints(maxWidth: maxRegionWidth),
                 child: RegionBadge(
                   region: region,
-                  semanticPrefix: '出口地区',
+                  semanticPrefix: regionSemanticPrefix,
                   shortLabel: region,
                 ),
               ),

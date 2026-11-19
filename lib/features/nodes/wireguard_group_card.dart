@@ -460,8 +460,7 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
               expanded: widget.expanded,
               child: widget.profiles.isEmpty
                   ? NodeGroupEmpty(
-                      message: hasProfiles ? '没有匹配的节点' : '暂无 WireGuard 节点',
-                      addLabel: '添加 WireGuard 节点',
+                      message: hasProfiles ? '没有匹配的节点' : '暂无节点',
                       showAdd: !hasProfiles,
                       onAdd: enabled ? _add : null,
                     )

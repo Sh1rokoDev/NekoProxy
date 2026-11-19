@@ -132,7 +132,17 @@ class _AppShellState extends State<AppShell> {
   Widget build(BuildContext context) {
     final showsRuleMode = AppScope.of(context).showsRuleMode;
     final selected = !showsRuleMode && _index == 2 ? 0 : _index;
-    // Keep the tab widget stable as LayoutBuilder receives new window sizes.
+    final useSideDock =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final navigation = NavigationDock(
+      axis: useSideDock ? Axis.vertical : Axis.horizontal,
+      destinations: showsRuleMode
+          ? _destinations
+          : _destinations.where((item) => item.value != 2).toList(),
+      selected: selected,
+      onSelected: _selectTab,
+    );
+    // Preserve the tab stack when the side dock is inserted or removed.
     final tabContent = Expanded(
       key: const ValueKey('tab-content'),
       child: _AnimatedTabStack(
@@ -143,43 +153,30 @@ class _AppShellState extends State<AppShell> {
     return ShellScope(
       switchTab: _selectTab,
       openConnections: _openConnections,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final desktop = constraints.maxWidth >= 900;
-          final navigation = NavigationDock(
-            axis: desktop ? Axis.vertical : Axis.horizontal,
-            destinations: showsRuleMode
-                ? _destinations
-                : _destinations.where((item) => item.value != 2).toList(),
-            selected: selected,
-            onSelected: _selectTab,
-          );
-          return Scaffold(
-            extendBody: !desktop,
-            body: SafeArea(
-              top: false,
-              bottom: desktop,
-              child: Row(
-                textDirection: TextDirection.ltr,
-                children: [
-                  if (desktop)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-                      child: Align(child: navigation),
-                    ),
-                  tabContent,
-                ],
+      child: Scaffold(
+        extendBody: !useSideDock,
+        body: SafeArea(
+          top: false,
+          bottom: useSideDock,
+          child: Row(
+            textDirection: TextDirection.ltr,
+            children: [
+              if (useSideDock)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
+                  child: Align(child: navigation),
+                ),
+              tabContent,
+            ],
+          ),
+        ),
+        bottomNavigationBar: useSideDock
+            ? null
+            : SafeArea(
+                top: false,
+                minimum: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                child: Align(heightFactor: 1, child: navigation),
               ),
-            ),
-            bottomNavigationBar: desktop
-                ? null
-                : SafeArea(
-                    top: false,
-                    minimum: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                    child: Align(heightFactor: 1, child: navigation),
-                  ),
-          );
-        },
       ),
     );
   }

@@ -92,7 +92,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
       window
         ..titleBarStyle = TitleBarStyle.normal
         ..title = 'NekoProxy'
-        ..minimumSize = const Size(780, 580).toNative()
+        ..minimumSize = const Size(480, 420).toNative()
         ..setSize(const Size(1240, 840).toNative(), false)
         ..center();
       _windowListener = window.addListener(_onWindowEvent);

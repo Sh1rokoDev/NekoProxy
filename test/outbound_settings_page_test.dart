@@ -133,8 +133,10 @@ void main() {
   for (final axis in Axis.values) {
     testWidgets('$axis 导航随 sing-box 和 WireGuard 切换伸缩并渐变', (tester) async {
       final vertical = axis == Axis.vertical;
-      await tester.binding.setSurfaceSize(Size(vertical ? 1024 : 390, 680));
-      addTearDown(() => tester.binding.setSurfaceSize(null));
+      tester.view.physicalSize = Size(vertical ? 1024 : 390, 680);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final controller = _newController(withProxy: true);
       await controller.saveWireGuardGroup('校园', id: WireGuardGroup.legacy.id);
       await controller.saveWireGuardProfile(_profile('a'));

@@ -38,7 +38,7 @@ void main() {
 
     final firstCard = find
         .descendant(
-          of: find.byKey(ValueKey(first.id)),
+          of: find.byKey(ValueKey(AppSnapshot.subscriptionGroupKey(first.id))),
           matching: find.byType(AnimatedContainer),
         )
         .first;
@@ -74,21 +74,18 @@ void main() {
     await tester.timedDragFrom(start, end - start, const Duration(seconds: 1));
     await tester.pumpAndSettle();
 
-    expect(controller.snapshot.subscriptions.map((group) => group.id), [
-      local.id,
-      hidden.id,
-      first.id,
-      last.id,
-    ]);
+    final expectedKeys = [
+      AppSnapshot.subscriptionGroupKey(local.id),
+      AppSnapshot.subscriptionGroupKey(hidden.id),
+      AppSnapshot.subscriptionGroupKey(first.id),
+      AppSnapshot.subscriptionGroupKey(last.id),
+      AppSnapshot.otherNodeGroupKey,
+    ];
+    expect(controller.snapshot.orderedNodeGroupKeys, expectedKeys);
     final saved = AppSnapshot.fromJson(
       jsonDecode(storage.savedState ?? '') as Map<String, dynamic>,
     );
-    expect(saved.subscriptions.map((group) => group.id), [
-      local.id,
-      hidden.id,
-      first.id,
-      last.id,
-    ]);
+    expect(saved.orderedNodeGroupKeys, expectedKeys);
     expect(
       tester.getTopLeft(find.text('本地分组')).dy,
       lessThan(tester.getTopLeft(find.text('订阅甲')).dy),
@@ -115,10 +112,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(controller.error, startsWith('分组顺序保存失败'));
-    expect(controller.snapshot.subscriptions, [local, hidden, first, last]);
+    expect(controller.snapshot.orderedNodeGroupKeys, expectedKeys);
   });
 
-  testWidgets('拖拽 WireGuard 分组后保存顺序并保留隐藏分组的位置', (tester) async {
+  testWidgets('WireGuard 可拖到订阅上方，混合顺序重新载入后保留', (tester) async {
+    final subscription = _group('wg-first', '订阅');
     const first = WireGuardGroup(id: 'wg-first', name: '匹配甲');
     const hidden = WireGuardGroup(id: 'wg-hidden', name: '隐藏');
     const last = WireGuardGroup(id: 'wg-last', name: '匹配乙');
@@ -127,7 +125,7 @@ void main() {
       ..storage = storage
       ..snapshot = AppSnapshot(
         settings: AppSettings(),
-        subscriptions: [],
+        subscriptions: [subscription],
         wireGuardGroups: [first, hidden, last],
       );
     addTearDown(controller.dispose);
@@ -141,6 +139,10 @@ void main() {
       ),
     );
 
+    expect(
+      tester.getTopLeft(find.text(subscription.name)).dy,
+      lessThan(tester.getTopLeft(find.text(first.name)).dy),
+    );
     await tester.tap(find.byTooltip('搜索节点'));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '匹配');
@@ -150,23 +152,45 @@ void main() {
     final handles = find.byTooltip('拖拽调整 WireGuard 分组顺序');
     expect(handles, findsNWidgets(2));
     final start = tester.getCenter(handles.last);
-    final end = tester.getCenter(handles.first) - const Offset(0, 40);
+    final end =
+        tester.getCenter(find.byTooltip('拖拽调整订阅顺序')) - const Offset(0, 50);
     await tester.timedDragFrom(start, end - start, const Duration(seconds: 1));
     await tester.pumpAndSettle();
 
-    final expectedIds = [last.id, hidden.id, first.id];
-    expect(
-      controller.snapshot.wireGuardGroups.map((group) => group.id),
-      expectedIds,
-    );
+    final expectedKeys = [
+      AppSnapshot.wireGuardGroupKey(last.id),
+      AppSnapshot.otherNodeGroupKey,
+      AppSnapshot.subscriptionGroupKey(subscription.id),
+      AppSnapshot.wireGuardGroupKey(hidden.id),
+      AppSnapshot.wireGuardGroupKey(first.id),
+    ];
+    expect(controller.snapshot.orderedNodeGroupKeys, expectedKeys);
     final saved = AppSnapshot.fromJson(
       jsonDecode(storage.savedState ?? '') as Map<String, dynamic>,
     );
-    expect(saved.wireGuardGroups.map((group) => group.id), expectedIds);
-    expect(
-      tester.getTopLeft(find.text(last.name)).dy,
-      lessThan(tester.getTopLeft(find.text(first.name)).dy),
+    expect(saved.orderedNodeGroupKeys, expectedKeys);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.snapshot = saved;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          controller: controller,
+          child: const Scaffold(body: NodesPage()),
+        ),
+      ),
     );
+    await tester.pumpAndSettle();
+    final positions = [
+      for (final name in [
+        last.name,
+        subscription.name,
+        hidden.name,
+        first.name,
+      ])
+        tester.getTopLeft(find.text(name)).dy,
+    ];
+    expect(positions, orderedEquals([...positions]..sort()));
   });
 }
 

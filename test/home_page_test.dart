@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app_scope.dart';
+import 'package:nekoproxy/app/app_shell.dart';
 import 'package:nekoproxy/app/widgets.dart';
 import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/models.dart';
@@ -27,17 +28,17 @@ void main() {
   Future<void> showHome(
     WidgetTester tester,
     AppController controller,
-    Size size,
-  ) async {
-    await tester.binding.setSurfaceSize(size);
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    Size size, {
+    Widget home = const Scaffold(body: HomePage()),
+  }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(controller.dispose);
     await tester.pumpWidget(
       MaterialApp(
-        home: AppScope(
-          controller: controller,
-          child: const Scaffold(body: HomePage()),
-        ),
+        home: AppScope(controller: controller, child: home),
       ),
     );
     await tester.pump();
@@ -111,7 +112,7 @@ void main() {
         ..remove(HomeCard.splitMode)
         ..insert(2, HomeCard.splitMode);
     }
-    await showHome(tester, controller, const Size(760, 1000));
+    await showHome(tester, controller, const Size(760, 700));
 
     Rect bounds(HomeCard card) => tester.getRect(find.byKey(ValueKey(card)));
     final connection = bounds(HomeCard.connection);
@@ -138,7 +139,7 @@ void main() {
     }
     expect(tester.takeException(), isNull);
 
-    await tester.binding.setSurfaceSize(const Size(759, 1000));
+    tester.view.physicalSize = const Size(760, 820);
     await tester.pumpAndSettle();
     var previous = bounds(HomeCard.connection);
     for (final kind in [
@@ -432,7 +433,12 @@ AllowedIPs = 0.0.0.0/0
         provider: '',
         checkedAt: DateTime.now(),
       );
-    await showHome(tester, controller, const Size(880, 1000));
+    await showHome(
+      tester,
+      controller,
+      const Size(880, 1000),
+      home: const AppShell(),
+    );
     final card = find.byKey(const ValueKey(HomeCard.connection));
     Finder inCard(String s) =>
         find.descendant(of: card, matching: find.text(s));
@@ -458,30 +464,35 @@ AllowedIPs = 0.0.0.0/0
           .semanticPrefix,
       '出口地区',
     );
-    for (final width in [1280.0, 760.0, 320.0]) {
-      await tester.binding.setSurfaceSize(Size(width, 1000));
+    for (final size in const [
+      Size(1280, 1000),
+      Size(1280, 1320),
+      Size(680, 360),
+      Size(460, 380),
+      Size(320, 1000),
+    ]) {
+      tester.view.physicalSize = size;
       await tester.pumpAndSettle();
       expect(
         tester.getCenter(inCard('China · Hangzhou')).dy,
         lessThan(tester.getCenter(inCard('Hong Kong')).dy + 1),
       );
-      expect(
-        tester.getCenter(inCard('第一级')).dy,
-        closeTo(tester.getCenter(inCard('WireGuard')).dy, 1),
-      );
-      expect(
-        tester.getCenter(inCard('第二级')).dy,
-        closeTo(tester.getCenter(inCard('SingBox')).dy, 1),
-      );
-      expect(
-        tester.getCenter(inCard('隧道分组')).dy,
-        closeTo(tester.getCenter(inCard('WireGuard')).dy, 1),
-      );
-      expect(
-        tester.getCenter(inCard('代理分组')).dy,
-        closeTo(tester.getCenter(inCard('SingBox')).dy, 1),
-      );
-      if (width == 1280) {
+      for (final (level, protocol, source, nodeName) in [
+        ('第一级', 'WireGuard', '隧道分组', '一级隧道'),
+        ('第二级', 'SingBox', '代理分组', '二级代理'),
+      ]) {
+        final levelY = tester.getCenter(inCard(level)).dy;
+        final sourceY = tester.getCenter(inCard(source)).dy;
+        final protocolY = tester.getCenter(inCard(protocol)).dy;
+        expect(protocolY, greaterThanOrEqualTo(levelY - 1), reason: '$size');
+        expect(sourceY, greaterThanOrEqualTo(protocolY - 1), reason: '$size');
+        expect(sourceY, lessThan(tester.getTopLeft(inCard(nodeName)).dy));
+        if (size.width == 1280) {
+          expect(levelY, closeTo(protocolY, 1));
+          expect(sourceY, closeTo(protocolY, 1));
+        }
+      }
+      if (size.width > size.height) {
         final line = find.descendant(
           of: card,
           matching: find.byType(VerticalDivider),
@@ -713,7 +724,7 @@ AllowedIPs = 0.0.0.0/0
     expectSingleLineIpAndBadgeBeforeAddress();
     expect(tester.takeException(), isNull);
 
-    await tester.binding.setSurfaceSize(const Size(400, 1000));
+    tester.view.physicalSize = const Size(400, 1000);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
     expect(inCard('断开'), findsOneWidget);
@@ -885,11 +896,11 @@ AllowedIPs = 0.0.0.0/0
       HomeCard.splitMode,
     ]);
     expect(storage.saved!.settings.homeMobile.hidden, isEmpty);
-    await tester.binding.setSurfaceSize(const Size(390, 900));
+    tester.view.physicalSize = const Size(390, 900);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.byType(HomeSubscriptionCard), findsOneWidget);
-    await tester.binding.setSurfaceSize(const Size(1280, 1000));
+    tester.view.physicalSize = const Size(1280, 1000);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 600));
     expect(find.byType(HomeSubscriptionCard), findsNothing);
@@ -1055,7 +1066,7 @@ AllowedIPs = 0.0.0.0/0
     expect(inCard('2026-11-12 15:57'), findsOneWidget);
     expect(tester.takeException(), isNull);
     for (final width in [390.0, 760.0, 820.0, 1024.0, 1280.0]) {
-      await tester.binding.setSurfaceSize(Size(width, 1000));
+      tester.view.physicalSize = Size(width, 1000);
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 600));
       expect(tester.takeException(), isNull, reason: 'width $width');

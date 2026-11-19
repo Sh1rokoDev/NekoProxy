@@ -18,11 +18,10 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
-  static const _desktopBreakpoint = 760.0;
   static const _cardSpacing = 16.0;
 
   HomeLayout? _draft;
-  bool _editingDesktop = false;
+  bool _editingLandscape = false;
   bool _saving = false;
   final _gridKey = GlobalKey();
   EdgeDraggingAutoScroller? _autoScroller;
@@ -40,14 +39,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     HomeCard.activity => '最近活动',
   };
 
-  Future<void> _edit(AppController controller, bool desktop) async {
+  Future<void> _edit(AppController controller, bool landscape) async {
     final draft = _draft;
     if (draft == null) {
-      final saved = desktop
+      final saved = landscape
           ? controller.settings.homeDesktop
           : controller.settings.homeMobile;
       setState(() {
-        _editingDesktop = desktop;
+        _editingLandscape = landscape;
         _draft = HomeLayout(order: saved.order, hidden: saved.hidden);
       });
       return;
@@ -55,7 +54,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _stopDrag();
     setState(() => _saving = true);
     try {
-      await controller.saveHomeLayout(draft, desktop: _editingDesktop);
+      await controller.saveHomeLayout(draft, desktop: _editingLandscape);
       if (mounted) setState(() => _draft = null);
     } catch (_) {
       if (mounted) {
@@ -202,116 +201,108 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     final showLiveTraffic = TickerMode.valuesOf(context).enabled;
-    return LayoutBuilder(
-      builder: (context, pageConstraints) {
-        final desktop = pageConstraints.maxWidth >= _desktopBreakpoint;
-        final draft = _draft;
-        final layout =
-            draft ??
-            (desktop
-                ? controller.settings.homeDesktop
-                : controller.settings.homeMobile);
-        Widget card(HomeCard kind, {bool keyed = true}) => KeyedSubtree(
-          key: keyed ? ValueKey(kind) : null,
-          child: switch (kind) {
-            HomeCard.connection => ConnectionCard(
-              controller: controller,
-              hasNodes: controller.hasNodes,
-            ),
-            HomeCard.splitMode => HomeSplitModeCard(controller: controller),
-            HomeCard.traffic =>
-              showLiveTraffic
-                  ? ValueListenableBuilder<int>(
-                      valueListenable: controller.liveTick,
-                      builder: (context, _, _) =>
-                          HomeTrafficCard(controller: controller),
-                    )
-                  : HomeTrafficCard(controller: controller),
-            HomeCard.subscription => HomeSubscriptionCard(
-              controller: controller,
-            ),
-            HomeCard.services => ServiceStatusCard(controller: controller),
-            HomeCard.activity => HomeActivityCard(controller: controller),
-          },
-        );
-        final visible = _visibleCards(layout);
-        final canEdit = !_saving && _dragging == null;
-        return PageFrame(
-          title: draft == null ? '首页' : '编辑首页',
-          wrapHeader: true,
-          bottomPadding: 20,
-          actions: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (draft == null)
-                _NetworkTakeoverActions(controller: controller)
-              else
-                HeaderIconButton(
-                  icon: Icons.close_rounded,
-                  tooltip: '取消编辑',
-                  onPressed: !canEdit
-                      ? null
-                      : () {
-                          _stopDrag();
-                          setState(() => _draft = null);
-                        },
-                ),
-              const SizedBox(width: 8),
-              HeaderIconButton(
-                icon: _draft == null
-                    ? Icons.edit_outlined
-                    : Icons.check_rounded,
-                tooltip: _draft == null ? '编辑首页' : '完成编辑',
-                active: _draft != null,
-                onPressed: canEdit ? () => _edit(controller, desktop) : null,
-              ),
-            ],
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            spacing: _cardSpacing,
-            children: [
-              card(HomeCard.connection),
-              if (visible.isNotEmpty || draft != null)
-                HomeCardGrid(
-                  key: _gridKey,
-                  columns: desktop ? 2 : 1,
-                  spacing: _cardSpacing,
-                  animationVsync:
-                      draft != null && !MediaQuery.disableAnimationsOf(context)
-                      ? this
-                      : null,
-                  children: [
-                    for (final kind in visible)
-                      if (draft == null)
-                        card(kind)
-                      else
-                        EditableHomeCard(
-                          key: ValueKey(kind),
-                          kind: kind,
-                          label: _label(kind),
-                          enabled: canEdit,
-                          dragging: _dragging == kind,
-                          onRemove: () =>
-                              setState(() => draft.hidden.add(kind)),
-                          onDragStarted: (scrollable) =>
-                              _startDrag(draft, kind, scrollable),
-                          onDragUpdate: (position) =>
-                              _updateDrag(draft, kind, position),
-                          onDragEnd: () => _endDrag(kind),
-                          child: card(kind, keyed: false),
-                        ),
-                    if (draft != null)
-                      AddHomeCardButton(
-                        key: const ValueKey('add-home-card'),
-                        onPressed: canEdit ? () => _addCard(draft) : null,
-                      ),
-                  ],
-                ),
-            ],
-          ),
-        );
+    final landscape =
+        MediaQuery.orientationOf(context) == Orientation.landscape;
+    final draft = _draft;
+    final layout =
+        draft ??
+        (landscape
+            ? controller.settings.homeDesktop
+            : controller.settings.homeMobile);
+    Widget card(HomeCard kind, {bool keyed = true}) => KeyedSubtree(
+      key: keyed ? ValueKey(kind) : null,
+      child: switch (kind) {
+        HomeCard.connection => ConnectionCard(
+          controller: controller,
+          hasNodes: controller.hasNodes,
+        ),
+        HomeCard.splitMode => HomeSplitModeCard(controller: controller),
+        HomeCard.traffic =>
+          showLiveTraffic
+              ? ValueListenableBuilder<int>(
+                  valueListenable: controller.liveTick,
+                  builder: (context, _, _) =>
+                      HomeTrafficCard(controller: controller),
+                )
+              : HomeTrafficCard(controller: controller),
+        HomeCard.subscription => HomeSubscriptionCard(controller: controller),
+        HomeCard.services => ServiceStatusCard(controller: controller),
+        HomeCard.activity => HomeActivityCard(controller: controller),
       },
+    );
+    final visible = _visibleCards(layout);
+    final canEdit = !_saving && _dragging == null;
+    return PageFrame(
+      title: draft == null ? '首页' : '编辑首页',
+      wrapHeader: true,
+      bottomPadding: 20,
+      actions: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (draft == null)
+            _NetworkTakeoverActions(controller: controller)
+          else
+            HeaderIconButton(
+              icon: Icons.close_rounded,
+              tooltip: '取消编辑',
+              onPressed: !canEdit
+                  ? null
+                  : () {
+                      _stopDrag();
+                      setState(() => _draft = null);
+                    },
+            ),
+          const SizedBox(width: 8),
+          HeaderIconButton(
+            icon: _draft == null ? Icons.edit_outlined : Icons.check_rounded,
+            tooltip: _draft == null ? '编辑首页' : '完成编辑',
+            active: _draft != null,
+            onPressed: canEdit ? () => _edit(controller, landscape) : null,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: _cardSpacing,
+        children: [
+          card(HomeCard.connection),
+          if (visible.isNotEmpty || draft != null)
+            HomeCardGrid(
+              key: _gridKey,
+              columns: landscape ? 2 : 1,
+              spacing: _cardSpacing,
+              animationVsync:
+                  draft != null && !MediaQuery.disableAnimationsOf(context)
+                  ? this
+                  : null,
+              children: [
+                for (final kind in visible)
+                  if (draft == null)
+                    card(kind)
+                  else
+                    EditableHomeCard(
+                      key: ValueKey(kind),
+                      kind: kind,
+                      label: _label(kind),
+                      enabled: canEdit,
+                      dragging: _dragging == kind,
+                      onRemove: () => setState(() => draft.hidden.add(kind)),
+                      onDragStarted: (scrollable) =>
+                          _startDrag(draft, kind, scrollable),
+                      onDragUpdate: (position) =>
+                          _updateDrag(draft, kind, position),
+                      onDragEnd: () => _endDrag(kind),
+                      child: card(kind, keyed: false),
+                    ),
+                if (draft != null)
+                  AddHomeCardButton(
+                    key: const ValueKey('add-home-card'),
+                    onPressed: canEdit ? () => _addCard(draft) : null,
+                  ),
+              ],
+            ),
+        ],
+      ),
     );
   }
 }

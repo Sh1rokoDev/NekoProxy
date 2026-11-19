@@ -29,8 +29,12 @@ class ServiceStatusCard extends StatelessWidget {
     final featured = connectivityServices
         .where((service) => service.featured)
         .toList();
-    final results = [
-      for (final service in featured) controller.serviceChecks[service.id],
+    final tiles = [
+      for (final service in featured)
+        _ServiceTile(
+          service: service,
+          result: controller.serviceChecks[service.id],
+        ),
     ];
     final allResults = [
       for (final service in connectivityServices)
@@ -71,73 +75,75 @@ class ServiceStatusCard extends StatelessWidget {
         : theme.brightness == Brightness.dark
         ? const Color(0xFF7ADCA5)
         : const Color(0xFF11633F);
+    final actions = Wrap(
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        _Badge(
+          text: badge,
+          background: badgeBackground,
+          foreground: badgeForeground,
+        ),
+        IconButton(
+          tooltip: '检测全部',
+          visualDensity: VisualDensity.compact,
+          onPressed: controller.serviceCheckBusy
+              ? null
+              : () => controller.checkServiceStatus(),
+          icon: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 180),
+            child: controller.serviceCheckBusy
+                ? const SizedBox(
+                    key: ValueKey('checking'),
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(
+                    Icons.refresh_rounded,
+                    key: ValueKey('refresh'),
+                    size: 20,
+                  ),
+          ),
+        ),
+        Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
+      ],
+    );
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: () => Navigator.of(context)
           .push(MaterialPageRoute(builder: (_) => const ServiceStatusPage())),
-      child: SectionCard(
-        title: '服务状态',
-        icon: Icons.shield_outlined,
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _Badge(
-              text: badge,
-              background: badgeBackground,
-              foreground: badgeForeground,
-            ),
-            IconButton(
-              tooltip: '检测全部',
-              visualDensity: VisualDensity.compact,
-              onPressed: controller.serviceCheckBusy
-                  ? null
-                  : () => controller.checkServiceStatus(),
-              icon: AnimatedSwitcher(
-                duration: const Duration(milliseconds: 180),
-                child: controller.serviceCheckBusy
-                    ? const SizedBox(
-                        key: ValueKey('checking'),
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(
-                        Icons.refresh_rounded,
-                        key: ValueKey('refresh'),
-                        size: 20,
-                      ),
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded, color: scheme.onSurfaceVariant),
-          ],
-        ),
-        child: Column(
-          children: [
-            Row(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+          final compact = constraints.maxWidth < 280 * textScale;
+          return SectionCard(
+            title: '服务状态',
+            icon: Icons.shield_outlined,
+            trailing: compact ? null : actions,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              spacing: 10,
               children: [
-                Expanded(
-                  child: _ServiceTile(service: featured[0], result: results[0]),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _ServiceTile(service: featured[1], result: results[1]),
-                ),
+                if (compact) ...[
+                  actions,
+                  ...tiles,
+                ] else
+                  for (var index = 0; index < tiles.length; index += 2)
+                    Row(
+                      spacing: 10,
+                      children: [
+                        Expanded(child: tiles[index]),
+                        Expanded(
+                          child: index + 1 < tiles.length
+                              ? tiles[index + 1]
+                              : const SizedBox.shrink(),
+                        ),
+                      ],
+                    ),
               ],
             ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: _ServiceTile(service: featured[2], result: results[2]),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: _ServiceTile(service: featured[3], result: results[3]),
-                ),
-              ],
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }

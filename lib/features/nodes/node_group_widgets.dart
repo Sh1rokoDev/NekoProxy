@@ -435,15 +435,13 @@ class ReorderableNodeGroup extends StatelessWidget {
     required this.child,
   });
 
-  final int? index;
+  final int index;
   final bool enabled;
   final String tooltip;
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final index = this.index;
-    if (index == null) return child;
     final scheme = Theme.of(context).colorScheme;
     return Stack(
       alignment: Alignment.centerLeft,

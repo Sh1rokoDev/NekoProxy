@@ -39,22 +39,24 @@ class _NodesPageState extends State<NodesPage> {
     final wireGuardGroups =
         {
           for (final group in snapshot.wireGuardGroups)
-            group: snapshot.wireGuardProfiles
-                .where(
-                  (profile) =>
-                      profile.groupId == group.id &&
-                      (_query.isEmpty ||
-                          group.name.toLowerCase().contains(_query) ||
-                          profile.name.toLowerCase().contains(_query)),
-                )
-                .toList(),
+            AppSnapshot.wireGuardGroupKey(group.id): (
+              group: group,
+              profiles: snapshot.wireGuardProfiles
+                  .where(
+                    (profile) =>
+                        profile.groupId == group.id &&
+                        (_query.isEmpty ||
+                            group.name.toLowerCase().contains(_query) ||
+                            profile.name.toLowerCase().contains(_query)),
+                  )
+                  .toList(),
+            ),
         }..removeWhere(
-          (group, profiles) =>
+          (_, entry) =>
               _query.isNotEmpty &&
-              !group.name.toLowerCase().contains(_query) &&
-              profiles.isEmpty,
+              !entry.group.name.toLowerCase().contains(_query) &&
+              entry.profiles.isEmpty,
         );
-    final wireGuardEntries = wireGuardGroups.entries.toList();
     final automatic = controller.settings.selectionMode == SelectionMode.auto;
     final highlightedNode = !controller.showsRuleMode
         ? null
@@ -69,7 +71,21 @@ class _NodesPageState extends State<NodesPage> {
         ? null
         : controller.offlineRecommendedNode;
     final highlightedId = highlightedNode?.id;
-    final groups = _buildGroups(controller, automatic ? null : highlightedId);
+    final groups = {
+      for (final group in _buildGroups(
+        controller,
+        automatic ? null : highlightedId,
+      ))
+        (group.subscription == null
+                ? AppSnapshot.otherNodeGroupKey
+                : AppSnapshot.subscriptionGroupKey(group.id)):
+            group,
+    };
+    final visibleKeys = [
+      for (final key in snapshot.orderedNodeGroupKeys)
+        if (groups.containsKey(key) || wireGuardGroups.containsKey(key)) key,
+    ];
+    final reorderEnabled = !_savingGroupOrder && !controller.changingWireGuard;
     final allTestRequested = controller.isNodeTestRequested(null);
     final hasWireGuardProfiles = snapshot.wireGuardProfiles.isNotEmpty;
     final hasInactiveWireGuard =
@@ -177,7 +193,7 @@ class _NodesPageState extends State<NodesPage> {
         ],
       ),
       slivers: [
-        if (groups.isEmpty && wireGuardGroups.isEmpty)
+        if (visibleKeys.isEmpty)
           SliverFillRemaining(
             hasScrollBody: false,
             child: Padding(
@@ -198,14 +214,9 @@ class _NodesPageState extends State<NodesPage> {
               ),
             ),
           )
-        else if (groups.isNotEmpty)
+        else
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(
-              24,
-              0,
-              24,
-              wireGuardGroups.isEmpty ? 168 + dockInset : 0,
-            ),
+            padding: EdgeInsets.fromLTRB(24, 0, 24, 168 + dockInset),
             sliver: SliverLayoutBuilder(
               builder: (context, constraints) {
                 final gutter =
@@ -217,26 +228,46 @@ class _NodesPageState extends State<NodesPage> {
                   sliver: SliverReorderableList(
                     proxyDecorator: (child, _, _) => child,
                     onReorderItem: (oldIndex, newIndex) => _reorderGroups(
-                      groups.map((group) => group.subscription?.id).toList(),
-                      controller.reorderSubscriptions,
+                      visibleKeys,
+                      controller,
                       oldIndex,
                       newIndex,
                     ),
-                    itemCount: groups.length,
+                    itemCount: visibleKeys.length,
                     itemBuilder: (context, index) {
-                      final group = groups[index];
+                      final key = visibleKeys[index];
+                      final wireGuard = wireGuardGroups[key];
+                      if (wireGuard != null) {
+                        final id = wireGuard.group.id;
+                        return Padding(
+                          key: ValueKey(key),
+                          padding: const EdgeInsets.only(bottom: 12),
+                          child: WireGuardGroupCard(
+                            controller: controller,
+                            group: wireGuard.group,
+                            profiles: wireGuard.profiles,
+                            reorderIndex: index,
+                            reorderEnabled: reorderEnabled,
+                            expanded:
+                                _query.isNotEmpty ||
+                                !_collapsedWireGuard.contains(id),
+                            onToggleExpanded: () => setState(() {
+                              if (!_collapsedWireGuard.remove(id)) {
+                                _collapsedWireGuard.add(id);
+                              }
+                            }),
+                          ),
+                        );
+                      }
+                      final group = groups[key]!;
                       return Padding(
-                        key: ValueKey(group.id),
+                        key: ValueKey(key),
                         padding: const EdgeInsets.only(bottom: 12),
                         child: _GroupCard(
                           group: group,
                           controller: controller,
-                          reorderIndex: group.subscription == null
-                              ? null
-                              : index,
-                          reorderEnabled:
-                              !_savingGroupOrder &&
-                              !controller.changingWireGuard,
+                          reorderIndex: index,
+                          reorderEnabled: reorderEnabled,
                           highlightedId: highlightedId,
                           expanded:
                               _query.isNotEmpty ||
@@ -318,68 +349,22 @@ class _NodesPageState extends State<NodesPage> {
               },
             ),
           ),
-        if (wireGuardGroups.isNotEmpty)
-          SliverPadding(
-            padding: EdgeInsets.fromLTRB(24, 0, 24, 168 + dockInset),
-            sliver: SliverLayoutBuilder(
-              builder: (context, constraints) {
-                final gutter =
-                    (constraints.crossAxisExtent - PageFrame.maxContentWidth)
-                        .clamp(0.0, double.infinity) /
-                    2;
-                return SliverPadding(
-                  padding: EdgeInsets.symmetric(horizontal: gutter),
-                  sliver: SliverReorderableList(
-                    proxyDecorator: (child, _, _) => child,
-                    onReorderItem: (oldIndex, newIndex) => _reorderGroups(
-                      wireGuardEntries.map((entry) => entry.key.id).toList(),
-                      controller.reorderWireGuardGroups,
-                      oldIndex,
-                      newIndex,
-                    ),
-                    itemCount: wireGuardEntries.length,
-                    itemBuilder: (context, index) {
-                      final entry = wireGuardEntries[index];
-                      return Padding(
-                        key: ValueKey(entry.key.id),
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: WireGuardGroupCard(
-                          controller: controller,
-                          group: entry.key,
-                          profiles: entry.value,
-                          reorderIndex: index,
-                          reorderEnabled: !_savingGroupOrder,
-                          expanded:
-                              _query.isNotEmpty ||
-                              !_collapsedWireGuard.contains(entry.key.id),
-                          onToggleExpanded: () => setState(() {
-                            if (!_collapsedWireGuard.remove(entry.key.id)) {
-                              _collapsedWireGuard.add(entry.key.id);
-                            }
-                          }),
-                        ),
-                      );
-                    },
-                  ),
-                );
-              },
-            ),
-          ),
       ],
     );
   }
 
   Future<void> _reorderGroups(
-    List<String?> groupIds,
-    Future<void> Function(List<String>) saveOrder,
+    List<String> visibleKeys,
+    AppController controller,
     int oldIndex,
     int newIndex,
   ) async {
     if (_savingGroupOrder || oldIndex == newIndex) return;
-    groupIds.insert(newIndex, groupIds.removeAt(oldIndex));
+    final orderedKeys = [...visibleKeys];
+    orderedKeys.insert(newIndex, orderedKeys.removeAt(oldIndex));
     setState(() => _savingGroupOrder = true);
     try {
-      await saveOrder(groupIds.nonNulls.toList());
+      await controller.reorderNodeGroups(orderedKeys);
     } finally {
       if (mounted) setState(() => _savingGroupOrder = false);
     }
@@ -1447,7 +1432,7 @@ class _GroupCard extends StatelessWidget {
 
   final _NodeGroup group;
   final AppController controller;
-  final int? reorderIndex;
+  final int reorderIndex;
   final bool reorderEnabled;
   final String? highlightedId;
   final bool expanded;

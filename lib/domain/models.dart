@@ -935,6 +935,7 @@ class AppSnapshot {
     this.wireGuardProfileId,
     this.wireGuardProfiles = const [],
     List<WireGuardGroup>? wireGuardGroups,
+    this.nodeGroupOrder = const [],
   }) : rules = rules ?? [],
        chainProxyEnabled =
            chainProxyEnabled ?? outboundMode == OutboundMode.wireGuardProxy,
@@ -965,6 +966,25 @@ class AppSnapshot {
   bool chainProxyEnabled;
   StandaloneOutbound standaloneOutbound;
   List<WireGuardGroup> wireGuardGroups;
+  List<String> nodeGroupOrder;
+
+  static String subscriptionGroupKey(String id) => 'subscription:$id';
+  static String wireGuardGroupKey(String id) => 'wireguard:$id';
+  static const otherNodeGroupKey = 'other';
+
+  List<String> get orderedNodeGroupKeys {
+    final remaining = {
+      for (final group in subscriptions) subscriptionGroupKey(group.id),
+      otherNodeGroupKey,
+      for (final group in wireGuardGroups) wireGuardGroupKey(group.id),
+    };
+    return [
+      for (final key in nodeGroupOrder)
+        if (remaining.remove(key)) key,
+      ...remaining,
+    ];
+  }
+
   OutboundMode get outboundMode => chainProxyEnabled
       ? OutboundMode.wireGuardProxy
       : standaloneOutbound == StandaloneOutbound.wireGuard
@@ -1048,6 +1068,7 @@ class AppSnapshot {
     'chainProxyEnabled': chainProxyEnabled,
     'standaloneOutbound': standaloneOutbound.name,
     'wireGuardGroups': wireGuardGroups.map((group) => group.toJson()).toList(),
+    if (nodeGroupOrder.isNotEmpty) 'nodeGroupOrder': nodeGroupOrder,
     'wireGuardProfileId': wireGuardProfileId,
     'wireGuardProfiles': wireGuardProfiles.map((e) => e.toJson()).toList(),
     'installedAt': installedAt?.toIso8601String(),
@@ -1113,6 +1134,10 @@ class AppSnapshot {
           )
           .toList(),
       wireGuardProfileId: json['wireGuardProfileId'] as String?,
+      nodeGroupOrder: switch (json['nodeGroupOrder']) {
+        final List order => order.whereType<String>().toList(),
+        _ => const [],
+      },
       wireGuardProfiles: (json['wireGuardProfiles'] as List? ?? const [])
           .map(
             (profile) => WireGuardProfile.fromJson(

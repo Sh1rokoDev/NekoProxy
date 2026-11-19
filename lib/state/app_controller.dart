@@ -1990,66 +1990,34 @@ class AppController extends ChangeNotifier {
   }
 
   /// Reorders visible node groups while preserving the slots of hidden groups.
-  Future<void> reorderSubscriptions(List<String> orderedIds) async {
+  Future<void> reorderNodeGroups(List<String> orderedKeys) async {
+    if (_changingWireGuard) return;
     final source = snapshot;
-    final previous = source.subscriptions;
-    final reordered = _reorderVisibleGroups(
-      previous,
-      orderedIds,
-      (group) => group.id,
-    );
-    if (listEquals(previous, reordered)) return;
-    source.subscriptions = reordered;
+    final previous = source.nodeGroupOrder;
+    final current = source.orderedNodeGroupKeys;
+    final visible = orderedKeys.toSet();
+    if (visible.length != orderedKeys.length ||
+        !current.toSet().containsAll(visible)) {
+      return;
+    }
+    var nextIndex = 0;
+    final reordered = [
+      for (final key in current)
+        if (visible.contains(key)) orderedKeys[nextIndex++] else key,
+    ];
+    if (listEquals(current, reordered)) return;
+    source.nodeGroupOrder = reordered;
     try {
       await storage.save(source);
     } catch (exception) {
       if (!identical(snapshot, source)) return;
-      if (listEquals(source.subscriptions, reordered)) {
-        source.subscriptions = previous;
+      if (identical(source.nodeGroupOrder, reordered)) {
+        source.nodeGroupOrder = previous;
       }
       _setError('分组顺序保存失败：${_friendlyError(exception)}');
       return;
     }
     if (identical(snapshot, source)) notifyListeners();
-  }
-
-  Future<void> reorderWireGuardGroups(List<String> orderedIds) async {
-    try {
-      await _changeWireGuard((draft) {
-        draft.wireGuardGroups = _reorderVisibleGroups(
-          draft.wireGuardGroups,
-          orderedIds,
-          (group) => group.id,
-        );
-      });
-    } on Exception catch (exception) {
-      if (!_disposed) {
-        _setError('WireGuard 分组顺序保存失败：${_friendlyError(exception)}');
-      }
-    }
-  }
-
-  List<T> _reorderVisibleGroups<T>(
-    List<T> groups,
-    List<String> orderedIds,
-    String Function(T) idOf,
-  ) {
-    final visibleIds = orderedIds.toSet();
-    if (visibleIds.length != orderedIds.length) return groups;
-    final visibleById = {
-      for (final group in groups)
-        if (visibleIds.contains(idOf(group))) idOf(group): group,
-    };
-    if (visibleById.length != orderedIds.length) return groups;
-
-    var nextIndex = 0;
-    return [
-      for (final group in groups)
-        if (visibleIds.contains(idOf(group)))
-          visibleById[orderedIds[nextIndex++]] ?? group
-        else
-          group,
-    ];
   }
 
   Future<void> updateGroupPreferences(

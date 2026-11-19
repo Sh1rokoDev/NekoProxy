@@ -41,6 +41,8 @@ class ConnectionCard extends StatelessWidget {
     }
     final exitInfo = controller.exitInfo;
     final chain = controller.chainProxyEnabled;
+    final sideBySide =
+        chain && MediaQuery.orientationOf(context) == Orientation.landscape;
     final wgSource = controller.snapshot.wireGuardGroups
         .where((group) => group.id == profile?.groupId)
         .firstOrNull
@@ -73,23 +75,25 @@ class ConnectionCard extends StatelessWidget {
     );
     return LayoutBuilder(
       builder: (context, constraints) {
-        final textScale = MediaQuery.textScalerOf(context).scale(12) / 12;
-        final wide =
-            constraints.maxWidth >= _wideCardWidth * textScale.clamp(1, 2);
-        final sideWidth = (constraints.maxWidth * .31).clamp(
-          256.0 * textScale.clamp(1, 2),
-          360.0 * textScale.clamp(1, 2),
-        );
-        final inset = wide ? 18.0 : 14.0;
-        final detailsWidth =
-            constraints.maxWidth - (wide ? sideWidth : 0) - 2 * inset - 2;
-        const minColumnWidth = 272.0;
+        final textScale = (MediaQuery.textScalerOf(context).scale(12) / 12)
+            .clamp(1, 2);
+        const wideInset = 18.0;
         const dividerWidth = 25.0;
-        final sideBySide =
-            chain &&
-            wide &&
-            detailsWidth >=
-                2 * minColumnWidth * textScale.clamp(1, 2) + dividerWidth;
+        final sideWidth = (constraints.maxWidth * .31).clamp(
+          256.0 * textScale,
+          360.0 * textScale,
+        );
+        final wideDetailsWidth =
+            constraints.maxWidth - sideWidth - 2 * wideInset - 2;
+        final wide =
+            constraints.maxWidth >= _wideCardWidth * textScale &&
+            (!sideBySide ||
+                wideDetailsWidth >= _wideCardWidth * textScale + dividerWidth);
+        const compactInset = 14.0;
+        final inset = wide ? wideInset : compactInset;
+        final detailsWidth = wide
+            ? wideDetailsWidth
+            : constraints.maxWidth - 2 * compactInset - 2;
         final nodeWidth = sideBySide
             ? (detailsWidth - dividerWidth) / 2
             : detailsWidth;
@@ -286,12 +290,13 @@ class _NodeDetails extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
+        Wrap(
+          spacing: 6,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            if (level case final level?) ...[
+            if (level case final level?)
               RegionBadge(region: level, semanticPrefix: '代理级别'),
-              const SizedBox(width: 6),
-            ],
             Text(
               type,
               style: labelStyle?.copyWith(
@@ -299,23 +304,26 @@ class _NodeDetails extends StatelessWidget {
                 fontWeight: FontWeight.w600,
               ),
             ),
-            if (source case final source?) ...[
-              const SizedBox(width: 8),
-              Text('来源', style: labelStyle),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Tooltip(
-                  key: const ValueKey('connection-source'),
-                  message: source,
-                  child: Text(
-                    source,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: labelStyle,
+            if (source case final source?)
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                spacing: 4,
+                children: [
+                  Text('来源', style: labelStyle),
+                  Flexible(
+                    child: Tooltip(
+                      key: const ValueKey('connection-source'),
+                      message: source,
+                      child: Text(
+                        source,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: labelStyle,
+                      ),
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
           ],
         ),
         const SizedBox(height: 4),

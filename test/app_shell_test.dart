@@ -109,8 +109,10 @@ void main() {
   });
 
   testWidgets('窗口缩放仅布局可见页面，切换标签保留首页滚动位置', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(800, 600));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.physicalSize = const Size(500, 600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final controller = AppController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(
@@ -135,17 +137,17 @@ void main() {
 
     await tester.tap(_destination('节点'));
     await _finishTransition(tester);
-    await tester.binding.setSurfaceSize(const Size(850, 600));
+    tester.view.physicalSize = const Size(550, 600);
     await tester.pump(Duration.zero, EnginePhase.paint);
 
     final nodesBox = tester.renderObject<RenderBox>(nodes);
     expect(nodesBox.hasSize, isTrue);
-    expect(nodesBox.constraints.maxWidth, 850);
+    expect(nodesBox.constraints.maxWidth, 550);
     expect(homeBox.constraints, homeConstraints);
 
     await tester.tap(_destination('首页'));
     await _finishTransition(tester);
-    expect(homeBox.constraints.maxWidth, 850);
+    expect(homeBox.constraints.maxWidth, 550);
     expect(scrollable.position.pixels, 80);
 
     for (var index = 0; index < 6; index++) {
@@ -154,12 +156,12 @@ void main() {
     }
     await _finishTransition(tester);
     final nodesConstraints = nodesBox.constraints;
-    await tester.binding.setSurfaceSize(const Size(820, 600));
+    tester.view.physicalSize = const Size(520, 600);
     await tester.pump(Duration.zero, EnginePhase.paint);
-    expect(homeBox.constraints.maxWidth, 820);
+    expect(homeBox.constraints.maxWidth, 520);
     expect(nodesBox.constraints, nodesConstraints);
 
-    await tester.binding.setSurfaceSize(const Size(1240, 900));
+    tester.view.physicalSize = const Size(1240, 900);
     await _finishTransition(tester);
     final desktopHomeBox = tester.renderObject<RenderBox>(home);
     final desktopNodesBox = tester.renderObject<RenderBox>(nodes);
@@ -167,19 +169,26 @@ void main() {
     expect(desktopNodesBox, same(nodesBox));
     final desktopHomeWidth = desktopHomeBox.constraints.maxWidth;
     expect(desktopNodesBox.constraints, nodesConstraints);
-    await tester.binding.setSurfaceSize(const Size(1280, 900));
+    tester.view.physicalSize = const Size(1280, 900);
     await tester.pump(Duration.zero, EnginePhase.paint);
     expect(desktopHomeBox.constraints.maxWidth, desktopHomeWidth + 40);
     expect(desktopNodesBox.constraints, nodesConstraints);
 
-    await tester.binding.setSurfaceSize(const Size(800, 900));
+    tester.view.physicalSize = const Size(460, 380);
+    await _finishTransition(tester);
+    expect(homeBox.constraints.maxWidth, lessThan(460));
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(800, 900);
     await _finishTransition(tester);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('导航在窄屏底部横排、宽屏左侧竖排，拖动松开才换页', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(360, 680));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+  testWidgets('导航随窗口宽高比切换位置，拖动松开才换页', (tester) async {
+    tester.view.physicalSize = const Size(360, 680);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final controller = AppController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(NekoProxyApp(controller: controller));
@@ -208,13 +217,19 @@ void main() {
     await _finishTransition(tester);
     expect(selected(), 1);
 
-    await tester.binding.setSurfaceSize(const Size(1024, 680));
+    tester.view.physicalSize = const Size(480, 420);
+    await _finishTransition(tester);
+    expect(tester.widget<NavigationDock>(_navigation).axis, Axis.vertical);
+    expect(tester.takeException(), isNull);
+
+    tester.view.physicalSize = const Size(680, 360);
     await _finishTransition(tester);
     expect(selected(), 1);
+    expect(tester.widget<NavigationDock>(_navigation).axis, Axis.vertical);
     final wide = tester.getRect(_navigation);
     expect(wide.left, greaterThan(0));
     expect(wide.right, lessThan(110));
-    expect(wide.center.dy, closeTo(340, 1));
+    expect(wide.center.dy, closeTo(180, 1));
     final start = tester.getCenter(_destination('节点'));
     final end = tester.getCenter(_destination('更多'));
     expect(start.dx, end.dx);
@@ -231,11 +246,24 @@ void main() {
     expect(selected(), 3);
     final last = tester.getRect(highlight);
     expect(wide.bottom - last.bottom, closeTo(last.left - wide.left, 0.1));
+
+    tester.view.physicalSize = const Size(1024, 1024);
+    await _finishTransition(tester);
+    expect(selected(), 3);
+    expect(tester.widget<NavigationDock>(_navigation).axis, Axis.horizontal);
+    expect(tester.getRect(_navigation).bottom, greaterThan(980));
+
+    tester.view.physicalSize = const Size(1024, 1100);
+    await _finishTransition(tester);
+    expect(tester.widget<NavigationDock>(_navigation).axis, Axis.horizontal);
+    expect(tester.getRect(_navigation).bottom, greaterThan(1060));
   });
 
   testWidgets('按住时导航膨胀并预览目标，取消后选中块落回原位', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(390, 750));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.physicalSize = const Size(390, 750);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final controller = AppController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(NekoProxyApp(controller: controller));
@@ -262,8 +290,10 @@ void main() {
   });
 
   testWidgets('连续拖动时高亮持续跟随，快速松手可滑入相邻选项', (tester) async {
-    await tester.binding.setSurfaceSize(const Size(390, 750));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    tester.view.physicalSize = const Size(390, 750);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final controller = AppController();
     addTearDown(controller.dispose);
     await tester.pumpWidget(NekoProxyApp(controller: controller));

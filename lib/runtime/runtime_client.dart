@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import '../data/app_storage.dart';
 
@@ -155,6 +156,7 @@ abstract class RuntimeClient {
   Future<void> shutdown();
   Future<void> cleanupStale();
   Future<List<InstalledApp>> installedApps() async => const [];
+  Future<Uint8List?> installedAppIcon(String packageName, int size) async => null;
   Future<List<String>> systemDnsServers() async => const [];
 }
 
@@ -179,6 +181,9 @@ class WindowsRuntimeClient implements RuntimeClient {
 
   @override
   Future<List<InstalledApp>> installedApps() async => const [];
+
+  @override
+  Future<Uint8List?> installedAppIcon(String packageName, int size) async => null;
 
   @override
   Future<List<String>> systemDnsServers() async => const [];

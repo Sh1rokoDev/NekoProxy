@@ -3,6 +3,9 @@ package com.nekoproxy.nekoproxy
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
@@ -14,7 +17,10 @@ import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import io.flutter.plugin.common.StandardMethodCodec
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 class MainActivity : FlutterActivity() {
     private val channelName = "nekoproxy/runtime"
@@ -35,16 +41,48 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(@NonNull flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName).setMethodCallHandler { call, result ->
+        val messenger = flutterEngine.dartExecutor.binaryMessenger
+        MethodChannel(messenger, channelName).setMethodCallHandler { call, result ->
             handleCall(call, result)
         }
-        AppUpdateInstaller.register(this, flutterEngine.dartExecutor.binaryMessenger)
+        val manager = applicationContext.packageManager
+        // Keep icon loading and encoding off the UI thread and process one icon at a time.
+        MethodChannel(
+            messenger,
+            "nekoproxy/app_icons",
+            StandardMethodCodec.INSTANCE,
+            messenger.makeBackgroundTaskQueue(),
+        ).setMethodCallHandler { call, result ->
+            if (call.method != "load") {
+                result.notImplemented()
+                return@setMethodCallHandler
+            }
+            val packageName = call.argument<String>("package")
+            val size = call.argument<Int>("size")
+            if (packageName.isNullOrBlank() || size == null || size !in 1..128) {
+                result.error("invalid_app_icon", "Invalid app icon request", null)
+                return@setMethodCallHandler
+            }
+            try {
+                result.success(loadAppIcon(manager, packageName, size))
+            } catch (error: PackageManager.NameNotFoundException) {
+                // An app may be removed while the list is open.
+                result.success(null)
+            } catch (error: RuntimeException) {
+                result.error("app_icon_error", error.message, null)
+            }
+        }
+        AppUpdateInstaller.register(this, messenger)
     }
 
     private fun handleCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
                 "start" -> handleStart(call, result)
+                "setCpuWakeLockEnabled" -> {
+                    NekoVpnService.setCpuWakeLockEnabled(call.arguments as Boolean)
+                    result.success(null)
+                }
                 "status" -> runAsync(result) { NekoVpnService.status() }
                 "traffic" -> runAsync(result) { NekoVpnService.traffic() }
                 "connections" -> runAsync(result) { NekoVpnService.connections() }
@@ -242,6 +280,26 @@ class MainActivity : FlutterActivity() {
         }
         apps.sortBy { (it["label"] as String).lowercase() }
         return apps
+    }
+
+    private fun loadAppIcon(manager: PackageManager, packageName: String, size: Int): ByteArray? {
+        val icon = manager.getApplicationIcon(packageName)
+        val width = icon.intrinsicWidth
+        val height = icon.intrinsicHeight
+        val scale = if (width > 0 && height > 0) size.toFloat() / maxOf(width, height) else null
+        val targetWidth = scale?.let { (width * it).roundToInt().coerceAtLeast(1) } ?: size
+        val targetHeight = scale?.let { (height * it).roundToInt().coerceAtLeast(1) } ?: size
+        val left = (size - targetWidth) / 2
+        val top = (size - targetHeight) / 2
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        try {
+            icon.setBounds(left, top, left + targetWidth, top + targetHeight)
+            icon.draw(Canvas(bitmap))
+            val output = ByteArrayOutputStream()
+            return if (bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)) output.toByteArray() else null
+        } finally {
+            bitmap.recycle()
+        }
     }
 
     @Deprecated("FlutterActivity still delivers VPN consent through this callback")

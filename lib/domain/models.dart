@@ -16,6 +16,8 @@ enum StackMode { mixed, gvisor, system }
 
 enum PerAppMode { off, allow, block }
 
+enum AdvancedConfigMode { extension, override, off }
+
 class BuiltInRuleSetDefinition {
   const BuiltInRuleSetDefinition({
     required this.tag,
@@ -790,6 +792,7 @@ class AppSettings {
     this.tunEnabled = false,
     this.vpnEnabled = true,
     this.autoConnect = false,
+    this.cpuWakeLockEnabled = false,
     this.startAtLogin = false,
     this.minimizeToTray = true,
     this.ruleSetAutoUpdate = true,
@@ -815,6 +818,7 @@ class AppSettings {
   bool tunEnabled;
   bool vpnEnabled;
   bool autoConnect;
+  bool cpuWakeLockEnabled;
   bool startAtLogin;
   bool minimizeToTray;
   bool ruleSetAutoUpdate;
@@ -844,6 +848,7 @@ class AppSettings {
     'tunEnabled': tunEnabled,
     'vpnEnabled': vpnEnabled,
     'autoConnect': autoConnect,
+    'cpuWakeLockEnabled': cpuWakeLockEnabled,
     'startAtLogin': startAtLogin,
     'minimizeToTray': minimizeToTray,
     'ruleSetAutoUpdate': ruleSetAutoUpdate,
@@ -885,6 +890,7 @@ class AppSettings {
       tunEnabled: json['tunEnabled'] as bool? ?? false,
       vpnEnabled: json['vpnEnabled'] as bool? ?? true,
       autoConnect: json['autoConnect'] as bool? ?? false,
+      cpuWakeLockEnabled: json['cpuWakeLockEnabled'] as bool? ?? false,
       startAtLogin: json['startAtLogin'] as bool? ?? false,
       minimizeToTray: json['minimizeToTray'] as bool? ?? true,
       ruleSetAutoUpdate: json['ruleSetAutoUpdate'] as bool? ?? true,
@@ -919,6 +925,7 @@ class AppSnapshot {
     required this.subscriptions,
     List<RoutingRule>? rules,
     this.advancedJson = const {},
+    this.inactiveAdvancedJson,
     this.customConfig = '',
     this.useCustomConfig = false,
     this.installedAt,
@@ -944,8 +951,16 @@ class AppSnapshot {
   List<Subscription> subscriptions;
   List<RoutingRule> rules;
   Map<String, dynamic> advancedJson;
+  Map<String, dynamic>? inactiveAdvancedJson;
   String customConfig;
   bool useCustomConfig;
+  Map<String, dynamic> get advancedJsonDraft =>
+      inactiveAdvancedJson ?? advancedJson;
+  AdvancedConfigMode get advancedConfigMode => useCustomConfig
+      ? AdvancedConfigMode.override
+      : inactiveAdvancedJson != null
+      ? AdvancedConfigMode.off
+      : AdvancedConfigMode.extension;
   DateTime? installedAt;
   bool chainProxyEnabled;
   StandaloneOutbound standaloneOutbound;
@@ -1025,6 +1040,8 @@ class AppSnapshot {
     'subscriptions': subscriptions.map((e) => e.toJson()).toList(),
     'rules': rules.map((e) => e.toJson()).toList(),
     'advancedJson': advancedJson,
+    // Older releases read only the active JSON and will keep a paused extension off.
+    'inactiveAdvancedJson': ?inactiveAdvancedJson,
     'customConfig': customConfig,
     'useCustomConfig': useCustomConfig,
     'outboundMode': outboundMode.name,
@@ -1075,6 +1092,9 @@ class AppSnapshot {
           .toList(),
       rules: rules,
       advancedJson: Map<String, dynamic>.from(json['advancedJson'] as Map),
+      inactiveAdvancedJson: json['inactiveAdvancedJson'] is Map
+          ? Map<String, dynamic>.from(json['inactiveAdvancedJson'] as Map)
+          : null,
       customConfig: json['customConfig'] as String? ?? '',
       useCustomConfig: json['useCustomConfig'] as bool? ?? false,
       outboundMode: OutboundMode.values.firstWhere(

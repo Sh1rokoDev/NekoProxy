@@ -174,7 +174,6 @@ class _IngressPageState extends State<IngressPage> {
                       ),
                       SwitchRow(
                         title: '局域网直连',
-                        subtitle: '让局域网流量绕过 TUN，WireGuard 的 AllowedIPs 优先。',
                         value: _bypassLan,
                         onChanged: (value) =>
                             setState(() => _bypassLan = value),

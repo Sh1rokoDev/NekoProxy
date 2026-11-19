@@ -9,7 +9,6 @@ import '../../services/windows_startup.dart';
 import '../../state/app_controller.dart';
 import 'about_page.dart';
 import 'advanced_page.dart';
-import 'apps_page.dart';
 import 'backup_page.dart';
 import 'config_page.dart';
 import 'connections_page.dart';
@@ -44,6 +43,13 @@ class ToolsPage extends StatelessWidget {
                     await controller.saveSettings();
                   },
                 ),
+                if (controller.isAndroid)
+                  SwitchRow(
+                    title: '获取 CPU 唤醒锁',
+                    icon: Icons.memory_rounded,
+                    value: controller.settings.cpuWakeLockEnabled,
+                    onChanged: controller.setCpuWakeLockEnabled,
+                  ),
                 if (Platform.isWindows)
                   SwitchRow(
                     title: '开机启动',
@@ -82,12 +88,6 @@ class ToolsPage extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
             child: Column(
               children: [
-                if (Platform.isAndroid)
-                  _ToolTile(
-                    icon: Icons.apps_rounded,
-                    title: '分应用代理',
-                    onTap: () => _push(context, const AppsPage()),
-                  ),
                 _ToolTile(
                   icon: Icons.dns_outlined,
                   title: 'DNS',

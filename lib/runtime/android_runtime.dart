@@ -12,6 +12,7 @@ class AndroidRuntimeClient implements RuntimeClient {
   AndroidRuntimeClient(this.paths);
 
   static const _channel = MethodChannel('nekoproxy/runtime');
+  static const _appIcons = MethodChannel('nekoproxy/app_icons');
   static const _callTimeout = Duration(seconds: 8);
   static const _stopTimeout = Duration(seconds: 4);
   final AppPaths paths;
@@ -39,6 +40,9 @@ class AndroidRuntimeClient implements RuntimeClient {
     return _statusFrom(result);
   }
 
+  Future<void> setCpuWakeLockEnabled(bool enabled) =>
+      _invoke<void>('setCpuWakeLockEnabled', enabled);
+
   @override
   Future<List<InstalledApp>> installedApps() async {
     final result = await _invoke<List<Object?>>('apps');
@@ -47,6 +51,13 @@ class AndroidRuntimeClient implements RuntimeClient {
         .map((e) => InstalledApp.fromJson(Map<String, dynamic>.from(e)))
         .where((app) => app.packageName.isNotEmpty)
         .toList();
+  }
+
+  @override
+  Future<Uint8List?> installedAppIcon(String packageName, int size) {
+    return _appIcons
+        .invokeMethod<Uint8List>('load', {'package': packageName, 'size': size})
+        .timeout(_callTimeout);
   }
 
   @override

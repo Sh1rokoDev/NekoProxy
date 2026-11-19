@@ -90,6 +90,7 @@ class HeaderScaffold extends StatelessWidget {
     required this.title,
     required this.body,
     this.actions = const [],
+    this.floatingActionButton,
     this.maxContentWidth = defaultContentWidth,
     this.fadeTail = 20,
     this.scrollsBehindHeader = true,
@@ -102,6 +103,8 @@ class HeaderScaffold extends StatelessWidget {
   final Widget title;
   final Widget Function(double headerInset) body;
   final List<Widget> actions;
+  final Widget? floatingActionButton;
+
   final double maxContentWidth;
   final double fadeTail;
   final bool scrollsBehindHeader;
@@ -132,6 +135,7 @@ class HeaderScaffold extends StatelessWidget {
         ];
         return Scaffold(
           extendBodyBehindAppBar: true,
+          floatingActionButton: floatingActionButton,
           appBar: AppBar(
             automaticallyImplyLeading: false,
             leading: hasBack

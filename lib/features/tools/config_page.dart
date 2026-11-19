@@ -6,6 +6,7 @@ import '../../app/app_scope.dart';
 import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../domain/config_policy.dart';
+import '../../domain/models.dart';
 import '../../state/app_controller.dart';
 
 class ConfigPage extends StatefulWidget {
@@ -18,8 +19,8 @@ class ConfigPage extends StatefulWidget {
 class _ConfigPageState extends State<ConfigPage> {
   late final TextEditingController _advanced;
   late final TextEditingController _custom;
-  bool _customEnabled = false;
-  int _tab = 0;
+  late AdvancedConfigMode _mode;
+  bool _saving = false;
   bool _initialized = false;
 
   @override
@@ -27,15 +28,15 @@ class _ConfigPageState extends State<ConfigPage> {
     super.didChangeDependencies();
     if (_initialized) return;
     _initialized = true;
-    final controller = AppScope.read(context);
+    final snapshot = AppScope.read(context).snapshot;
+    final advancedJson = snapshot.advancedJsonDraft;
     _advanced = TextEditingController(
-      text: controller.snapshot.advancedJson.isEmpty
+      text: advancedJson.isEmpty
           ? '{\n  \n}'
-          : const JsonEncoder.withIndent('  ')
-                .convert(controller.snapshot.advancedJson),
+          : const JsonEncoder.withIndent('  ').convert(advancedJson),
     );
-    _custom = TextEditingController(text: controller.snapshot.customConfig);
-    _customEnabled = controller.snapshot.useCustomConfig;
+    _custom = TextEditingController(text: snapshot.customConfig);
+    _mode = snapshot.advancedConfigMode;
   }
 
   @override
@@ -48,95 +49,56 @@ class _ConfigPageState extends State<ConfigPage> {
   @override
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
-    final theme = Theme.of(context);
-    final isCustom = _tab == 1;
+    final isCustom = _mode == AdvancedConfigMode.override;
     final editor = isCustom ? _custom : _advanced;
     return HeaderScaffold(
-      title: const Text('高级配置'),
+      title: const FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: AlignmentDirectional.centerStart,
+        child: Text('高级配置', maxLines: 1),
+      ),
+      actions: [
+        SlidingSegmentedControl<AdvancedConfigMode>(
+          width: 144,
+          segments: const [
+            SlidingSegmentOption(value: AdvancedConfigMode.off, label: '关闭'),
+            SlidingSegmentOption(
+              value: AdvancedConfigMode.extension,
+              label: '扩展',
+            ),
+            SlidingSegmentOption(
+              value: AdvancedConfigMode.override,
+              label: '覆盖',
+            ),
+          ],
+          selected: _mode,
+          onChanged: _saving ? null : (value) => setState(() => _mode = value),
+        ),
+      ],
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'save-advanced-config',
+        onPressed: controller.busy || _saving ? null : () => _save(controller),
+        icon: const Icon(Icons.save_outlined),
+        label: const Text('保存并应用'),
+      ),
       maxContentWidth: 980,
       scrollsBehindHeader: false,
       fadeTail: 8,
-      body: (_) => Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.fromLTRB(24, 16, 24, 16),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 980),
-                child: SlidingSegmentedControl<int>(
-                  width: double.infinity,
-                  height: 48,
-                  segments: const [
-                    SlidingSegmentOption(
-                      value: 0,
-                      label: 'JSON 扩展',
-                      icon: Icons.merge_type_rounded,
-                    ),
-                    SlidingSegmentOption(
-                      value: 1,
-                      label: '自定义配置',
-                      icon: Icons.data_object_rounded,
-                    ),
-                  ],
-                  selected: _tab,
-                  onChanged: (value) => setState(() => _tab = value),
-                ),
-              ),
-            ),
+      body: (_) => Padding(
+        padding: EdgeInsets.fromLTRB(
+          24,
+          16,
+          24,
+          88 + MediaQuery.paddingOf(context).bottom,
+        ),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 980),
+            child: _mode == AdvancedConfigMode.off
+                ? const Text('使用应用生成的配置')
+                : _buildEditor(controller, editor, isCustom: isCustom),
           ),
-          Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 980),
-                  child: _buildEditor(controller, editor, isCustom: isCustom),
-                ),
-              ),
-            ),
-          ),
-          Container(
-            padding: const EdgeInsets.fromLTRB(24, 12, 24, 12),
-            color: theme.colorScheme.surfaceContainer,
-            child: SafeArea(
-              top: false,
-              child: Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 980),
-                  child: Row(
-                    children: [
-                      if (isCustom) ...[
-                        Expanded(
-                          child: Text(
-                            '启用完整配置',
-                            style: theme.textTheme.bodySmall,
-                          ),
-                        ),
-                        Switch(
-                          value: _customEnabled,
-                          onChanged: controller.busy
-                              ? null
-                              : (value) => _saveCustom(controller, value),
-                        ),
-                        const SizedBox(width: 12),
-                      ] else
-                        const Spacer(),
-                      FilledButton.icon(
-                        onPressed: controller.busy
-                            ? null
-                            : isCustom
-                            ? () => _saveCustom(controller, _customEnabled)
-                            : () => _saveAdvanced(controller),
-                        icon: const Icon(Icons.save_outlined),
-                        label: const Text('保存并应用'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -149,82 +111,100 @@ class _ConfigPageState extends State<ConfigPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton.icon(
-              onPressed: () => _prettyPrint(editor),
-              icon: const Icon(Icons.format_align_left_rounded),
-              label: const Text('格式化'),
-            ),
-            OutlinedButton.icon(
-              onPressed: () => _validateJson(editor),
-              icon: const Icon(Icons.rule_rounded),
-              label: const Text('校验'),
-            ),
-            if (isCustom)
-              OutlinedButton.icon(
-                onPressed: () => _loadGenerated(controller),
-                icon: const Icon(Icons.auto_fix_high_rounded),
-                label: const Text('载入当前生成配置'),
-              ),
-          ],
-        ),
+        _buildEditorActions(controller, editor, isCustom: isCustom),
         const SizedBox(height: 12),
-        TextField(
-          key: ValueKey(isCustom),
-          controller: editor,
-          minLines: 22,
-          maxLines: 34,
-          style: const TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 12,
-            height: 1.45,
-          ),
-          decoration: InputDecoration(
-            labelText: isCustom ? '完整 sing-box 配置（JSON）' : '高级 JSON 扩展',
-            alignLabelWithHint: true,
-            hintText: '{\n  "inbounds": [],\n  "outbounds": []\n}',
+        Expanded(
+          child: TextField(
+            key: ValueKey(isCustom),
+            controller: editor,
+            readOnly: _saving,
+            expands: true,
+            maxLines: null,
+            textAlignVertical: TextAlignVertical.top,
+            style: const TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              height: 1.45,
+            ),
+            decoration: InputDecoration(
+              labelText: isCustom ? '完整 sing-box 配置（JSON）' : '高级 JSON 扩展',
+              alignLabelWithHint: true,
+              hintText: '{\n  "inbounds": [],\n  "outbounds": []\n}',
+            ),
           ),
         ),
       ],
     );
   }
 
-  Future<void> _saveAdvanced(AppController controller) async {
-    try {
-      final decoded = jsonDecode(_advanced.text);
-      if (decoded is! Map) throw const FormatException('根节点必须是 JSON 对象');
-      final map = Map<String, dynamic>.from(decoded);
-      final violations = ConfigPolicy.validate(map);
-      if (violations.isNotEmpty) {
-        _showError('包含被禁止的设置：${violations.map((e) => e.message).join('；')}');
-        return;
-      }
-      await controller.saveAdvancedJson(map);
-      if (mounted) _showInfo('高级配置已保存并应用');
-    } catch (e) {
-      _showError('JSON 无效：$e');
-    }
+  Widget _buildEditorActions(
+    AppController controller,
+    TextEditingController editor, {
+    required bool isCustom,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final showIcons =
+            constraints.maxWidth >= MediaQuery.textScalerOf(context).scale(300);
+        final style = OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 44),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          iconSize: 16,
+        );
+        Widget button(String label, IconData icon, VoidCallback onPressed) {
+          return OutlinedButton.icon(
+            style: style,
+            onPressed: _saving ? null : onPressed,
+            icon: showIcons ? Icon(icon) : null,
+            label: Text(label),
+          );
+        }
+
+        return Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            button(
+              '格式化',
+              Icons.format_align_left_rounded,
+              () => _prettyPrint(editor),
+            ),
+            button('校验', Icons.rule_rounded, () => _validateJson(editor)),
+            if (isCustom)
+              button(
+                '载入当前配置',
+                Icons.auto_fix_high_rounded,
+                () => _loadGenerated(controller),
+              ),
+          ],
+        );
+      },
+    );
   }
 
-  Future<void> _saveCustom(AppController controller, bool enabled) async {
+  Future<void> _save(AppController controller) async {
+    final mode = _mode;
+    final text = switch (mode) {
+      AdvancedConfigMode.extension => _advanced.text,
+      AdvancedConfigMode.override => _custom.text,
+      AdvancedConfigMode.off => '',
+    };
+    setState(() => _saving = true);
     try {
-      final violations = ConfigPolicy.validateText(_custom.text.trim());
-      if (violations.isNotEmpty) {
-        _showError('配置被拒绝：${violations.map((e) => e.message).join('；')}');
-        return;
+      await controller.saveAdvancedConfig(mode, text);
+      if (mounted) {
+        _showInfo(switch (mode) {
+          AdvancedConfigMode.extension => '已应用高级 JSON 扩展',
+          AdvancedConfigMode.override => '已应用完整配置',
+          AdvancedConfigMode.off => '已关闭高级配置',
+        });
       }
-      if (enabled && _custom.text.trim().isEmpty) {
-        _showError('请先填写完整配置');
-        return;
-      }
-      setState(() => _customEnabled = enabled);
-      await controller.setCustomConfig(_custom.text, enabled);
-      if (mounted) _showInfo(enabled ? '已启用完整自定义配置' : '已恢复由 NekoProxy 管理的配置');
-    } catch (e) {
-      _showError('$e');
+    } on FormatException catch (error) {
+      if (mounted) _showError(error.message);
+    } catch (error) {
+      if (mounted) _showError('保存失败：$error');
+    } finally {
+      if (mounted) setState(() => _saving = false);
     }
   }
 
@@ -258,12 +238,17 @@ class _ConfigPageState extends State<ConfigPage> {
     final previousText = _custom.text;
     try {
       final compiled = await controller.compileForExport();
-      if (!mounted || _custom.text != previousText) return;
+      if (!mounted ||
+          _saving ||
+          _mode != AdvancedConfigMode.override ||
+          _custom.text != previousText) {
+        return;
+      }
       setState(() {
         _custom.text = const JsonEncoder.withIndent('  ')
             .convert(compiled.redactedJson);
       });
-      _showInfo('已载入当前生成配置。请检查后再启用完整配置。');
+      _showInfo('已载入当前配置。请检查后保存并应用。');
     } catch (e) {
       if (!mounted) return;
       _showError('$e');

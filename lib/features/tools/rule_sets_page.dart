@@ -12,7 +12,6 @@ class RuleSetsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = AppScope.of(context);
     final status = controller.ruleSetStatus;
-    final theme = Theme.of(context);
     return HeaderScaffold(
       title: const Text('规则集'),
       body: (headerInset) => SingleChildScrollView(
@@ -60,54 +59,35 @@ class RuleSetsPage extends StatelessWidget {
                     ],
                   ),
                 ),
-                const SizedBox(height: 16),
-                SectionCard(
-                  title: '同步',
-                  icon: Icons.sync_rounded,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        '从 v2fly/domain-list-community 与 v2fly/geoip 获取最新发布版本。'
-                        '更新写入用户数据目录，重新连接后加载。',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
-                        ),
+                const SizedBox(height: 20),
+                OverflowBar(
+                  alignment: MainAxisAlignment.end,
+                  overflowAlignment: OverflowBarAlignment.end,
+                  spacing: 12,
+                  overflowSpacing: 8,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: controller.updatingRuleSets
+                          ? null
+                          : controller.updateRuleSets,
+                      icon: controller.updatingRuleSets
+                          ? const SizedBox.square(
+                              dimension: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.sync_rounded),
+                      label: Text(
+                        controller.updatingRuleSets ? '正在检查…' : '检查更新',
                       ),
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: controller.updatingRuleSets
-                                  ? null
-                                  : controller.updateRuleSets,
-                              icon: controller.updatingRuleSets
-                                  ? const SizedBox(
-                                      width: 16,
-                                      height: 16,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(Icons.sync_rounded),
-                              label: Text(
-                                controller.updatingRuleSets ? '正在检查…' : '检查更新',
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          OutlinedButton.icon(
-                            onPressed: controller.updatingRuleSets
-                                ? null
-                                : () => _confirmReset(context, controller),
-                            icon: const Icon(Icons.restore_rounded),
-                            label: const Text('恢复内置'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: controller.updatingRuleSets
+                          ? null
+                          : () => _confirmReset(context, controller),
+                      icon: const Icon(Icons.restore_rounded),
+                      label: const Text('恢复内置'),
+                    ),
+                  ],
                 ),
               ],
             ),

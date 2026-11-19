@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -8,9 +9,141 @@ import 'package:nekoproxy/app/widgets.dart';
 import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/features/rules/rules_page.dart';
+import 'package:nekoproxy/runtime/runtime_client.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
+  testWidgets('包名匹配可搜索并批量选择应用，确认后填入规则草稿', (tester) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 820);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final controller = _AndroidRulesController()..storage = _Storage();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const RulesPage()),
+      ),
+    );
+    await tester.tap(find.text('应用过滤'));
+    await tester.pumpAndSettle();
+    expect(find.text('VPN 接管范围'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('添加规则'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField).first, '我的应用');
+    await tester.tap(find.byType(DropdownButtonFormField<RuleKind>));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('包名').last);
+    await tester.tap(find.text('包名').last);
+    await tester.pumpAndSettle();
+
+    final content = find.byType(TextField).at(1);
+    await tester.enterText(content, 'app.manual');
+    await tester.tap(find.byTooltip('选择应用'));
+    await tester.pumpAndSettle();
+    final picker = find.widgetWithText(AlertDialog, '选择应用');
+    final search = find.descendant(
+      of: picker,
+      matching: find.widgetWithText(TextField, '搜索应用名或包名'),
+    );
+    await tester.tap(find.text('全选'));
+    await tester.pumpAndSettle();
+    expect(find.text('已选 3 个'), findsOneWidget);
+    await tester.enterText(search, '  APPROVAL  ');
+    await tester.pumpAndSettle();
+    expect(find.text('Approval'), findsOneWidget);
+    expect(find.text('Camera'), findsNothing);
+    await tester.tap(find.text('反选结果'));
+    await tester.pumpAndSettle();
+    expect(find.text('已选 2 个'), findsOneWidget);
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isFalse,
+    );
+
+    await tester.enterText(search, 'APP.REVIEW');
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('全选结果'));
+    await tester.pumpAndSettle();
+    expect(find.text('已选 3 个'), findsOneWidget);
+    await tester.tap(find.descendant(of: picker, matching: find.text('取消')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(content).controller?.text, 'app.manual');
+
+    await tester.tap(find.byTooltip('选择应用'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Camera'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(content).controller?.text,
+      'app.manual\napp.camera',
+    );
+    expect(
+      controller.snapshot.rules.any((rule) => rule.name == '我的应用'),
+      isFalse,
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    final rule = controller.snapshot.rules.singleWhere(
+      (rule) => rule.name == '我的应用',
+    );
+    expect(rule.kind, RuleKind.packageName);
+    expect(splitRuleValues(rule.value), ['app.manual', 'app.camera']);
+    expect(controller.settings.perAppMode, PerAppMode.off);
+    expect(controller.settings.perAppPackages, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('组合规则的应用选择只更新对应条件', (tester) async {
+    final rule = RoutingRule(
+      id: 'app-and-domain',
+      name: '应用与域名',
+      kind: RuleKind.packageName,
+      value: 'app.camera',
+      target: RuleTarget.proxy,
+      logic: RuleLogic.and,
+      conditions: [
+        RuleCondition(kind: RuleKind.packageName, value: 'app.camera'),
+        RuleCondition(kind: RuleKind.domainSuffix, value: 'example.com'),
+      ],
+    );
+    final controller = _AndroidRulesController()
+      ..storage = _Storage()
+      ..snapshot.rules = [rule];
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const RulesPage()),
+      ),
+    );
+    await tester.tap(
+      find.descendant(
+        of: find.byKey(ValueKey(rule.id)),
+        matching: find.byTooltip('编辑规则'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('选择应用'));
+    await tester.pumpAndSettle();
+    final camera = find.widgetWithText(CheckboxListTile, 'Camera');
+    expect(tester.widget<CheckboxListTile>(camera).value, isTrue);
+    await tester.tap(camera);
+    await tester.tap(find.text('Approval'));
+    await tester.tap(find.text('确定'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(
+      controller.snapshot.rules.single.conditions.map((item) => item.value),
+      ['app.review', 'example.com'],
+    );
+  });
+
   testWidgets('私网直连可编辑，核心规则和默认出站始终可见', (tester) async {
     final snapshot = AppSnapshot.empty();
     final enabled = snapshot.rules.first..enabled = true;
@@ -39,6 +172,10 @@ void main() {
     bool isEnabled(Finder row) => tester
         .widget<Switch>(find.descendant(of: row, matching: find.byType(Switch)))
         .value;
+    TextDecoration? titleDecoration(Finder row, String title) => tester
+        .widget<Text>(find.descendant(of: row, matching: find.text(title)))
+        .style
+        ?.decoration;
 
     Future<void> selectMode(String label) async {
       await tester.tap(find.descendant(of: modes, matching: find.text(label)));
@@ -47,6 +184,11 @@ void main() {
 
     expect(isEnabled(firstCard), isTrue);
     expect(isEnabled(secondCard), isFalse);
+    expect(titleDecoration(firstCard, enabled.name), TextDecoration.none);
+    expect(
+      titleDecoration(secondCard, disabled.name),
+      TextDecoration.lineThrough,
+    );
     expect(inactiveLabel, findsNothing);
     expect(find.text('私网地址直连'), findsOneWidget);
     expect(find.text('识别流量协议'), findsOneWidget);
@@ -90,6 +232,10 @@ void main() {
     await tester.tap(toggle);
     await tester.pumpAndSettle();
     expect(enabled.enabled, isTrue);
+    expect(
+      titleDecoration(firstCard, enabled.name),
+      TextDecoration.lineThrough,
+    );
     expect(inactiveLabel, findsNothing);
     expect(isEnabled(secondCard), isFalse);
 
@@ -105,6 +251,7 @@ void main() {
     await selectMode('规则');
     expect(inactiveLabel, findsNothing);
     expect(isEnabled(secondCard), isFalse);
+    expect(titleDecoration(firstCard, enabled.name), TextDecoration.none);
 
     final dragHandle = find.descendant(
       of: firstCard,
@@ -277,4 +424,19 @@ class _Storage extends AppStorage {
 
   @override
   Future<void> save(AppSnapshot snapshot) async {}
+}
+
+class _AndroidRulesController extends AppController {
+  @override
+  bool get isAndroid => true;
+
+  @override
+  Future<List<InstalledApp>> installedApps() async => const [
+    InstalledApp(packageName: 'app.camera', label: 'Camera'),
+    InstalledApp(packageName: 'app.review', label: 'Approval'),
+  ];
+
+  @override
+  Future<Uint8List?> installedAppIcon(String packageName, int size) async =>
+      null;
 }

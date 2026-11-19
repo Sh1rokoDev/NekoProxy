@@ -185,6 +185,7 @@ class AppController extends ChangeNotifier {
   int _pollFailures = 0;
   bool _rebuilding = false;
   bool _changingWireGuard = false;
+  bool _savingAdvancedConfig = false;
   int _lastUpTotal = 0;
   int _lastDownTotal = 0;
   DateTime? _lastTrafficAt;
@@ -504,7 +505,7 @@ class AppController extends ChangeNotifier {
       // Expert mode can save a copy of the generated paths in its JSON.
       isSnapshotReferenced: (directory) =>
           snapshot.customConfig.contains(directory) ||
-          jsonEncode(snapshot.advancedJson).contains(directory),
+          jsonEncode(snapshot.advancedJsonDraft).contains(directory),
     );
     loadWarning = loaded.warning;
     runtime = Platform.isAndroid
@@ -847,7 +848,7 @@ class AppController extends ChangeNotifier {
           compiled.hasTunInbound &&
           settings.perAppMode == PerAppMode.allow &&
           settings.perAppPackages.isEmpty) {
-        throw const RuntimeException('分应用代理已选择“仅所选”，但还没有勾选任何应用。');
+        throw const RuntimeException('应用过滤已选择“代理所选”，但还没有勾选任何应用。');
       }
       await ruleSets.prepareLocalFiles(compiled.localRuleSetPaths);
       _compiled = compiled;
@@ -871,6 +872,10 @@ class AppController extends ChangeNotifier {
       _effectiveTag = null;
       if (compiled.warnings.isNotEmpty) notice = compiled.warnings.first;
       final tunMode = compiled.hasTunInbound;
+      final client = runtime;
+      if (client is AndroidRuntimeClient) {
+        await client.setCpuWakeLockEnabled(settings.cpuWakeLockEnabled);
+      }
       await runtime.start(
         config: compiled.encoded,
         mode: tunMode ? 'tun' : 'normal',
@@ -1000,11 +1005,23 @@ class AppController extends ChangeNotifier {
 
   Future<List<InstalledApp>> installedApps() => runtime.installedApps();
 
+  Future<Uint8List?> installedAppIcon(String packageName, int size) =>
+      runtime.installedAppIcon(packageName, size);
+
   Future<void> updatePerApp(PerAppMode mode, List<String> packages) async {
-    settings.perAppMode = mode;
-    settings.perAppPackages = List.of(packages);
-    await storage.save(snapshot);
-    notifyListeners();
+    final current = settings;
+    final previousMode = current.perAppMode;
+    final previousPackages = current.perAppPackages;
+    current.perAppMode = mode;
+    current.perAppPackages = List.of(packages);
+    try {
+      await storage.save(snapshot);
+    } catch (_) {
+      current.perAppMode = previousMode;
+      current.perAppPackages = previousPackages;
+      rethrow;
+    }
+    if (!_disposed) notifyListeners();
   }
 
   Future<void> setSplitMode(SplitMode mode) async {
@@ -1165,7 +1182,7 @@ class AppController extends ChangeNotifier {
         isAndroid &&
         settings.perAppMode == PerAppMode.allow &&
         settings.perAppPackages.isEmpty) {
-      _setError('分应用代理已选择“仅所选”，请先选择应用再开启 VPN。');
+      _setError('应用过滤已选择“代理所选”，请先选择应用再开启 VPN。');
       return;
     }
     final current = settings;
@@ -1258,34 +1275,62 @@ class AppController extends ChangeNotifier {
     if (running) await restartCore();
   }
 
-  Future<void> saveAdvancedJson(Map<String, dynamic> json) async {
-    final probe = Map<String, dynamic>.from(json);
-    final violations = ConfigPolicy.validate(probe);
-    if (violations.isNotEmpty) {
-      _setError(
-        '高级 JSON 包含被禁止的设置：${violations.map((e) => e.message).join('；')}',
-      );
-      return;
+  Future<void> saveAdvancedConfig(AdvancedConfigMode mode, String text) async {
+    if (busy || _rebuilding || _changingWireGuard || _savingAdvancedConfig) {
+      throw const ConfigCompileException('正在应用配置，请稍后重试。');
     }
-    snapshot.advancedJson = json;
-    await storage.save(snapshot);
-    notifyListeners();
-    if (running) await restartCore();
-  }
-
-  Future<void> setCustomConfig(String config, bool useCustom) async {
-    if (useCustom) {
-      final violations = ConfigPolicy.validateText(config);
-      if (violations.isNotEmpty) {
-        _setError('自定义配置被拒绝：${violations.map((e) => e.message).join('；')}');
-        return;
+    Map<String, dynamic> json = const {};
+    if (mode != AdvancedConfigMode.off) {
+      if (mode == AdvancedConfigMode.override && text.trim().isEmpty) {
+        throw const FormatException('请先填写完整配置');
       }
+      final decoded = jsonDecode(text);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('根节点必须是 JSON 对象');
+      }
+      final violations = ConfigPolicy.validate(decoded);
+      if (violations.isNotEmpty) {
+        throw FormatException(
+          '包含被禁止的设置：${violations.map((e) => e.message).join('；')}',
+        );
+      }
+      if (mode == AdvancedConfigMode.override &&
+          decoded['outbounds'] is! List) {
+        throw const FormatException('完整配置必须包含 outbounds 数组');
+      }
+      json = decoded;
     }
-    snapshot.customConfig = config;
-    snapshot.useCustomConfig = useCustom;
-    await storage.save(snapshot);
-    notifyListeners();
-    if (running) await restartCore();
+    final previousAdvancedJson = snapshot.advancedJson;
+    final previousInactiveJson = snapshot.inactiveAdvancedJson;
+    final previousCustomConfig = snapshot.customConfig;
+    final previousUseCustom = snapshot.useCustomConfig;
+    final useExtension = mode == AdvancedConfigMode.extension;
+    final useOverride = mode == AdvancedConfigMode.override;
+    _savingAdvancedConfig = true;
+    try {
+      snapshot
+        ..inactiveAdvancedJson = useExtension
+            ? null
+            : snapshot.advancedJsonDraft
+        ..advancedJson = useExtension ? json : const {}
+        ..customConfig = useOverride ? text : previousCustomConfig
+        ..useCustomConfig = useOverride;
+      try {
+        await storage.save(snapshot);
+      } catch (_) {
+        snapshot
+          ..advancedJson = previousAdvancedJson
+          ..inactiveAdvancedJson = previousInactiveJson
+          ..customConfig = previousCustomConfig
+          ..useCustomConfig = previousUseCustom;
+        rethrow;
+      }
+      if (_disposed) return;
+      notifyListeners();
+      if (running) await restartCore();
+    } finally {
+      _savingAdvancedConfig = false;
+    }
   }
 
   Future<void> verifyConfig() async {
@@ -2349,6 +2394,32 @@ class AppController extends ChangeNotifier {
     snapshot = AppSnapshot.empty();
     await storage.save(snapshot);
     notifyListeners();
+  }
+
+  Future<void> setCpuWakeLockEnabled(bool enabled) async {
+    final client = runtime;
+    if (client is! AndroidRuntimeClient ||
+        settings.cpuWakeLockEnabled == enabled) {
+      return;
+    }
+    final current = settings;
+    current.cpuWakeLockEnabled = enabled;
+    try {
+      await storage.save(snapshot);
+    } catch (error) {
+      if (current.cpuWakeLockEnabled == enabled) {
+        current.cpuWakeLockEnabled = !enabled;
+      }
+      if (!_disposed) _setError('保存 CPU 唤醒锁设置失败：${_friendlyError(error)}');
+      return;
+    }
+    if (_disposed || !identical(current, settings)) return;
+    notifyListeners();
+    try {
+      await client.setCpuWakeLockEnabled(current.cpuWakeLockEnabled);
+    } catch (error) {
+      if (!_disposed) _setError('应用 CPU 唤醒锁设置失败：${_friendlyError(error)}');
+    }
   }
 
   Future<void> saveSettings() async {

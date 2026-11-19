@@ -8,6 +8,7 @@ import '../../app/widgets.dart';
 import '../../domain/config_compiler.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
+import 'installed_apps_dialog.dart';
 import 'split_mode_switch.dart';
 
 class RulesPage extends StatefulWidget {
@@ -59,6 +60,16 @@ class _RulesPageState extends State<RulesPage> {
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    if (controller.isAndroid) ...[
+                      ListTile(
+                        leading: const Icon(Icons.apps_rounded),
+                        title: const Text('应用过滤'),
+                        subtitle: const Text('设置 Android VPN 接管的应用'),
+                        trailing: const Icon(Icons.chevron_right_rounded),
+                        onTap: () => showVpnAppFilter(context, controller),
+                      ),
+                      _ruleDivider,
+                    ],
                     if (preview == null)
                       const ListTile(title: Text('无法预览生效规则，请检查配置')),
                     if (preview?.overridden == true)
@@ -185,6 +196,38 @@ class _RulesPageState extends State<RulesPage> {
       field.text = previous.isEmpty ? selected : '$previous\n$selected';
     }
 
+    Future<void> pickApps(
+      BuildContext context,
+      TextEditingController field,
+    ) async {
+      FocusManager.instance.primaryFocus?.unfocus();
+      final selected = await pickInstalledApps(
+        context,
+        controller,
+        splitRuleValues(field.text),
+      );
+      if (!context.mounted || selected == null) return;
+      field.text = selected.join('\n');
+    }
+
+    Widget? conditionPicker(
+      BuildContext context,
+      RuleKind kind,
+      TextEditingController field,
+    ) => switch (kind) {
+      RuleKind.ruleSet => IconButton(
+        tooltip: '选择规则集',
+        icon: const Icon(Icons.search_rounded),
+        onPressed: () => pickRuleSet(context, field),
+      ),
+      RuleKind.packageName when controller.isAndroid => IconButton(
+        tooltip: '选择应用',
+        icon: const Icon(Icons.apps_rounded),
+        onPressed: () => pickApps(context, field),
+      ),
+      _ => null,
+    };
+
     String? validate() {
       if (name.text.trim().isEmpty) return '请输入规则名称';
       if (logic == RuleLogic.single) {
@@ -219,7 +262,7 @@ class _RulesPageState extends State<RulesPage> {
         builder: (context) => StatefulBuilder(
           builder: (context, setDialogState) {
             final scheme = Theme.of(context).colorScheme;
-            final availableKinds = _availableRuleKinds();
+            final availableKinds = _availableRuleKinds(controller);
             return AlertDialog(
               insetPadding: const EdgeInsets.symmetric(
                 horizontal: 20,
@@ -340,14 +383,11 @@ class _RulesPageState extends State<RulesPage> {
                             decoration: InputDecoration(
                               labelText: '匹配内容',
                               hintText: _ruleKindHint(kind),
-                              suffixIcon: kind == RuleKind.ruleSet
-                                  ? IconButton(
-                                      tooltip: '选择规则集',
-                                      icon: const Icon(Icons.search_rounded),
-                                      onPressed: () =>
-                                          pickRuleSet(context, singleValue),
-                                    )
-                                  : null,
+                              suffixIcon: conditionPicker(
+                                context,
+                                kind,
+                                singleValue,
+                              ),
                             ),
                           ),
                         ],
@@ -408,20 +448,11 @@ class _RulesPageState extends State<RulesPage> {
                                           hintText: _ruleKindHint(
                                             drafts[index].kind,
                                           ),
-                                          suffixIcon:
-                                              drafts[index].kind ==
-                                                  RuleKind.ruleSet
-                                              ? IconButton(
-                                                  tooltip: '选择规则集',
-                                                  icon: const Icon(
-                                                    Icons.search_rounded,
-                                                  ),
-                                                  onPressed: () => pickRuleSet(
-                                                    context,
-                                                    drafts[index].value,
-                                                  ),
-                                                )
-                                              : null,
+                                          suffixIcon: conditionPicker(
+                                            context,
+                                            drafts[index].kind,
+                                            drafts[index].value,
+                                          ),
                                           border: InputBorder.none,
                                           isDense: true,
                                         ),
@@ -642,14 +673,14 @@ class _ConditionDraft {
 
 enum _EditorResult { save, delete }
 
-List<RuleKind> _availableRuleKinds() {
+List<RuleKind> _availableRuleKinds(AppController controller) {
   return RuleKind.values
       .where(
         (value) =>
             (value != RuleKind.processName && value != RuleKind.processPath) ||
             Platform.isWindows,
       )
-      .where((value) => value != RuleKind.packageName || Platform.isAndroid)
+      .where((value) => value != RuleKind.packageName || controller.isAndroid)
       .toList();
 }
 
@@ -793,6 +824,7 @@ class _RuleRow extends StatelessWidget {
     required this.title,
     required this.description,
     this.titleColor,
+    this.titleDecoration,
     this.controls = const [],
     this.onTap,
   });
@@ -802,6 +834,7 @@ class _RuleRow extends StatelessWidget {
   final String title;
   final String description;
   final Color? titleColor;
+  final TextDecoration? titleDecoration;
   final List<Widget> controls;
   final VoidCallback? onTap;
 
@@ -843,6 +876,7 @@ class _RuleRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleSmall?.copyWith(
                         color: titleColor ?? scheme.onSurface,
+                        decoration: titleDecoration,
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -930,6 +964,7 @@ class _EditableRuleRow extends StatelessWidget {
             ),
             title: rule.name,
             titleColor: active ? null : scheme.onSurfaceVariant,
+            titleDecoration: active ? null : TextDecoration.lineThrough,
             description: _rulePreview(rule),
             controls: [
               DecoratedBox(

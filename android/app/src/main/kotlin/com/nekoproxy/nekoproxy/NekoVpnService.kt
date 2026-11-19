@@ -1,5 +1,6 @@
 package com.nekoproxy.nekoproxy
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,6 +12,7 @@ import android.net.VpnService
 import android.net.ConnectivityManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.PowerManager
 import android.util.Log
 import com.nekoproxy.mobile.Engine
 import com.nekoproxy.mobile.Mobile
@@ -55,6 +57,7 @@ class NekoVpnService : VpnService() {
 
         @Volatile
         private var instance: NekoVpnService? = null
+        private var cpuWakeLockEnabled = false
         // A restart must release the old listener before binding the same port.
         private val lifecycle = Executors.newSingleThreadExecutor()
 
@@ -108,6 +111,15 @@ class NekoVpnService : VpnService() {
             // Engine shutdown can block while the TUN reader drains; never wait
             // for it on the caller (main) thread or stopSelf would be skipped.
             stopEngine(current)
+        }
+
+        @Synchronized
+        fun setCpuWakeLockEnabled(enabled: Boolean) {
+            val service = instance
+            if (state == STATE_RUNNING && service != null && !service.destroyed) {
+                service.updateCpuWakeLock(enabled)
+            }
+            cpuWakeLockEnabled = enabled
         }
 
         fun status(): Map<String, Any?> {
@@ -177,6 +189,7 @@ class NekoVpnService : VpnService() {
     }
 
     private var tunInterface: ParcelFileDescriptor? = null
+    private var cpuWakeLock: PowerManager.WakeLock? = null
     private var queuedToken: Int? = null
     @Volatile
     private var usesVpn = false
@@ -270,10 +283,11 @@ class NekoVpnService : VpnService() {
                 if (destroyed || token != startToken) {
                     false
                 } else {
+                    updateNotification(if (useVpn) "VPN 已连接" else "本地代理已启动")
+                    updateCpuWakeLock(cpuWakeLockEnabled)
                     engine = core
                     state = STATE_RUNNING
                     lastError = null
-                    updateNotification(if (useVpn) "VPN 已连接" else "本地代理已启动")
                     true
                 }
             }
@@ -398,6 +412,7 @@ class NekoVpnService : VpnService() {
     private fun fail(message: String) {
         lastError = message
         state = STATE_ERROR
+        updateCpuWakeLock(false)
         val current = engine
         engine = null
         stopEngine(current)
@@ -448,17 +463,19 @@ class NekoVpnService : VpnService() {
 
     override fun onRevoke() {
         if (!usesVpn) return
+        synchronized(Companion) { markStopRequested() }
         stopSelf()
         super.onRevoke()
     }
 
-    fun markStopRequested() {
+    private fun markStopRequested() {
         destroyed = true
+        updateCpuWakeLock(false)
     }
 
     override fun onDestroy() {
         synchronized(Companion) {
-            destroyed = true
+            markStopRequested()
             closeTun()
             if (instance === this) {
                 stopEngine(engine)
@@ -470,6 +487,21 @@ class NekoVpnService : VpnService() {
             }
         }
         super.onDestroy()
+    }
+
+    // The opt-in lock follows the running service and is released on stop or revoke.
+    @SuppressLint("WakelockTimeout")
+    private fun updateCpuWakeLock(enabled: Boolean) {
+        if (!enabled) {
+            cpuWakeLock?.release()
+            cpuWakeLock = null
+        } else if (cpuWakeLock == null) {
+            val manager = getSystemService(PowerManager::class.java)
+            cpuWakeLock = manager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "$packageName:ProxyCpu",
+            ).apply { acquire() }
+        }
     }
 
     private fun updateNotification(text: String) {

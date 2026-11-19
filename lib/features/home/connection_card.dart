@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/proxy_latency_builder.dart';
 import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../services/exit_info_service.dart';
@@ -611,12 +612,6 @@ class _ConnectionInfoStrip extends StatelessWidget {
     final onlyWireGuard = controller.outboundMode == OutboundMode.wireGuard;
     final node = onlyWireGuard ? null : controller.currentNode;
     final wireGuardLatency = onlyWireGuard ? controller.wireGuardLatency : null;
-    final latency = node == null
-        ? wireGuardLatency?.delay
-        : controller.latencies[node.id];
-    final latencyError = node == null
-        ? wireGuardLatency?.error
-        : controller.latencyErrors[node.id];
     final exitError = controller.exitInfoError;
     final exitCell = _ConnectionDataCell(
       label: '出口 IP',
@@ -640,16 +635,28 @@ class _ConnectionInfoStrip extends StatelessWidget {
       label: '运营商',
       value: Text(provider.isEmpty ? '未知' : provider),
     );
-    final latencyCell = _ConnectionDataCell(
-      key: const ValueKey('connection-latency'),
-      label: '节点延迟',
-      value: switch ((latency, latencyError)) {
-        (final int delay, _) => _LatencyValue(latency: delay),
-        (_, final String error) => Tooltip(
-          message: error,
-          child: const Text('测速失败'),
-        ),
-        _ => const Text('未知'),
+    final latencyCell = ProxyLatencyBuilder(
+      controller: controller,
+      nodeId: node?.id,
+      builder: (context) {
+        final latency = node == null
+            ? wireGuardLatency?.delay
+            : controller.latencies[node.id];
+        final latencyError = node == null
+            ? wireGuardLatency?.error
+            : controller.latencyErrors[node.id];
+        return _ConnectionDataCell(
+          key: const ValueKey('connection-latency'),
+          label: '节点延迟',
+          value: switch ((latency, latencyError)) {
+            (final int delay, _) => _LatencyValue(latency: delay),
+            (_, final String error) => Tooltip(
+              message: error,
+              child: const Text('测速失败'),
+            ),
+            _ => const Text('未知'),
+          },
+        );
       },
     );
     return Column(

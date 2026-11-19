@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/proxy_latency_builder.dart';
 import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../domain/node_view.dart';
@@ -76,14 +77,6 @@ class _NodesPageState extends State<NodesPage> {
         snapshot.wireGuardProfiles.any(
           (profile) => profile.id != controller.activeWireGuard?.id,
         );
-    final testProgress = controller.testingAllNodes
-        ? controller.testCompleted / controller.testTotal
-        : null;
-    final testLabel = testProgress != null
-        ? '测速中 ${controller.testCompleted}/${controller.testTotal}'
-        : allTestRequested
-        ? '排队中'
-        : '测速';
     return PageFrame(
       title: '节点',
       titleWidget: _searchOpen
@@ -131,32 +124,47 @@ class _NodesPageState extends State<NodesPage> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           if (hasNodes || hasWireGuardProfiles) ...[
-            FloatingActionButton.extended(
-              heroTag: 'nodes-speed',
-              tooltip: allTestRequested
-                  ? null
-                  : hasInactiveWireGuard
-                  ? '测速当前可用节点'
-                  : '测速所有分组节点',
-              onPressed: allTestRequested
-                  ? null
-                  : () => _startNodeTest(
-                      context,
-                      controller,
-                      controller.showsRuleMode ? snapshot.allNodes : const [],
-                      wireGuardProfiles: snapshot.wireGuardProfiles,
-                    ),
-              icon: allTestRequested
-                  ? SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        value: testProgress,
-                        strokeWidth: 2.2,
-                      ),
-                    )
-                  : const Icon(Icons.speed_rounded),
-              label: Text(testLabel),
+            ValueListenableBuilder<int>(
+              valueListenable: controller.nodeTestProgress,
+              builder: (context, completed, _) {
+                final testing = controller.testingAllNodes;
+                return FloatingActionButton.extended(
+                  heroTag: 'nodes-speed',
+                  tooltip: allTestRequested
+                      ? null
+                      : hasInactiveWireGuard
+                      ? '测速当前可用节点'
+                      : '测速所有分组节点',
+                  onPressed: allTestRequested
+                      ? null
+                      : () => _startNodeTest(
+                          context,
+                          controller,
+                          controller.showsRuleMode
+                              ? snapshot.allNodes
+                              : const [],
+                          wireGuardProfiles: snapshot.wireGuardProfiles,
+                        ),
+                  icon: allTestRequested
+                      ? SizedBox.square(
+                          dimension: 20,
+                          child: CircularProgressIndicator(
+                            value: testing
+                                ? completed / controller.testTotal
+                                : null,
+                            strokeWidth: 2.2,
+                          ),
+                        )
+                      : const Icon(Icons.speed_rounded),
+                  label: Text(
+                    testing
+                        ? '测速中 $completed/${controller.testTotal}'
+                        : allTestRequested
+                        ? '排队中'
+                        : '测速',
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 12),
           ],
@@ -2060,8 +2068,6 @@ class _NodeTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final latency = controller.latencies[node.id];
-    final latencyError = controller.latencyErrors[node.id];
     final testing = controller.isSingleNodeTestRequested(node.id);
     return NodeTile(
       name: node.name,
@@ -2071,7 +2077,15 @@ class _NodeTile extends StatelessWidget {
       onSelect: onSelect,
       footer: Row(
         children: [
-          NodeLatency(delay: latency, error: latencyError, testing: testing),
+          ProxyLatencyBuilder(
+            controller: controller,
+            nodeId: node.id,
+            builder: (context) => NodeLatency(
+              delay: controller.latencies[node.id],
+              error: controller.latencyErrors[node.id],
+              testing: testing,
+            ),
+          ),
           const Spacer(),
           if (node.favorite) ...[
             NodeStatusTooltip(

@@ -118,7 +118,10 @@ class AppController extends ChangeNotifier {
   final Map<ProxyNode, int> _offlineTestDelays = {};
   String? _offlineTestUrl;
   bool testingNodes = false;
-  int testCompleted = 0;
+  final _nodeTestProgress = ValueNotifier<int>(0);
+  int get testCompleted => _nodeTestProgress.value;
+  ValueListenable<int> get nodeTestProgress => _nodeTestProgress;
+  final _proxyLatencyListeners = <String, _ProxyLatencyNotifier>{};
   int testTotal = 0;
   int _testGeneration = 0;
   final _nodeTestRequests =
@@ -364,6 +367,22 @@ class AppController extends ChangeNotifier {
       canQueueNodeTest &&
       !changingWireGuard &&
       (!running || activeWireGuard?.id == profile.id);
+
+  /// Observes intermediate bulk test results for one proxy node.
+  VoidCallback watchProxyLatency(String nodeId, VoidCallback listener) {
+    final notifier = _proxyLatencyListeners.putIfAbsent(
+      nodeId,
+      _ProxyLatencyNotifier.new,
+    );
+    notifier.addListener(listener);
+    return () {
+      notifier.removeListener(listener);
+      if (!notifier.isObserved &&
+          identical(_proxyLatencyListeners[nodeId], notifier)) {
+        _proxyLatencyListeners.remove(nodeId);
+      }
+    };
+  }
 
   ProxyNode? get currentNode {
     return reportedNode ?? snapshot.nodeById(settings.manualNodeId);
@@ -1401,8 +1420,8 @@ class AppController extends ChangeNotifier {
     final offlineDelays = <ProxyNode, int>{};
     final url = settings.advancedOrDefault.urlTestUrl;
     testingNodes = true;
-    testCompleted = 0;
     testTotal = queue.length + additionalTests;
+    _nodeTestProgress.value = 0;
     if (temporary) {
       _temporaryTestRuntime = true;
       busy = true;
@@ -1448,8 +1467,8 @@ class AppController extends ChangeNotifier {
           (compiledTags?.containsKey(node.id) ?? false)) {
         offlineDelays[node] = delay;
       }
-      testCompleted++;
-      notifyListeners();
+      _nodeTestProgress.value++;
+      _proxyLatencyListeners[node.id]?.publish();
     }
 
     final pending = <Future<void>>{};
@@ -1495,8 +1514,8 @@ class AppController extends ChangeNotifier {
     final temporary = !running;
     final url = settings.advancedOrDefault.urlTestUrl;
     testingNodes = true;
-    testCompleted = completed;
     testTotal = completed + profiles.length;
+    _nodeTestProgress.value = completed;
     notifyListeners();
     try {
       if (temporary) await _refreshSystemDns();
@@ -1561,7 +1580,7 @@ class AppController extends ChangeNotifier {
           _saveWireGuardLatency(profile, result, requestError);
         }
         pendingIds.remove(profile.id);
-        testCompleted++;
+        _nodeTestProgress.value++;
         notifyListeners();
       }
     } finally {
@@ -2336,6 +2355,8 @@ class AppController extends ChangeNotifier {
     liveTick.dispose();
     appearanceTick.dispose();
     _connections.dispose();
+    _nodeTestProgress.dispose();
+    _proxyLatencyListeners.clear();
     super.dispose();
   }
 
@@ -2499,6 +2520,12 @@ class AppController extends ChangeNotifier {
     final random = Random().nextInt(1 << 31).toRadixString(36);
     return '$now-$random';
   }
+}
+
+class _ProxyLatencyNotifier extends ChangeNotifier {
+  bool get isObserved => hasListeners;
+
+  void publish() => notifyListeners();
 }
 
 extension _FirstOrNull<T> on Iterable<T> {

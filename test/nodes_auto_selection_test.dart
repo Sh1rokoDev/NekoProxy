@@ -4,10 +4,13 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/app.dart';
 import 'package:nekoproxy/app/app_scope.dart';
+import 'package:nekoproxy/app/navigation_dock.dart';
 import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/config_compiler.dart';
 import 'package:nekoproxy/domain/models.dart';
+import 'package:nekoproxy/features/nodes/node_group_widgets.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
 import 'package:nekoproxy/runtime/runtime_client.dart';
 import 'package:nekoproxy/services/rule_set_manager.dart';
@@ -292,6 +295,60 @@ AllowedIPs = 0.0.0.0/0
       isNotNull,
     );
     expect(controller.latencies, {first.id: 100, second.id: 80});
+  });
+
+  testWidgets('全量测速中局部刷新延迟和进度，结束时按延迟重排', (tester) async {
+    final first = _node('first', '节点甲', group: 'group');
+    final second = _node('second', '节点乙', group: 'group');
+    final third = _node('third', '节点丙', group: 'group');
+    final nodes = [first, second, third];
+    final runtime = _Runtime();
+    final controller = AppController()
+      ..runtime = runtime
+      ..running = true
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(manualNodeId: first.id),
+        subscriptions: [
+          Subscription(
+            id: 'group',
+            name: '测试分组',
+            nodes: nodes,
+            sortMode: NodeSortMode.latency,
+          ),
+        ],
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(NekoProxyApp(controller: controller));
+    final dock = find.byType(NavigationDock);
+    await tester.tap(find.descendant(of: dock, matching: find.text('节点')));
+    await tester.pumpAndSettle();
+    final tiles = find.byType(NodeTile);
+    Iterable<String> names() =>
+        tester.widgetList<NodeTile>(tiles).map((tile) => tile.name);
+
+    await tester.tap(find.widgetWithText(FloatingActionButton, '测速'));
+    await tester.pump();
+    final navigation = tester.widget(dock);
+    final unchangedTile = tester.widget(tiles.last);
+
+    runtime.completeProbe(first.id, delay: 100);
+    await tester.pump();
+    expect(find.text('测速中 1/3'), findsOneWidget);
+    expect(find.text('100ms'), findsOneWidget);
+    expect(find.text('100ms', skipOffstage: false), findsNWidgets(2));
+    expect(tester.widget(dock), same(navigation));
+    expect(tester.widget(tiles.last), same(unchangedTile));
+
+    runtime.completeProbe(third.id);
+    await tester.pump();
+    expect(find.text('测速中 2/3'), findsOneWidget);
+    expect(find.text('失败'), findsOneWidget);
+    expect(names(), [first.name, second.name, third.name]);
+
+    runtime.completeProbe(second.id, delay: 50);
+    await tester.pumpAndSettle();
+    expect(names(), [second.name, first.name, third.name]);
+    expect(find.widgetWithText(FloatingActionButton, '测速'), findsOneWidget);
   });
 
   testWidgets('全量测速包含搜索隐藏的分组，并让所有分组图标持续显示动画', (tester) async {

@@ -136,7 +136,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
     tray.Menu? menu;
     try {
       icon = tray.TrayIcon.create();
-      image = tray.ImageAsset.fromAsset('assets/icons/app_icon.png');
+      image = tray.ImageAsset.fromAsset('assets/icons/tray_icon.png');
       menu = tray.Menu.create();
       if (icon == null || image == null || menu == null) {
         throw StateError('无法创建托盘图标或菜单');

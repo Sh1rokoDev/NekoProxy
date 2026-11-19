@@ -130,6 +130,72 @@ WireGuardProfile _profile(String id) =>
     WireGuardProfile(id: id, name: '隧道 $id', configuration: _configuration);
 
 void main() {
+  for (final axis in Axis.values) {
+    testWidgets('$axis 导航随 sing-box 和 WireGuard 切换伸缩并渐变', (tester) async {
+      final vertical = axis == Axis.vertical;
+      await tester.binding.setSurfaceSize(Size(vertical ? 1024 : 390, 680));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      final controller = _newController(withProxy: true);
+      await controller.saveWireGuardGroup('校园', id: WireGuardGroup.legacy.id);
+      await controller.saveWireGuardProfile(_profile('a'));
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppScope(controller: controller, child: const AppShell()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final dock = find.byType(NavigationDock);
+      Finder tab(String label) =>
+          find.descendant(of: dock, matching: find.text(label));
+      final rules = tab('规则');
+      double extent() {
+        final size = tester.getSize(dock);
+        return vertical ? size.height : size.width;
+      }
+
+      double rulesOpacity() => tester
+          .widget<Opacity>(
+            find
+                .ancestor(
+                  of: rules,
+                  matching: find.descendant(
+                    of: dock,
+                    matching: find.byType(Opacity),
+                  ),
+                )
+                .first,
+          )
+          .opacity;
+
+      final fullExtent = extent();
+      final buttonExtent = vertical ? 58 : 72;
+      final reducedExtent = fullExtent - buttonExtent;
+      expect(fullExtent, 8 + 4 * buttonExtent);
+      await _tap(tester, rules);
+      await controller.selectWireGuard('a');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 70));
+      expect(tester.widget<NavigationDock>(dock).selected, 0);
+      expect(extent(), inExclusiveRange(reducedExtent, fullExtent));
+      expect(rulesOpacity(), inExclusiveRange(0, 1));
+      await tester.tap(rules);
+      expect(tester.widget<NavigationDock>(dock).selected, 0);
+      await tester.pumpAndSettle();
+      expect(extent(), reducedExtent);
+      expect(rules, findsNothing);
+
+      await controller.selectNode('b');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 70));
+      expect(extent(), inExclusiveRange(reducedExtent, fullExtent));
+      expect(rulesOpacity(), inExclusiveRange(0, 1));
+      await tester.pumpAndSettle();
+      expect(extent(), fullExtent);
+      expect(rulesOpacity(), 1);
+    });
+  }
+
   test('WireGuard QR image decodes and validates as a configuration', () async {
     final matrix = Encoder.encode(
       _configuration,

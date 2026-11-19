@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app.dart';
 import 'package:nekoproxy/app/navigation_dock.dart';
+import 'package:nekoproxy/app/sliding_segmented_control.dart';
 import 'package:nekoproxy/features/home/home_page.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
 import 'package:nekoproxy/features/rules/rules_page.dart';
@@ -9,6 +10,53 @@ import 'package:nekoproxy/features/tools/tools_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
+  testWidgets('底栏随按钮数量增宽，空间不足时均分可用宽度', (tester) async {
+    const labels = ['首页', '节点', '规则', '更多', '设置'];
+
+    Future<void> pumpDock(int count, double availableWidth) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Center(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxWidth: availableWidth),
+              child: NavigationDock(
+                axis: Axis.horizontal,
+                destinations: [
+                  for (var index = 0; index < count; index++)
+                    SlidingSegmentOption(value: index, label: labels[index]),
+                ],
+                selected: 0,
+                onSelected: (_) {},
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    double buttonWidth(int index) =>
+        tester.getCenter(_destination(labels[index + 1])).dx -
+        tester.getCenter(_destination(labels[index])).dx;
+
+    await pumpDock(4, 500);
+    final fourButtonDock = tester.getSize(_navigation).width;
+    final maxButtonWidth = buttonWidth(0);
+
+    await pumpDock(3, 500);
+    expect(tester.getSize(_navigation).width, fourButtonDock - maxButtonWidth);
+    expect(buttonWidth(0), maxButtonWidth);
+
+    await pumpDock(5, 500);
+    expect(tester.getSize(_navigation).width, fourButtonDock + maxButtonWidth);
+    expect(buttonWidth(3), maxButtonWidth);
+
+    await pumpDock(5, 320);
+    expect(tester.getSize(_navigation).width, 320);
+    expect(buttonWidth(0), lessThan(maxButtonWidth));
+    expect(buttonWidth(3), closeTo(buttonWidth(0), 0.01));
+  });
+
   testWidgets('窄屏内容从底栏后方滚过，列表末项和添加规则入口不被遮挡', (tester) async {
     const size = Size(390, 680);
     tester.view.devicePixelRatio = 1;

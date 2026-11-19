@@ -1,5 +1,7 @@
 import 'dart:math' as math;
+import 'dart:ui' show lerpDouble;
 
+import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
@@ -31,6 +33,7 @@ class SlidingSegmentedControl<T> extends StatefulWidget {
     this.height = 42,
     this.axis = Axis.horizontal,
     this.navigation = false,
+    this.maxSegmentExtent,
   });
 
   final List<SlidingSegmentOption<T>> segments;
@@ -39,6 +42,9 @@ class SlidingSegmentedControl<T> extends StatefulWidget {
   final double width;
   final double height;
   final Axis axis;
+
+  /// Sizes the track from its segments and animates changes to membership.
+  final double? maxSegmentExtent;
 
   /// Uses stacked labels and the larger navigation surface.
   final bool navigation;
@@ -79,6 +85,21 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
   );
   late final Ticker _ticker = createTicker(_tick);
   late final Listenable _motion = Listenable.merge([_position, _lift]);
+  late final _membership = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 200),
+    value: 1,
+  );
+  late List<SlidingSegmentOption<T>> _layoutSegments = widget.segments;
+  Map<T, double> _startWeights = {};
+  double get _membershipProgress =>
+      Curves.easeOutCubic.transform(_membership.value);
+
+  double _weight(T value, bool active) {
+    final start = _startWeights[value] ?? 0;
+    return start + ((active ? 1 : 0) - start) * _membershipProgress;
+  }
+
   SpringSimulation? _flight;
   double _target = 0;
   double _velocity = 0;
@@ -114,14 +135,53 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_reduced) _resetMotion();
+    if (_reduced) {
+      _membership.value = 1;
+      _resetMotion();
+    }
   }
 
   @override
   void didUpdateWidget(SlidingSegmentedControl<T> oldWidget) {
     super.didUpdateWidget(oldWidget);
+    final membershipChanged = !listEquals(
+      oldWidget.segments.map((segment) => segment.value).toList(),
+      widget.segments.map((segment) => segment.value).toList(),
+    );
+    if (widget.maxSegmentExtent != null && membershipChanged) {
+      final previous = oldWidget.segments
+          .map((segment) => segment.value)
+          .toSet();
+      final current = widget.segments.map((segment) => segment.value).toSet();
+      final oldLayout = _membership.isAnimating
+          ? _layoutSegments
+          : oldWidget.segments;
+      _startWeights = {
+        for (final segment in oldLayout)
+          segment.value: _weight(
+            segment.value,
+            previous.contains(segment.value),
+          ),
+      };
+      _layoutSegments = [...widget.segments];
+      // Retain departing items at their old position while they collapse.
+      for (final (index, segment) in oldLayout.indexed) {
+        if (!current.contains(segment.value) &&
+            _startWeights[segment.value]! > 0) {
+          _layoutSegments.insert(
+            math.min(index, _layoutSegments.length),
+            segment,
+          );
+        }
+      }
+      if (_reduced || widget.axis != oldWidget.axis) {
+        _membership.value = 1;
+      } else {
+        _membership.forward(from: 0);
+      }
+    }
     if (widget.axis != oldWidget.axis ||
-        widget.segments.length != oldWidget.segments.length ||
+        membershipChanged ||
         (widget.onChanged == null && _pointer != null)) {
       _pointer = null;
       _tracker = null;
@@ -143,6 +203,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
 
   @override
   void dispose() {
+    _membership.dispose();
     _ticker.dispose();
     _position.dispose();
     _lift.dispose();
@@ -223,7 +284,12 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
     return edge + excess * 0.36 / (0.65 + excess.abs());
   }
 
-  void _downOn(PointerDownEvent event, double coordinate, double pitch) {
+  void _downOn(
+    PointerDownEvent event,
+    double coordinate,
+    double pitch, {
+    int? slotIndex,
+  }) {
     if (widget.onChanged == null ||
         _pointer != null ||
         event.buttons != kPrimaryButton) {
@@ -236,7 +302,8 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
     _crossDown = _crossCoordinate(event.localPosition);
     _dragging = false;
     _landing = false;
-    final index = _indexAt(coordinate, pitch).round().clamp(0, _last);
+    final index =
+        slotIndex ?? _indexAt(coordinate, pitch).round().clamp(0, _last);
     _preview = index;
     if (!_reduced) {
       _lift.animateWith(
@@ -305,145 +372,249 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => RepaintBoundary(
+    child: ListenableBuilder(
+      listenable: _membership,
+      builder: (context, _) => _buildTrack(context),
+    ),
+  );
+
+  Widget _buildTrack(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final rtl = !_vertical && Directionality.of(context) == TextDirection.rtl;
-    if (widget.segments.isEmpty) return const SizedBox.shrink();
+    final active = {
+      for (final (index, segment) in widget.segments.indexed)
+        segment.value: index,
+    };
+    final layout = _membership.isAnimating ? _layoutSegments : widget.segments;
+    if (layout.isEmpty) return const SizedBox.shrink();
+    final weights = [
+      for (final segment in layout)
+        _membership.isAnimating
+            ? _weight(segment.value, active.containsKey(segment.value))
+            : 1.0,
+    ];
+    final totalWeight = weights.fold(0.0, (sum, weight) => sum + weight);
+    final maxExtent = widget.maxSegmentExtent;
+    final preferredSpan = maxExtent == null
+        ? null
+        : 2 * _inset + totalWeight * maxExtent;
     final navigation = widget.navigation;
     final axisGrowth = navigation ? 16.0 : 8.0;
-    return RepaintBoundary(
-      child: SizedBox(
-        width: widget.width,
-        height: widget.height,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final size = constraints.biggest;
-            final span = _vertical ? size.height : size.width;
-            final cross = _vertical ? size.width : size.height;
-            final pitch =
-                math.max(0.0, span - 2 * _inset) / widget.segments.length;
-            return Listener(
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: (event) => _downOn(
-                event,
-                _coordinate(event.localPosition, size, rtl),
-                pitch,
-              ),
-              onPointerMove: (event) => _movePointer(
-                event,
-                _coordinate(event.localPosition, size, rtl),
-                pitch,
-              ),
-              onPointerUp: (event) => _end(
-                event,
-                _coordinate(event.localPosition, size, rtl),
-                pitch,
-                rtl,
-              ),
-              onPointerCancel: (event) => _end(event, 0, pitch, rtl),
-              child: AnimatedBuilder(
-                animation: _motion,
-                builder: (context, _) {
-                  final lift = _lift.value.clamp(0.0, 1.15);
-                  final position = _position.value;
-                  final stretch = (_velocity.abs() / 40).clamp(0.0, 0.16);
-                  final overrun =
-                      position - position.clamp(0.0, _last.toDouble());
-                  final pull =
-                      (_reduced ? 0.0 : overrun * pitch * 0.35) *
-                      (rtl ? -1 : 1);
-                  final axisScale =
-                      1 +
-                      (axisGrowth * lift + pull.abs() * 0.5) /
-                          math.max(span, 1);
-                  final crossScale = 1 + 0.045 * lift;
-                  // At rest the end segments share the same inset on both axes.
-                  final extent = (pitch + axisGrowth * lift) * (1 + stretch);
-                  final thickness = math.max(
-                    0.0,
-                    (cross - 2 * _inset + _crossGrowth * lift) *
-                        (1 - 0.75 * stretch),
-                  );
-                  final center = _inset + pitch * (position + 0.5);
-                  final along = rtl ? span - center : center;
-                  final lens = Rect.fromCenter(
-                    center: _vertical
-                        ? Offset(cross / 2, along)
-                        : Offset(along, cross / 2),
-                    width: _vertical ? thickness : extent,
-                    height: _vertical ? extent : thickness,
-                  );
-                  return Transform.translate(
-                    offset: _vertical ? Offset(0, pull) : Offset(pull, 0),
+    return SizedBox(
+      width: _vertical ? widget.width : preferredSpan ?? widget.width,
+      height: _vertical ? preferredSpan ?? widget.height : widget.height,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final size = constraints.biggest;
+          final span = _vertical ? size.height : size.width;
+          final cross = _vertical ? size.width : size.height;
+          final pitch = totalWeight == 0
+              ? 0.0
+              : math.max(0.0, span - 2 * _inset) / totalWeight;
+          final slots = <({double start, double extent, int? index})>[];
+          final activeSlots = List<int>.filled(active.length, 0);
+          var start = _inset;
+          for (final (slot, segment) in layout.indexed) {
+            final index = active[segment.value];
+            final extent = pitch * weights[slot];
+            slots.add((start: start, extent: extent, index: index));
+            if (index != null) activeSlots[index] = slot;
+            start += extent;
+          }
+          double centerAt(int index) {
+            final slot = slots[activeSlots[index]];
+            return slot.start + slot.extent / 2;
+          }
+
+          // Map the animated centers to the uniform coordinates used by the
+          // drag spring. The same slots drive rendering and pointer input.
+          double pointerCoordinate(PointerEvent event) {
+            final coordinate = _coordinate(event.localPosition, size, rtl);
+            if (!_membership.isAnimating || activeSlots.isEmpty) {
+              return coordinate;
+            }
+            for (var index = 1; index < activeSlots.length; index++) {
+              final next = centerAt(index);
+              if (coordinate < next && coordinate >= centerAt(index - 1)) {
+                final previous = centerAt(index - 1);
+                return _inset +
+                    pitch *
+                        (index -
+                            0.5 +
+                            (coordinate - previous) / (next - previous));
+              }
+            }
+            final edge = coordinate < centerAt(0) ? 0 : activeSlots.length - 1;
+            return _inset + pitch * (edge + 0.5) + coordinate - centerAt(edge);
+          }
+
+          return Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (event) {
+              if (activeSlots.isEmpty) return;
+              if (_membership.isAnimating) {
+                final coordinate = _coordinate(event.localPosition, size, rtl);
+                for (final slot in slots) {
+                  if (coordinate >= slot.start &&
+                      coordinate < slot.start + slot.extent) {
+                    final index = slot.index;
+                    if (index != null) {
+                      _downOn(
+                        event,
+                        pointerCoordinate(event),
+                        pitch,
+                        slotIndex: index,
+                      );
+                    }
+                    return;
+                  }
+                }
+              }
+              _downOn(event, pointerCoordinate(event), pitch);
+            },
+            onPointerMove: (event) =>
+                _movePointer(event, pointerCoordinate(event), pitch),
+            onPointerUp: (event) =>
+                _end(event, pointerCoordinate(event), pitch, rtl),
+            onPointerCancel: (event) => _end(event, 0, pitch, rtl),
+            child: AnimatedBuilder(
+              animation: _motion,
+              builder: (context, _) {
+                final lift = _lift.value.clamp(0.0, 1.15);
+                final position = _position.value;
+                final stretch = (_velocity.abs() / 40).clamp(0.0, 0.16);
+                final clampedPosition = position.clamp(
+                  0.0,
+                  math.max(0, _last).toDouble(),
+                );
+                final overrun = position - clampedPosition;
+                final pull =
+                    (_reduced ? 0.0 : overrun * pitch * 0.35) * (rtl ? -1 : 1);
+                final axisScale =
+                    1 +
+                    (axisGrowth * lift + pull.abs() * 0.5) / math.max(span, 1);
+                final crossScale = 1 + 0.045 * lift;
+                // At rest the end segments share the same inset on both axes.
+                final lower = clampedPosition.floor();
+                final upper = clampedPosition.ceil();
+                final fraction = clampedPosition - lower;
+                final selectedExtent = activeSlots.isEmpty
+                    ? 0.0
+                    : lerpDouble(
+                        slots[activeSlots[lower]].extent,
+                        slots[activeSlots[upper]].extent,
+                        fraction,
+                      )!;
+                final extent =
+                    (selectedExtent + axisGrowth * lift) * (1 + stretch);
+                final thickness = math.max(
+                  0.0,
+                  (cross - 2 * _inset + _crossGrowth * lift) *
+                      (1 - 0.75 * stretch),
+                );
+                final center = activeSlots.isEmpty
+                    ? _inset
+                    : lerpDouble(centerAt(lower), centerAt(upper), fraction)! +
+                          overrun * pitch;
+                final along = rtl ? span - center : center;
+                final lens = Rect.fromCenter(
+                  center: _vertical
+                      ? Offset(cross / 2, along)
+                      : Offset(along, cross / 2),
+                  width: _vertical ? thickness : extent,
+                  height: _vertical ? extent : thickness,
+                );
+                return Transform.translate(
+                  offset: _vertical ? Offset(0, pull) : Offset(pull, 0),
+                  transformHitTests: false,
+                  child: Transform.scale(
+                    scaleX: _vertical ? crossScale : axisScale,
+                    scaleY: _vertical ? axisScale : crossScale,
                     transformHitTests: false,
-                    child: Transform.scale(
-                      scaleX: _vertical ? crossScale : axisScale,
-                      scaleY: _vertical ? axisScale : crossScale,
-                      transformHitTests: false,
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: scheme.surfaceContainerHigh,
-                          borderRadius: _trackRadius,
-                          border: Border.all(
-                            color: scheme.outlineVariant.withValues(
-                              alpha: 0.65,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: scheme.surfaceContainerHigh,
+                        borderRadius: _trackRadius,
+                        border: Border.all(
+                          color: scheme.outlineVariant.withValues(alpha: 0.65),
+                        ),
+                      ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        clipBehavior: Clip.none,
+                        children: [
+                          Positioned.fromRect(
+                            key: const ValueKey('segment-highlight'),
+                            rect: lens,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: !navigation
+                                    ? scheme.secondaryContainer
+                                    : Color.lerp(
+                                        scheme.surfaceContainerHighest,
+                                        scheme.secondaryContainer,
+                                        lift.clamp(0.0, 1.0) * 0.45,
+                                      ),
+                                borderRadius: _selectionRadius,
+                              ),
                             ),
                           ),
-                        ),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          clipBehavior: Clip.none,
-                          children: [
+                          for (final (slot, destination) in layout.indexed)
                             Positioned.fromRect(
-                              key: const ValueKey('segment-highlight'),
-                              rect: lens,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: !navigation
-                                      ? scheme.secondaryContainer
-                                      : Color.lerp(
-                                          scheme.surfaceContainerHighest,
-                                          scheme.secondaryContainer,
-                                          lift.clamp(0.0, 1.0) * 0.45,
-                                        ),
-                                  borderRadius: _selectionRadius,
+                              key: ValueKey((destination.value,)),
+                              rect: Rect.fromLTWH(
+                                _vertical
+                                    ? _inset
+                                    : rtl
+                                    ? span -
+                                          slots[slot].start -
+                                          slots[slot].extent
+                                    : slots[slot].start,
+                                _vertical ? slots[slot].start : _inset,
+                                _vertical
+                                    ? math.max(0, cross - 2 * _inset)
+                                    : slots[slot].extent,
+                                _vertical
+                                    ? slots[slot].extent
+                                    : math.max(0, cross - 2 * _inset),
+                              ),
+                              child: ExcludeSemantics(
+                                excluding: slots[slot].index == null,
+                                child: Opacity(
+                                  opacity: weights[slot],
+                                  child: _SegmentLabel(
+                                    destination: destination,
+                                    selected:
+                                        _selectedIndex == slots[slot].index,
+                                    navigation: navigation,
+                                    emphasis:
+                                        (1 -
+                                                (position -
+                                                        (slots[slot].index ??
+                                                            -1))
+                                                    .abs())
+                                            .clamp(0.0, 1.0),
+                                    lift: lift,
+                                    onActivate: switch (slots[slot].index) {
+                                      final index?
+                                          when widget.onChanged != null =>
+                                        () => _select(index),
+                                      _ => null,
+                                    },
+                                  ),
                                 ),
                               ),
                             ),
-                            Padding(
-                              padding: const EdgeInsets.all(_inset),
-                              child: Flex(
-                                direction: widget.axis,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  for (final (index, destination)
-                                      in widget.segments.indexed)
-                                    Expanded(
-                                      child: _SegmentLabel(
-                                        destination: destination,
-                                        selected: _selectedIndex == index,
-                                        navigation: navigation,
-                                        emphasis: (1 - (position - index).abs())
-                                            .clamp(0.0, 1.0),
-                                        lift: lift,
-                                        onActivate: widget.onChanged == null
-                                            ? null
-                                            : () => _select(index),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                        ],
                       ),
                     ),
-                  );
-                },
-              ),
-            );
-          },
-        ),
+                  ),
+                );
+              },
+            ),
+          );
+        },
       ),
     );
   }

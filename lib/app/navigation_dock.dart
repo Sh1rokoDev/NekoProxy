@@ -14,6 +14,9 @@ class NavigationDock extends StatelessWidget {
     required this.axis,
   });
 
+  static const _maxButtonWidth = 72.0;
+  static const _maxButtonHeight = 58.0;
+
   final List<SlidingSegmentOption<int>> destinations;
   final int selected;
   final ValueChanged<int> onSelected;
@@ -27,10 +30,11 @@ class NavigationDock extends StatelessWidget {
       MediaQuery.textScalerOf(context).scale(11) - 11,
     );
     return SlidingSegmentedControl<int>(
-      width: vertical ? 64 + textGrowth : 360,
-      height: vertical
-          ? 240 + textGrowth * destinations.length
-          : 60 + textGrowth,
+      width: 64 + textGrowth,
+      height: 60 + textGrowth,
+      maxSegmentExtent: vertical
+          ? _maxButtonHeight + textGrowth
+          : _maxButtonWidth,
       segments: destinations,
       selected: selected,
       onChanged: onSelected,

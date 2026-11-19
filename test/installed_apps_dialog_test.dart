@@ -19,15 +19,16 @@ void main() {
     const iconChannel = MethodChannel('nekoproxy/app_icons');
     final firstIcon = Completer<Uint8List>();
     final requested = <String>[];
-    messenger.setMockMethodCallHandler(
-      runtimeChannel,
-      (_) async => [
+    messenger.setMockMethodCallHandler(runtimeChannel, (call) async {
+      if (call.method == 'requestAppListPermission') return null;
+      expect(call.method, 'apps');
+      return [
         {'package': 'app.alpha', 'label': 'Alpha'},
         {'package': 'app.beta', 'label': 'Beta'},
         for (var index = 0; index < 100; index++)
           {'package': 'app.other$index', 'label': 'Other $index'},
-      ],
-    );
+      ];
+    });
     messenger.setMockMethodCallHandler(iconChannel, (call) async {
       expect(call.method, 'load');
       expect(call.arguments['size'], 96);
@@ -115,6 +116,61 @@ void main() {
     expect(requested.where((packageName) => packageName == 'app.alpha'), [
       'app.alpha',
     ]);
+  });
+
+  testWidgets('应用列表等待系统授权，拒绝后可重试', (tester) async {
+    final messenger = tester.binding.defaultBinaryMessenger;
+    const channel = MethodChannel('nekoproxy/runtime');
+    final firstRequest = Completer<void>();
+    var requests = 0;
+    var queries = 0;
+    const permissionHint = '请在系统设置中允许 NekoProxy 获取应用列表，然后重试。';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'requestAppListPermission') {
+        if (++requests == 1) {
+          await firstRequest.future;
+          throw PlatformException(
+            code: 'apps_permission',
+            message: permissionHint,
+          );
+        }
+        return null;
+      }
+      expect(call.method, 'apps');
+      queries++;
+      return <Object?>[];
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    final controller = AppController()
+      ..runtime = AndroidRuntimeClient(AppPaths.forDirectory('.'));
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => pickInstalledApps(context, controller, const []),
+            child: const Text('打开'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('打开'));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 9));
+    expect(requests, 1);
+    expect(queries, 0);
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+
+    firstRequest.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('读取应用列表失败：$permissionHint'), findsOneWidget);
+    expect(queries, 0);
+
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(requests, 2);
+    expect(queries, 1);
+    expect(find.text('没有读取到可启动的应用。'), findsOneWidget);
   });
 
   testWidgets('VPN 应用过滤沿用已有设置，保存失败可重试并可重新连接', (tester) async {

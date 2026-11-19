@@ -1,16 +1,21 @@
 package com.nekoproxy.nekoproxy
 
+import android.Manifest
 import android.app.Activity
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.pm.PermissionInfo
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.VpnService
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.provider.Settings
+import android.util.Log
 import androidx.annotation.NonNull
 import com.nekoproxy.mobile.Mobile
 import io.flutter.embedding.android.FlutterActivity
@@ -27,7 +32,11 @@ class MainActivity : FlutterActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private val executor = Executors.newCachedThreadPool()
     private var pendingStart: PendingStart? = null
+    private var pendingPermission: PendingPermission? = null
+    private var notificationPermissionRequested = false
     private var startAttempt = 0
+
+    private data class PendingPermission(val name: String, val result: MethodChannel.Result)
 
     private data class PendingStart(
         val config: String,
@@ -78,6 +87,14 @@ class MainActivity : FlutterActivity() {
     private fun handleCall(call: MethodCall, result: MethodChannel.Result) {
         try {
             when (call.method) {
+                "requestNotificationPermission" -> requestNotificationPermission(result)
+                "requestAppListPermission" -> {
+                    if (canReadAppList()) {
+                        result.success(null)
+                    } else {
+                        requestRuntimePermission(APP_LIST_PERMISSION, result)
+                    }
+                }
                 "start" -> handleStart(call, result)
                 "setCpuWakeLockEnabled" -> {
                     NekoVpnService.setCpuWakeLockEnabled(call.arguments as Boolean)
@@ -86,7 +103,13 @@ class MainActivity : FlutterActivity() {
                 "status" -> runAsync(result) { NekoVpnService.status() }
                 "traffic" -> runAsync(result) { NekoVpnService.traffic() }
                 "connections" -> runAsync(result) { NekoVpnService.connections() }
-                "apps" -> runAsync(result, "apps_error") { listLaunchableApps() }
+                "apps" -> {
+                    if (canReadAppList()) {
+                        runAsync(result, "apps_error") { listLaunchableApps() }
+                    } else {
+                        reportAppListPermissionDenied(result)
+                    }
+                }
                 "systemDns" -> runAsync(result) { systemDnsServers() }
                 "convertRules" -> runAsync(result, "rules_conversion") {
                     Mobile.convertRules(
@@ -151,6 +174,87 @@ class MainActivity : FlutterActivity() {
             }
         } catch (error: Throwable) {
             result.error("runtime_error", error.message, null)
+        }
+    }
+
+    private fun requestNotificationPermission(result: MethodChannel.Result) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            notificationPermissionRequested ||
+            pendingPermission != null ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+        ) {
+            result.success(null)
+            return
+        }
+        try {
+            requestRuntimePermission(Manifest.permission.POST_NOTIFICATIONS, result)
+            notificationPermissionRequested = true
+        } catch (error: RuntimeException) {
+            Log.w("NekoProxy", "Unable to request notification permission", error)
+            result.success(null)
+        }
+    }
+
+    private fun canReadAppList(): Boolean =
+        checkSelfPermission(APP_LIST_PERMISSION) == PackageManager.PERMISSION_GRANTED ||
+            !supportsAppListPermission()
+
+    @Suppress("DEPRECATION") // Read protectionLevel on API 24–27 as well.
+    private fun supportsAppListPermission(): Boolean {
+        // The T/TAF flag also works when package visibility hides the permission owner.
+        if (Settings.Secure.getInt(contentResolver, "oem_installed_apps_runtime_permission_enable", 0) == 1) {
+            return true
+        }
+        return try {
+            val info = packageManager.getPermissionInfo(APP_LIST_PERMISSION, 0)
+            val protection = info.protectionLevel and PermissionInfo.PROTECTION_MASK_BASE
+            if (protection != PermissionInfo.PROTECTION_DANGEROUS) return false
+            // Xiaomi and other OEMs can expose the permission without the capability flag.
+            info.packageName == "com.lbe.security.miui" ||
+                (packageManager.getApplicationInfo(info.packageName, 0).flags and ApplicationInfo.FLAG_SYSTEM) != 0
+        } catch (_: PackageManager.NameNotFoundException) {
+            // The permission or its declaring package is unavailable.
+            false
+        }
+    }
+
+    private fun requestRuntimePermission(name: String, result: MethodChannel.Result) {
+        if (pendingPermission != null) {
+            result.error("permission_busy", "请先处理当前的系统权限请求，再重试。", null)
+            return
+        }
+        pendingPermission = PendingPermission(name, result)
+        try {
+            requestPermissions(arrayOf(name), RUNTIME_PERMISSION_REQUEST)
+        } catch (error: RuntimeException) {
+            pendingPermission = null
+            throw error
+        }
+    }
+
+    private fun reportAppListPermissionDenied(result: MethodChannel.Result) {
+        result.error(
+            "apps_permission",
+            "请在系统设置中允许 NekoProxy 获取应用列表，然后重试。",
+            null,
+        )
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != RUNTIME_PERMISSION_REQUEST) return
+        val pending = pendingPermission ?: return
+        pendingPermission = null
+        if (pending.name == APP_LIST_PERMISSION &&
+            grantResults.firstOrNull() != PackageManager.PERMISSION_GRANTED
+        ) {
+            reportAppListPermissionDenied(pending.result)
+        } else {
+            pending.result.success(null)
         }
     }
 
@@ -316,12 +420,16 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        pendingPermission?.result?.error("permission_cancelled", "系统权限请求已取消。", null)
+        pendingPermission = null
         TestRuntime.stopAsync()
         executor.shutdownNow()
         super.onDestroy()
     }
 
     companion object {
+        private const val APP_LIST_PERMISSION = "com.android.permission.GET_INSTALLED_APPS"
+        private const val RUNTIME_PERMISSION_REQUEST = 0x4E50
         private const val VPN_PERMISSION_REQUEST = 0x5650
     }
 }

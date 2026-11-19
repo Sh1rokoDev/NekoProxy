@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../domain/models.dart';
 import '../../runtime/runtime_client.dart';
@@ -65,7 +66,8 @@ class _InstalledAppsDialogState extends State<_InstalledAppsDialog> {
       final apps = await widget.controller.installedApps();
       if (mounted) setState(() => _apps = apps);
     } catch (error) {
-      if (mounted) setState(() => _loadError = '读取应用列表失败：$error');
+      final message = error is PlatformException ? error.message : null;
+      if (mounted) setState(() => _loadError = '读取应用列表失败：${message ?? error}');
     }
   }
 

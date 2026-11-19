@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Even-odd fill leaves the capsule eyes transparent under the system tint. -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:fillType="evenOdd"
+        android:pathData="M3,13
+            C3.3,10.7 4.3,8.5 5.7,7.2
+            C5.5,5.2 6.3,3 7.6,1.8
+            C9.3,2.2 10.8,3.7 11.4,5.3
+            C13,5.2 14.6,5.5 15.9,6.1
+            C17.4,5.5 19.4,5.4 21.4,5.8
+            C21.8,7.5 21.6,9.7 20.8,11.2
+            C22.4,14.1 21.2,18 18.4,20.2
+            C16.4,21.9 13.2,22.4 9.8,21.7
+            C5.6,20.8 2.1,17.4 3,13 Z
+            M8.88,10.72 A1.1,1.1 0 0,1 10.99,11.36
+            L9.81,15.22 A1.1,1.1 0 0,1 7.7,14.58 Z
+            M13.98,12.27 A1.1,1.1 0 0,1 16.09,12.91
+            L14.91,16.77 A1.1,1.1 0 0,1 12.8,16.13 Z" />
+</vector>

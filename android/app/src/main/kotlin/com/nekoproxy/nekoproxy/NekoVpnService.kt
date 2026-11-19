@@ -506,6 +506,7 @@ class NekoVpnService : VpnService() {
 
     private fun updateNotification(text: String) {
         val manager = getSystemService(NotificationManager::class.java)
+        if (!manager.areNotificationsEnabled()) return
         manager.notify(NOTIFICATION_ID, buildNotification(text))
     }
 
@@ -535,7 +536,7 @@ class NekoVpnService : VpnService() {
         return builder
             .setContentTitle("NekoProxy")
             .setContentText(text)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(pending)
             .setOngoing(true)
             .build()

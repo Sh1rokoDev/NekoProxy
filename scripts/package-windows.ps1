@@ -28,6 +28,9 @@ New-Item -ItemType Directory -Force -Path $target | Out-Null
 Copy-Item (Join-Path $release "*") $target -Recurse
 Copy-Item (Join-Path $root "LICENSE") $target
 Copy-Item (Join-Path $root "README.md") $target
+$readmeIcons = Join-Path $target "assets\icons"
+New-Item -ItemType Directory -Force -Path $readmeIcons | Out-Null
+Copy-Item (Join-Path $root "assets\icons\app_icon.png") $readmeIcons
 New-Item -ItemType Directory -Force -Path (Join-Path $target "third_party") | Out-Null
 Copy-Item (Join-Path $root "third_party\THIRD_PARTY_NOTICES.md") (Join-Path $target "third_party")
 Copy-Item (Join-Path $root "third_party\wintun-LICENSE.txt") (Join-Path $target "third_party")

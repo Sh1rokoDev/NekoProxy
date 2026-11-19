@@ -29,14 +29,17 @@ class AndroidRuntimeClient implements RuntimeClient {
     List<String> perAppPackages = const [],
   }) async {
     await shutdown();
-    final result = await _channel.invokeMethod<Map<Object?, Object?>>('start', {
-      'config': config,
-      'mode': mode,
-      'cachePath': paths.runtime.path,
-      'logPath': paths.logFile.path,
-      'perAppMode': perAppMode,
-      'perAppPackages': perAppPackages,
-    }).timeout(const Duration(seconds: 65));
+    await _channel.invokeMethod<void>('requestNotificationPermission');
+    final result = await _channel
+        .invokeMethod<Map<Object?, Object?>>('start', {
+          'config': config,
+          'mode': mode,
+          'cachePath': paths.runtime.path,
+          'logPath': paths.logFile.path,
+          'perAppMode': perAppMode,
+          'perAppPackages': perAppPackages,
+        })
+        .timeout(const Duration(seconds: 65));
     return _statusFrom(result);
   }
 
@@ -45,6 +48,7 @@ class AndroidRuntimeClient implements RuntimeClient {
 
   @override
   Future<List<InstalledApp>> installedApps() async {
+    await _channel.invokeMethod<void>('requestAppListPermission');
     final result = await _invoke<List<Object?>>('apps');
     return (result ?? const [])
         .whereType<Map>()

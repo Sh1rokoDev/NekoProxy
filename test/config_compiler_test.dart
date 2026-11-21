@@ -28,6 +28,48 @@ AppSnapshot snapshotWith(List<ProxyNode> nodes) {
 }
 
 void main() {
+  test('Linux TUN keeps a separate interface and route slots', () {
+    final snapshot = snapshotWith([node('a')]);
+    final localOnly = ConfigCompiler.compile(
+      snapshot,
+      target: CompileTarget.linux,
+      cachePath: '/tmp/cache.db',
+    );
+    expect(localOnly.hasTunInbound, isFalse);
+    expect(
+      localOnly.json['inbounds'].single,
+      containsPair('listen', '127.0.0.1'),
+    );
+
+    snapshot.settings.tunEnabled = true;
+    snapshot.settings.tunOrDefault.ipv6 = true;
+    final compiled = ConfigCompiler.compile(
+      snapshot,
+      target: CompileTarget.linux,
+      cachePath: '/tmp/cache.db',
+    );
+    final tun = (compiled.json['inbounds'] as List).cast<Map>().singleWhere(
+      (inbound) => inbound['type'] == 'tun',
+    );
+    expect(tun, containsPair('interface_name', 'nekoproxy0'));
+    expect(tun, containsPair('iproute2_table_index', 20771));
+    expect(tun, containsPair('iproute2_rule_index', 19771));
+    expect(tun, containsPair('auto_redirect', false));
+    expect(tun, containsPair('dns_mode', 'hijack'));
+    expect(tun['address'], contains('fdfe:dcba:9876::1/126'));
+    expect(tun['route_exclude_address'], contains('192.168.0.0/16'));
+    expect(compiled.json['route'], containsPair('auto_detect_interface', true));
+    expect(compiled.encoded, isNot(contains('fakeip')));
+
+    final test = ConfigCompiler.compile(
+      snapshot,
+      target: CompileTarget.linux,
+      cachePath: '/tmp/cache.db',
+      testOnly: true,
+    );
+    expect(test.json['inbounds'], isEmpty);
+  });
+
   group('ConfigCompiler managed mode', () {
     test('builds real-IP DNS, selector, urltest and node outbounds', () {
       final snapshot = snapshotWith([node('a'), node('b', autoEnabled: false)]);

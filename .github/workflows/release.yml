@@ -142,8 +142,77 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  build-linux:
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      GOPROXY: https://proxy.golang.org,direct
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          . ./scripts/version.ps1
+          $version = Get-NekoVersionInfo -Root $env:GITHUB_WORKSPACE
+          if ($env:GITHUB_REF_NAME -cne "v$($version.BaseVersion)") {
+            throw "Release tag must match pubspec.yaml: v$($version.BaseVersion)."
+          }
+          if (git status --porcelain) { throw 'Release checkout must be clean.' }
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: runtime/go.sum
+
+      - name: Set up Flutter and Linux build tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev libstdc++-12-dev
+          git clone --quiet --depth 1 --branch 3.50.0 https://github.com/flutter/flutter.git "$RUNNER_TEMP/flutter"
+          echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Package Linux x64
+        shell: pwsh
+        run: ./scripts/package-linux.ps1
+
+      - name: Verify Linux package
+        shell: bash
+        run: |
+          artifact=(dist/NekoProxy-*-linux-x64.deb)
+          test "$(dpkg-deb --field "${artifact[0]}" Architecture)" = amd64
+          package_dir=$(mktemp -d)
+          dpkg-deb --extract "${artifact[0]}" "$package_dir"
+          ldd "$package_dir/usr/lib/nekoproxy/nekoproxy" > "$RUNNER_TEMP/nekoproxy-ldd.txt"
+          if grep -q 'not found' "$RUNNER_TEMP/nekoproxy-ldd.txt"; then
+            cat "$RUNNER_TEMP/nekoproxy-ldd.txt"
+            exit 1
+          fi
+          test -x "$package_dir/usr/lib/nekoproxy/nekoproxy-worker"
+          test -x "$package_dir/usr/lib/nekoproxy/nekoproxy-tun-worker"
+          sudo dpkg -i "${artifact[0]}"
+          if [[ ! -c /dev/net/tun ]]; then sudo modprobe tun; fi
+          sudo bash scripts/linux/test-runtime.sh
+          dart format --output=none --set-exit-if-changed lib/services/linux_system_proxy.dart test/linux_system_proxy_test.dart
+          flutter test --no-pub test/linux_system_proxy_test.dart test/config_compiler_test.dart
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: linux
+          path: |
+            dist/NekoProxy-*-linux-x64.deb
+            dist/NekoProxy-*-linux-x64.deb.sha256
+            dist/rules-manifest.json
+          if-no-files-found: error
+          compression-level: 0
+
   publish:
-    needs: build
+    needs: [build, build-linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -163,20 +232,21 @@ jobs:
           apk=(release/android/NekoProxy-*-android-arm64.apk)
           zip=(release/windows/NekoProxy-*-windows-x64.zip)
           setup=(release/windows/NekoProxy-*-windows-x64-setup.exe)
-          if (( ${#apk[@]} != 1 || ${#zip[@]} != 1 || ${#setup[@]} != 1 )); then
-            echo 'Expected one APK, one Windows ZIP and one Windows installer.' >&2
+          deb=(release/linux/NekoProxy-*-linux-x64.deb)
+          if (( ${#apk[@]} != 1 || ${#zip[@]} != 1 || ${#setup[@]} != 1 || ${#deb[@]} != 1 )); then
+            echo 'Expected one APK, one Windows ZIP, one Windows installer and one Linux package.' >&2
             exit 1
           fi
 
           assets=()
-          for file in "${apk[0]}" "${zip[0]}" "${setup[0]}"; do
+          for file in "${apk[0]}" "${zip[0]}" "${setup[0]}" "${deb[0]}"; do
             (cd "$(dirname "$file")" && sha256sum --check "$(basename "$file").sha256")
             assets+=("$file" "$file.sha256")
           done
 
           {
             printf '## 上游版本\n\n'
-            for platform in windows android; do
+            for platform in windows android linux; do
               manifest="release/$platform/rules-manifest.json"
               sing_box=$(jq -er '.singBox | select(type == "string" and length > 0)' "$manifest")
               geosite=$(jq -er '.releases.geosite.tag | select(type == "string" and length > 0)' "$manifest")

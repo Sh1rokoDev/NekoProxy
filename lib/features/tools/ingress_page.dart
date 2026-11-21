@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../app/app_scope.dart';
 import '../../app/header_fade.dart';
@@ -92,6 +93,13 @@ class _IngressPageState extends State<IngressPage> {
                         value: _allowLan,
                         onChanged: (value) => setState(() => _allowLan = value),
                       ),
+                      if (controller.isLinux) ...[
+                        const Divider(height: 24),
+                        _LinuxProxyAddresses(
+                          port: controller.settings.inboundOrDefault.localPort,
+                          desktopProxyAvailable: controller.supportsSystemProxy,
+                        ),
+                      ],
                       const Divider(height: 24),
                       Text('入站认证（可选）', style: theme.textTheme.titleSmall),
                       const SizedBox(height: 12),
@@ -122,7 +130,7 @@ class _IngressPageState extends State<IngressPage> {
                 ),
                 const SizedBox(height: 16),
                 SectionCard(
-                  title: windows ? 'TUN 模式' : 'VPN / TUN',
+                  title: controller.isAndroid ? 'VPN / TUN' : 'TUN 模式',
                   icon: Icons.shield_outlined,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -239,5 +247,43 @@ class _IngressPageState extends State<IngressPage> {
   void _error(String message) {
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _LinuxProxyAddresses extends StatelessWidget {
+  const _LinuxProxyAddresses({
+    required this.port,
+    required this.desktopProxyAvailable,
+  });
+
+  final int port;
+  final bool desktopProxyAvailable;
+
+  @override
+  Widget build(BuildContext context) {
+    final http = 'http://127.0.0.1:$port';
+    final socks = 'socks5h://127.0.0.1:$port';
+    final command =
+        'env http_proxy=$http https_proxy=$http curl https://example.com';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!desktopProxyAvailable) const Text('当前桌面无法自动设置系统代理。可在应用中手动填写以下地址。'),
+        SelectableText('HTTP  $http\nSOCKS5  127.0.0.1:$port'),
+        TextButton.icon(
+          onPressed: () async {
+            await Clipboard.setData(
+              ClipboardData(text: '$http\n$socks\n$command'),
+            );
+            if (context.mounted) {
+              ScaffoldMessenger.of(context)
+                  .showSnackBar(const SnackBar(content: Text('已复制代理地址和命令示例')));
+            }
+          },
+          icon: const Icon(Icons.copy_rounded),
+          label: const Text('复制代理地址和命令示例'),
+        ),
+      ],
+    );
   }
 }

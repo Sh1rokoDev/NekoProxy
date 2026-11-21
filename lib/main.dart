@@ -9,6 +9,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app/app.dart';
 import 'app/theme.dart';
+import 'data/app_storage.dart';
 import 'state/app_controller.dart';
 
 Future<void> main() async {
@@ -20,10 +21,19 @@ Future<void> main() async {
 void _registerLicenses() {
   LicenseRegistry.addLicense(() async* {
     final gpl = await rootBundle.loadString('LICENSE');
-    yield LicenseEntryWithLineBreaks(const ['NekoProxy', 'GNU General Public License v3'], gpl);
-    final notices = await rootBundle.loadString('third_party/THIRD_PARTY_NOTICES.md');
-    yield LicenseEntryWithLineBreaks(const ['NekoProxy third-party notices'], notices);
-    final wintun = await rootBundle.loadString('third_party/wintun-LICENSE.txt');
+    yield LicenseEntryWithLineBreaks(const [
+      'NekoProxy',
+      'GNU General Public License v3',
+    ], gpl);
+    final notices = await rootBundle.loadString(
+      'third_party/THIRD_PARTY_NOTICES.md',
+    );
+    yield LicenseEntryWithLineBreaks(const [
+      'NekoProxy third-party notices',
+    ], notices);
+    final wintun = await rootBundle.loadString(
+      'third_party/wintun-LICENSE.txt',
+    );
     yield LicenseEntryWithLineBreaks(const ['Wintun'], wintun);
   });
 }
@@ -45,6 +55,9 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
   bool _ready = false;
   bool _exiting = false;
   Object? _fatal;
+  Future<void>? _startup;
+  RandomAccessFile? _linuxInstanceLock;
+  static const _linuxLifecycle = MethodChannel('nekoproxy/linux_lifecycle');
 
   @override
   void initState() {
@@ -57,8 +70,33 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
         if (mounted) unawaited(_bootstrap());
       });
     } else {
-      unawaited(_bootstrap());
+      if (Platform.isLinux) {
+        _linuxLifecycle.setMethodCallHandler((call) async {
+          if (call.method == 'close') await _exitApplication();
+        });
+      }
+      _startBootstrap();
     }
+  }
+
+  void _startBootstrap() {
+    _startup = _bootstrap();
+    unawaited(_startup);
+  }
+
+  Future<AppPaths> _linuxAppPaths() async {
+    final paths = await AppPaths.resolve();
+    if (_linuxInstanceLock != null) return paths;
+    final lock = await File('${paths.base.path}/.instance.lock')
+        .open(mode: FileMode.append);
+    try {
+      await lock.lock(FileLock.exclusive);
+      _linuxInstanceLock = lock;
+    } on FileSystemException {
+      await lock.close();
+      throw StateError('当前用户已有一个 NekoProxy 实例正在运行。');
+    }
+    return paths;
   }
 
   Future<void> _bootstrap() async {
@@ -66,7 +104,9 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
       if (Platform.isWindows) {
         _setupWindow();
       }
-      await _controller.initialize();
+      await _controller.initialize(
+        appPaths: Platform.isLinux ? await _linuxAppPaths() : null,
+      );
       if (!mounted) return;
       if (Platform.isWindows) {
         _setupTray();
@@ -198,6 +238,18 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
   Future<void> _exitApplication() async {
     if (_exiting) return;
     _exiting = true;
+    if (Platform.isLinux) {
+      try {
+        await _startup;
+        if (_ready) await _controller.shutdownForExit();
+      } finally {
+        try {
+          await _linuxInstanceLock?.close();
+        } finally {
+          exit(0);
+        }
+      }
+    }
     await _controller.shutdownForExit();
     if (Platform.isWindows) {
       try {
@@ -251,6 +303,10 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
       WidgetsBinding.instance.removeObserver(this);
       _controller.appearanceTick.removeListener(_syncWindowBackground);
     }
+    if (Platform.isLinux) {
+      _linuxLifecycle.setMethodCallHandler(null);
+      unawaited(_linuxInstanceLock?.close());
+    }
     _disposeTray();
     _disposeWindow();
     _controller.dispose();
@@ -272,7 +328,10 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
                 children: [
                   const Icon(Icons.error_outline_rounded, size: 48),
                   const SizedBox(height: 16),
-                  const Text('NekoProxy 启动失败', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
+                  const Text(
+                    'NekoProxy 启动失败',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  ),
                   const SizedBox(height: 8),
                   SelectableText('$_fatal', textAlign: TextAlign.center),
                   const SizedBox(height: 20),
@@ -280,7 +339,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
                     onPressed: () {
                       setState(() => _fatal = null);
                       _syncWindowBackground();
-                      unawaited(_bootstrap());
+                      _startBootstrap();
                     },
                     child: const Text('重试'),
                   ),
@@ -320,7 +379,10 @@ class _SplashScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = ColorScheme.fromSeed(seedColor: seed, brightness: brightness);
+    final colors = ColorScheme.fromSeed(
+      seedColor: seed,
+      brightness: brightness,
+    );
     // The preparation screen does not need routing or the full app theme.
     return Directionality(
       textDirection: TextDirection.ltr,

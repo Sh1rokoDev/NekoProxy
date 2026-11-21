@@ -1,0 +1,9 @@
+polkit.addRule(function(action, subject) {
+    if (subject.isInGroup("nekoproxy-tun") &&
+        (action.id === "org.freedesktop.resolve1.set-dns-servers" ||
+         action.id === "org.freedesktop.resolve1.set-domains" ||
+         action.id === "org.freedesktop.resolve1.set-default-route" ||
+         action.id === "org.freedesktop.resolve1.revert")) {
+        return polkit.Result.YES;
+    }
+});

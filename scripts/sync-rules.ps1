@@ -13,7 +13,7 @@ if ([string]::IsNullOrWhiteSpace($RuntimeDir)) {
     $RuntimeDir = Join-Path $root 'runtime'
 }
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
-    $OutputDir = Join-Path $root "assets\rules"
+    $OutputDir = Join-Path $root "assets/rules"
 }
 $OutputDir = [IO.Path]::GetFullPath($OutputDir)
 $manifestPath = Join-Path $OutputDir "manifest.json"

@@ -6,6 +6,9 @@ import 'package:win32/win32.dart';
 import 'package:win32_registry/win32_registry.dart';
 
 import '../data/app_storage.dart';
+import 'system_proxy.dart';
+
+export 'system_proxy.dart' show ProxyApplyResult;
 
 class SystemProxySnapshot {
   const SystemProxySnapshot({
@@ -23,22 +26,23 @@ class SystemProxySnapshot {
   final String? appliedServer;
 
   SystemProxySnapshot withAppliedServer(String server) => SystemProxySnapshot(
-        proxyEnable: proxyEnable,
-        proxyServer: proxyServer,
-        proxyOverride: proxyOverride,
-        autoConfigUrl: autoConfigUrl,
-        appliedServer: server,
-      );
+    proxyEnable: proxyEnable,
+    proxyServer: proxyServer,
+    proxyOverride: proxyOverride,
+    autoConfigUrl: autoConfigUrl,
+    appliedServer: server,
+  );
 
   Map<String, dynamic> toJson() => {
-        'proxyEnable': proxyEnable,
-        'proxyServer': proxyServer,
-        'proxyOverride': proxyOverride,
-        'autoConfigUrl': autoConfigUrl,
-        'appliedServer': appliedServer,
-      };
+    'proxyEnable': proxyEnable,
+    'proxyServer': proxyServer,
+    'proxyOverride': proxyOverride,
+    'autoConfigUrl': autoConfigUrl,
+    'appliedServer': appliedServer,
+  };
 
-  factory SystemProxySnapshot.fromJson(Map<String, dynamic> json) => SystemProxySnapshot(
+  factory SystemProxySnapshot.fromJson(Map<String, dynamic> json) =>
+      SystemProxySnapshot(
         proxyEnable: (json['proxyEnable'] as num?)?.toInt(),
         proxyServer: json['proxyServer'] as String?,
         proxyOverride: json['proxyOverride'] as String?,
@@ -47,16 +51,11 @@ class SystemProxySnapshot {
       );
 }
 
-class ProxyApplyResult {
-  const ProxyApplyResult({required this.ok, this.error});
-  final bool ok;
-  final String? error;
-}
-
-class WindowsSystemProxy {
+class WindowsSystemProxy implements SystemProxy {
   WindowsSystemProxy(this.paths);
 
-  static const _internetSettings = r'Software\Microsoft\Windows\CurrentVersion\Internet Settings';
+  static const _internetSettings =
+      r'Software\Microsoft\Windows\CurrentVersion\Internet Settings';
   static const _refresh = 37;
   static const _settingsChanged = 39;
   final AppPaths paths;
@@ -65,7 +64,8 @@ class WindowsSystemProxy {
   bool get supported => Platform.isWindows;
 
   ProxyApplyResult enable(int port) {
-    if (!supported) return const ProxyApplyResult(ok: false, error: '仅 Windows 支持系统代理');
+    if (!supported)
+      return const ProxyApplyResult(ok: false, error: '仅 Windows 支持系统代理');
     try {
       final key = _openSettings();
       try {
@@ -73,7 +73,9 @@ class WindowsSystemProxy {
         final owned = File(paths.proxySnapshotFile.path);
         final existingOwned = owned.existsSync()
             ? SystemProxySnapshot.fromJson(
-                Map<String, dynamic>.from(jsonDecode(owned.readAsStringSync()) as Map),
+                Map<String, dynamic>.from(
+                  jsonDecode(owned.readAsStringSync()) as Map,
+                ),
               )
             : null;
         final original = existingOwned ?? existing;
@@ -118,14 +120,17 @@ class WindowsSystemProxy {
       final ownedFile = File(paths.proxySnapshotFile.path);
       if (!ownedFile.existsSync()) return const ProxyApplyResult(ok: true);
       final snapshot = SystemProxySnapshot.fromJson(
-        Map<String, dynamic>.from(jsonDecode(ownedFile.readAsStringSync()) as Map),
+        Map<String, dynamic>.from(
+          jsonDecode(ownedFile.readAsStringSync()) as Map,
+        ),
       );
       final key = _openSettings();
       try {
         final current = key.getString('ProxyServer');
         final currentEnabled = key.getInt('ProxyEnable');
         final ours = snapshot.appliedServer ?? _server;
-        final stillOwned = ours != null && current == ours && currentEnabled == 1;
+        final stillOwned =
+            ours != null && current == ours && currentEnabled == 1;
         if (!force && !stillOwned) {
           // Another program changed or disabled the proxy after us; keep its change.
           ownedFile.deleteSync();
@@ -155,7 +160,12 @@ class WindowsSystemProxy {
     );
   }
 
-  void _restoreValue(RegistryKey key, String name, Object? value, {bool isDword = false}) {
+  void _restoreValue(
+    RegistryKey key,
+    String name,
+    Object? value, {
+    bool isDword = false,
+  }) {
     if (value == null) {
       _removeValue(key, name);
       return;
@@ -185,9 +195,11 @@ class WindowsSystemProxy {
   void _notify() {
     try {
       final wininet = DynamicLibrary.open('wininet.dll');
-      final setOption = wininet.lookupFunction<
-          Int32 Function(IntPtr, Uint32, Pointer<Void>, Uint32),
-          int Function(int, int, Pointer<Void>, int)>('InternetSetOptionW');
+      final setOption = wininet
+          .lookupFunction<
+            Int32 Function(IntPtr, Uint32, Pointer<Void>, Uint32),
+            int Function(int, int, Pointer<Void>, int)
+          >('InternetSetOptionW');
       setOption(0, _settingsChanged, nullptr, 0);
       setOption(0, _refresh, nullptr, 0);
     } catch (_) {

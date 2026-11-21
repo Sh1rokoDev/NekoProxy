@@ -24,8 +24,8 @@ class AppPaths {
   /// Windows 以管理员权限启动，全部用户数据（包括状态密钥）都放在安装目录的
   /// `userdata` 里。Android 仍使用应用私有目录。
   static Future<AppPaths> resolve() async {
-    // Windows 不读取或创建 AppData；Android 仍使用平台私有目录。
-    if (Platform.isAndroid) {
+    // Windows 使用安装目录，Android 和 Linux 使用用户级应用目录。
+    if (Platform.isAndroid || Platform.isLinux) {
       return _build(await _appSupportBase());
     }
     final installDir = File(Platform.resolvedExecutable).parent;
@@ -57,6 +57,16 @@ class AppPaths {
     final paths = _sync(basePath);
     await paths.base.create(recursive: true);
     await paths.runtime.create(recursive: true);
+    if (Platform.isLinux) {
+      final result = await Process.run('/usr/bin/chmod', [
+        '700',
+        paths.base.path,
+        paths.runtime.path,
+      ]);
+      if (result.exitCode != 0) {
+        throw FileSystemException('无法设置 NekoProxy 数据目录权限', paths.base.path);
+      }
+    }
     return paths;
   }
 
@@ -125,8 +135,19 @@ class AppStorage {
         failure = '状态文件格式不受支持';
         throw FormatException(failure);
       }
-      final key = await _readKey();
+      final SecretKey? key;
+      try {
+        key = await _readKey();
+      } on Exception {
+        if (Platform.isLinux) {
+          failure = '无法读取本机密钥，请解锁当前会话的 Secret Service 后重启 NekoProxy';
+        }
+        rethrow;
+      }
       if (key == null) {
+        if (Platform.isLinux) {
+          failure = '加密状态缺少本机密钥，请恢复原密钥后重启 NekoProxy';
+        }
         throw const FormatException('加密状态缺少本机密钥');
       }
       final nonce = base64Decode(decoded['nonce'] as String);
@@ -227,7 +248,7 @@ class AppStorage {
     if (Platform.isWindows) {
       await _writeLocalKey(bytes);
     } else {
-      // Android 使用 Keystore 支持的 secure storage。
+      // Android 使用 Keystore，Linux 使用当前用户的 Secret Service。
       await _secureStorage.write(key: _keyName, value: base64Encode(bytes));
     }
     return SecretKey(bytes);

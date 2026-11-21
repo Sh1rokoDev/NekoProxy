@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=NekoProxy
+Comment=sing-box proxy client
+Exec=/usr/bin/nekoproxy
+Icon=io.github.sh1rokodev.NekoProxy
+Terminal=false
+Categories=Network;
+StartupWMClass=io.github.sh1rokodev.NekoProxy

@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+case "$1" in
+    configure)
+        group=nekoproxy-tun
+        if ! getent group "$group" >/dev/null; then
+            addgroup --system "$group"
+        fi
+        systemd-tmpfiles --create /usr/lib/tmpfiles.d/nekoproxy.conf
+        worker=/usr/lib/nekoproxy/nekoproxy-tun-worker
+        chown root:"$group" "$worker"
+        chmod 0750 "$worker"
+        if ! setcap cap_net_admin=ep "$worker"; then
+            printf '%s\n' 'NekoProxy: could not set CAP_NET_ADMIN. TUN is unavailable.' >&2
+        fi
+        ;;
+esac

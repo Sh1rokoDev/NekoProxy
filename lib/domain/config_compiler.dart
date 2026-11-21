@@ -15,7 +15,7 @@ class ConfigCompileException implements Exception {
   String toString() => message;
 }
 
-enum CompileTarget { windows, android }
+enum CompileTarget { windows, android, linux }
 
 bool _hasTunInbound(Object? inbounds) =>
     inbounds is List &&
@@ -147,7 +147,7 @@ class ConfigCompiler {
       if (testOnly) {
         throw const ConfigCompileException('完整自定义配置无法映射节点标签，未连接时不能测速，请先连接。');
       }
-      return _compileCustom(snapshot);
+      return _compileCustom(snapshot, target);
     }
 
     final wireGuardOnly = snapshot.outboundMode == OutboundMode.wireGuard;
@@ -364,6 +364,7 @@ class ConfigCompiler {
       _deepMerge(config, snapshot.advancedJson, warnings);
     }
 
+    _validateDesktopProxy(config, target);
     final violations = ConfigPolicy.validate(config);
     if (violations.isNotEmpty) {
       throw ConfigCompileException(
@@ -403,7 +404,7 @@ class ConfigCompiler {
     final Map<String, dynamic> config;
     var overridden = snapshot.useCustomConfig;
     if (snapshot.useCustomConfig) {
-      config = _compileCustom(snapshot).redactedJson;
+      config = _compileCustom(snapshot, target).redactedJson;
     } else {
       final paths =
           ruleSetPaths ?? {for (final tag in builtInRuleSetTags) tag: tag};
@@ -652,7 +653,10 @@ class ConfigCompiler {
     }
   }
 
-  static CompiledConfig _compileCustom(AppSnapshot snapshot) {
+  static CompiledConfig _compileCustom(
+    AppSnapshot snapshot,
+    CompileTarget target,
+  ) {
     final text = snapshot.customConfig.trim();
     if (text.isEmpty) throw const ConfigCompileException('完整自定义配置为空');
     final Object? decoded;
@@ -665,6 +669,7 @@ class ConfigCompiler {
       throw const ConfigCompileException('自定义配置根节点必须是 JSON 对象');
     }
     final config = Map<String, dynamic>.from(decoded);
+    _validateDesktopProxy(config, target);
     final violations = ConfigPolicy.validate(config);
     if (violations.isNotEmpty) {
       throw ConfigCompileException(
@@ -684,6 +689,22 @@ class ConfigCompiler {
       autoGroupTag: autoTag,
       custom: true,
     );
+  }
+
+  static void _validateDesktopProxy(
+    Map<String, dynamic> config,
+    CompileTarget target,
+  ) {
+    final inbounds = config['inbounds'];
+    if (target == CompileTarget.linux &&
+        inbounds is List &&
+        inbounds.whereType<Map>().any(
+          (item) => item['set_system_proxy'] == true,
+        )) {
+      throw const ConfigCompileException(
+        'Linux 系统代理由应用负责恢复，请移除入站的 set_system_proxy 设置并使用首页开关。',
+      );
+    }
   }
 
   static bool _isSupportedOutbound(Map<String, dynamic> outbound) {
@@ -1151,7 +1172,16 @@ class ConfigCompiler {
     return {
       'type': 'tun',
       'tag': tunTag,
-      'interface_name': target == CompileTarget.windows ? 'NekoProxy' : 'tun0',
+      'interface_name': switch (target) {
+        CompileTarget.windows => 'NekoProxy',
+        CompileTarget.android => 'tun0',
+        CompileTarget.linux => 'nekoproxy0',
+      },
+      if (target == CompileTarget.linux) ...{
+        'auto_redirect': false,
+        'iproute2_table_index': 20771,
+        'iproute2_rule_index': 19771,
+      },
       'address': ['172.19.0.1/30', if (tun.ipv6) 'fdfe:dcba:9876::1/126'],
       'mtu': tun.mtu,
       'auto_route': tun.autoRoute,

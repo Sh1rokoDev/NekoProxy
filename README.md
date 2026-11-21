@@ -5,7 +5,7 @@
 <h1 align="center">NekoProxy</h1>
 
 <p align="center">
-  面向 Android 与 Windows 的 <a href="https://github.com/SagerNet/sing-box">sing-box</a> 图形客户端。
+  面向 Android、Windows 和 Linux 的 <a href="https://github.com/SagerNet/sing-box">sing-box</a> 图形客户端。
 </p>
 
 ## 特性
@@ -22,6 +22,9 @@
 
 - **Android (ARM64)**：`*-android-arm64.apk`
 - **Windows (x64)**：`*-windows-x64-setup.exe`（安装版）或 `*-windows-x64.zip`（便携版），安装与运行均需**管理员权限**
+- **Linux (x64)** 使用 `*-linux-x64.deb`，Ubuntu 24.04 LTS 为构建基线。用 APT 安装下载的文件，再从应用菜单打开 NekoProxy。
+
+Linux 桌面客户端以当前用户运行，通过会话中的 Secret Service 保存状态密钥。如果应用提示无法读取密钥，请解锁原密钥库后重启。
 
 ## 支持协议
 
@@ -42,8 +45,13 @@
 
 - **Android**：使用单个系统 VPN 接管流量，支持按应用过滤；关闭 VPN 时可仅使用本地代理端口。
 - **Windows**：系统代理与 TUN 独立控制。仅开启系统代理时，出站默认遵循系统路由且代理绕过列表仅包含回环地址，其余流量交由规则引擎处理。
+- **Linux** 默认提供回环 HTTP/SOCKS5 混合端口。GNOME 和 KDE Plasma 5/6 会话可以切换系统代理，其他桌面可在「本地监听与 TUN」复制地址。桌面设置适用于读取该设置的应用。
 - **运行时切换**：核心运行期间，系统代理支持热切换；变更 TUN / VPN 会重启核心（现有连接将短暂中断）。核心停止时切换仅保存配置。
 - **默认规则**：规则模式内置可编辑的「私网地址直连」规则，规则页同步展示核心生成的接管规则与默认出站。
+
+Linux TUN 需要管理员将受信任的用户加入 `nekoproxy-tun` 组，例如在自己的终端运行 `sudo usermod -aG nekoproxy-tun "$(id -un)"`，然后注销并重新登录。授权组成员可以启动具有网络管理能力的 TUN 组件。本地代理和桌面系统代理只需要普通用户权限。Linux TUN 使用内核路由和策略规则。接口或路由槽位与其他程序冲突时，应用会提示错误。
+
+使用 `systemd-resolved` 的系统还需要 `polkitd`。安装包为 `nekoproxy-tun` 组授予设置和恢复链路 DNS 所需的四项操作权限。
 
 ## WireGuard 与链式代理
 
@@ -73,6 +81,7 @@ flutter pub get
 | :--- | :--- | :--- |
 | **Windows x64** | Visual Studio（C++ 桌面开发工作负载）、Windows SDK、NSIS 3.x、开启开发者模式 | `pwsh ./scripts/package-windows.ps1` |
 | **Android ARM64** | JDK 21+ (`JAVA_HOME`)、Android SDK 36 (`ANDROID_HOME`)、NDK `28.2.13676358`、`gomobile` / `gobind` | `pwsh ./scripts/package-android.ps1` |
+| **Linux x64** | Ubuntu 24.04 LTS、Clang、CMake、Ninja、pkg-config、`libgtk-3-dev`、`libsecret-1-dev`、`libstdc++-12-dev` | `pwsh ./scripts/package-linux.ps1` |
 
 安装 `gomobile` 与 `gobind`：
 

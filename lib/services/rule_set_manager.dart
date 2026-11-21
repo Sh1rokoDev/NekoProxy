@@ -28,8 +28,11 @@ final _directoryPattern = RegExp(
 );
 
 typedef _Release = ({String tag, String sha256, int size});
-typedef RuleSetConverter =
-    Future<void> Function(String kind, String input, String output);
+typedef RuleSetConverter = Future<void> Function(
+  String kind,
+  String input,
+  String output,
+);
 
 class RuleSetException implements Exception {
   RuleSetException(this.message);
@@ -251,9 +254,8 @@ class RuleSetManager {
         }
         final release = releases[kind]!;
         final source = entry.value;
-        final url = GitHubReleases(
-          'v2fly/${source.repo}',
-        ).download(release.tag, source.asset);
+        final url = GitHubReleases('v2fly/${source.repo}')
+            .download(release.tag, source.asset);
         final input = File(_join(stage.path, source.asset));
         final sink = input.openWrite();
         try {
@@ -685,8 +687,7 @@ class RuleSetManager {
       );
       return;
     }
-    final worker = locateRuntimeBinary('nekoproxy-worker.exe');
-    if (worker == null) throw RuleSetException('未找到规则集转换所需的运行组件');
+    final worker = desktopWorkerPath();
     final result = await Process.run(worker, [
       'convert-rules',
       kind,

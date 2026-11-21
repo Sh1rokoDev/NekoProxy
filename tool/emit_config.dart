@@ -25,15 +25,18 @@ void main(List<String> args) {
   );
   final compiled = ConfigCompiler.compile(
     snapshot,
-    target: args.contains('android')
+    target:
+        args.contains('android') || (!Platform.isLinux && !Platform.isWindows)
         ? CompileTarget.android
-        : (Platform.isWindows ? CompileTarget.windows : CompileTarget.android),
+        : (Platform.isLinux ? CompileTarget.linux : CompileTarget.windows),
     cachePath: '${Directory.current.path}/build/validation/cache.db',
     logPath: '${Directory.current.path}/build/validation/core.log',
   );
   final file = File(output);
   file.parent.createSync(recursive: true);
-  final ruleDirectory = Directory(ConfigCompiler.ruleSetDirectory(file.absolute.path));
+  final ruleDirectory = Directory(
+    ConfigCompiler.ruleSetDirectory(file.absolute.path),
+  );
   ruleDirectory.createSync(recursive: true);
   for (final name in ['geosite-cn.srs', 'geoip-cn.srs']) {
     File('assets/rules/$name').copySync('${ruleDirectory.path}/$name');

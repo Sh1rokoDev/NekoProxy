@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
@@ -27,13 +28,15 @@ func main() {
 		return
 	}
 	var (
-		configPath = flag.String("config", "", "path to sing-box configuration")
-		readyPath  = flag.String("ready", "", "path to runtime readiness file")
-		logPath    = flag.String("log", "", "path to log file")
-		installDir = flag.String("install-dir", "", "root for configuration output files")
-		token      = flag.String("token", "", "control token")
-		mode       = flag.String("mode", "normal", "worker mode label")
-		leaseSecs  = flag.Int("lease", 90, "exit after this many seconds without a client")
+		configPath   = flag.String("config", "", "path to sing-box configuration")
+		readyPath    = flag.String("ready", "", "path to runtime readiness file")
+		logPath      = flag.String("log", "", "path to log file")
+		installDir   = flag.String("install-dir", "", "root for configuration output files")
+		token        = flag.String("token", "", "control token")
+		mode         = flag.String("mode", "normal", "worker mode label")
+		superviseTun = flag.Bool("supervise-tun", false, "supervise Linux TUN")
+		managedTun   = flag.Bool("managed-tun", false, "run Linux TUN under its supervisor")
+		leaseSecs    = flag.Int("lease", 90, "exit after this many seconds without a client")
 	)
 	flag.Parse()
 
@@ -69,6 +72,18 @@ func main() {
 		fail(*readyPath, err.Error())
 	}
 
+	handled, err := preparePlatformWorker(configData, *readyPath, *mode, *superviseTun, *managedTun)
+	if err != nil {
+		fail(*readyPath, err.Error())
+	}
+	if handled {
+		return
+	}
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+
 	configData, protection, err := prepareWireGuardProtection(configData)
 	if err != nil {
 		fail(*readyPath, err.Error())
@@ -90,20 +105,33 @@ func main() {
 	if err = engineInstance.Start(configData); err != nil {
 		fail(*readyPath, "start: "+err.Error())
 	}
+	closeEngine := sync.OnceFunc(func() {
+		if *managedTun {
+			// sing-tun removes the entire reserved priority range on close.
+			// If another owner wrote into it, let the supervisor recover.
+			if err := checkManagedTunRules(configData); err != nil {
+				fail(*readyPath, err.Error())
+			}
+		}
+		_ = engineInstance.Close()
+	})
+	if *managedTun {
+		if err = checkManagedTunReady(configData); err != nil {
+			closeEngine()
+			fail(*readyPath, err.Error())
+		}
+	}
 	if firewall != nil {
 		if err = firewall.allowTun(protection); err != nil {
-			_ = engineInstance.Close()
+			closeEngine()
 			fail(*readyPath, "enable WireGuard TUN protection: "+err.Error())
 		}
 	}
 
 	stop := make(chan struct{})
-	server, err := engine.NewServer(engineInstance, *token, func() {
-		_ = engineInstance.Close()
-		close(stop)
-	})
+	server, err := engine.NewServer(engineInstance, *token, func() { close(stop) }, closeEngine)
 	if err != nil {
-		_ = engineInstance.Close()
+		closeEngine()
 		fail(*readyPath, "listen control socket: "+err.Error())
 	}
 	go server.Serve()
@@ -116,14 +144,11 @@ func main() {
 		Mode:      *mode,
 		Version:   version,
 	}); err != nil {
-		_ = engineInstance.Close()
+		closeEngine()
 		server.Close()
 		fail(*readyPath, "write ready file: "+err.Error())
 	}
 	defer engine.RemoveFile(*readyPath)
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
@@ -131,7 +156,7 @@ func main() {
 	for {
 		select {
 		case <-signals:
-			_ = engineInstance.Close()
+			closeEngine()
 			server.Close()
 			return
 		case <-stop:
@@ -139,7 +164,7 @@ func main() {
 		case <-ticker.C:
 			if time.Since(server.LastActive()) > lease {
 				log.Printf("control lease expired; shutting down")
-				_ = engineInstance.Close()
+				closeEngine()
 				server.Close()
 				return
 			}

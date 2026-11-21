@@ -14,7 +14,11 @@ class RuntimeException implements Exception {
 }
 
 class RuntimeGroup {
-  const RuntimeGroup({required this.kind, required this.selected, required this.all});
+  const RuntimeGroup({
+    required this.kind,
+    required this.selected,
+    required this.all,
+  });
   final String kind;
   final String selected;
   final List<String> all;
@@ -54,18 +58,18 @@ class RuntimeTraffic {
   final int uptimeMs;
 
   Map<String, dynamic> toJson() => {
-        'uploaded': uploaded,
-        'downloaded': downloaded,
-        'connections': connections,
-        'uptimeMs': uptimeMs,
-      };
+    'uploaded': uploaded,
+    'downloaded': downloaded,
+    'connections': connections,
+    'uptimeMs': uptimeMs,
+  };
 
   factory RuntimeTraffic.fromJson(Map<String, dynamic> json) => RuntimeTraffic(
-        uploaded: (json['uploaded'] as num?)?.toInt() ?? 0,
-        downloaded: (json['downloaded'] as num?)?.toInt() ?? 0,
-        connections: (json['connections'] as num?)?.toInt() ?? 0,
-        uptimeMs: (json['uptimeMs'] as num?)?.toInt() ?? 0,
-      );
+    uploaded: (json['uploaded'] as num?)?.toInt() ?? 0,
+    downloaded: (json['downloaded'] as num?)?.toInt() ?? 0,
+    connections: (json['connections'] as num?)?.toInt() ?? 0,
+    uptimeMs: (json['uptimeMs'] as num?)?.toInt() ?? 0,
+  );
 }
 
 class RuntimeConnection {
@@ -129,10 +133,10 @@ class InstalledApp {
   final bool system;
 
   factory InstalledApp.fromJson(Map<String, dynamic> json) => InstalledApp(
-        packageName: json['package'] as String? ?? '',
-        label: json['label'] as String? ?? '',
-        system: json['system'] == true,
-      );
+    packageName: json['package'] as String? ?? '',
+    label: json['label'] as String? ?? '',
+    system: json['system'] == true,
+  );
 }
 
 abstract class RuntimeClient {
@@ -146,6 +150,7 @@ abstract class RuntimeClient {
   Future<RuntimeTraffic> fetchTraffic();
   Future<List<RuntimeConnection>> fetchConnections();
   Future<void> select(String tag);
+
   /// Applies one completed round; a null delay marks a failed probe.
   Future<void> refreshAuto(Map<String, int?> delays);
   Future<Map<String, RuntimeTestResult>> test(List<String> tags, String url);
@@ -156,12 +161,13 @@ abstract class RuntimeClient {
   Future<void> shutdown();
   Future<void> cleanupStale();
   Future<List<InstalledApp>> installedApps() async => const [];
-  Future<Uint8List?> installedAppIcon(String packageName, int size) async => null;
+  Future<Uint8List?> installedAppIcon(String packageName, int size) async =>
+      null;
   Future<List<String>> systemDnsServers() async => const [];
 }
 
-class WindowsRuntimeClient implements RuntimeClient {
-  WindowsRuntimeClient(this.paths);
+class DesktopRuntimeClient implements RuntimeClient {
+  DesktopRuntimeClient(this.paths);
 
   final AppPaths paths;
   Process? _process;
@@ -175,15 +181,19 @@ class WindowsRuntimeClient implements RuntimeClient {
   bool _authorized = false;
   bool _stopping = false;
   String? _lastError;
+  int? _exitCode;
+  bool _linuxConnected = false;
 
-  File get _readyFile => File('${paths.runtime.path}${Platform.pathSeparator}ready.json');
+  File get _readyFile =>
+      File('${paths.runtime.path}${Platform.pathSeparator}ready.json');
   File get _errorFile => File('${_readyFile.path}.error');
 
   @override
   Future<List<InstalledApp>> installedApps() async => const [];
 
   @override
-  Future<Uint8List?> installedAppIcon(String packageName, int size) async => null;
+  Future<Uint8List?> installedAppIcon(String packageName, int size) async =>
+      null;
 
   @override
   Future<List<String>> systemDnsServers() async => const [];
@@ -198,49 +208,105 @@ class WindowsRuntimeClient implements RuntimeClient {
     await shutdown();
     _stopping = false;
     _lastError = null;
+    _exitCode = null;
     await paths.runtime.create(recursive: true);
     if (await _readyFile.exists()) await _readyFile.delete();
     if (await _errorFile.exists()) await _errorFile.delete();
     if (await paths.logFile.exists()) await paths.logFile.delete();
 
-    final token = _randomToken();
-    final worker = locateRuntimeBinary('nekoproxy-worker.exe');
-    if (worker == null) throw const RuntimeException('未找到 nekoproxy-worker.exe，请先构建运行组件。');
+    final token = Platform.isLinux ? null : _randomToken();
+    final worker = desktopWorkerPath(tun: mode == 'tun');
 
-    final process = await Process.start(
+    final process = await _startWorker(
       worker,
       [
-        '-config', '-',
-        '-ready', _readyFile.path,
-        '-log', paths.logFile.path,
-        '-install-dir', paths.base.parent.path,
-        '-token', token,
-        '-mode', mode,
-        '-lease', '120',
+        if (Platform.isLinux && mode == 'tun') '-supervise-tun',
+        '-config',
+        '-',
+        '-ready',
+        _readyFile.path,
+        '-log',
+        paths.logFile.path,
+        '-install-dir',
+        Platform.isLinux ? paths.base.path : paths.base.parent.path,
+        if (token != null) ...['-token', token],
+        '-mode',
+        mode,
+        '-lease',
+        '120',
       ],
       workingDirectory: paths.runtime.path,
       environment: {'TEMP': paths.runtime.path, 'TMP': paths.runtime.path},
       runInShell: false,
     );
     _process = process;
+    if (Platform.isLinux) {
+      // Even a startup error before the log is opened must drain the pipes.
+      unawaited(process.stdout.drain<void>());
+      unawaited(process.stderr.drain<void>());
+    }
     process.stdin.add(utf8.encode(config));
     await process.stdin.close();
-    unawaited(process.exitCode.then((code) {
-      if (!_stopping) {
-        _lastError = '内核进程已退出（代码 $code）';
-      }
-    }));
+    unawaited(
+      process.exitCode.then((code) {
+        if (identical(_process, process)) {
+          _exitCode = code;
+          if (!_stopping) _lastError = '内核进程已退出（代码 $code）';
+        }
+      }),
+    );
 
-    final ready = await _waitForReady();
+    final ready = await _waitForReady(process);
     _token = ready['token'] as String? ?? token;
+    if (_token == null) throw const RuntimeException('内核未提供控制令牌。');
     await _connect(ready['port'] as int);
     final status = await fetchStatus();
+    if (Platform.isLinux) {
+      if (!status.running) throw RuntimeException(status.error ?? '内核已停止');
+      _linuxConnected = true;
+    }
     return status;
   }
 
-  Future<Map<String, dynamic>> _waitForReady() async {
+  Future<String?> _readWorkerError() async {
+    try {
+      final message = (await _errorFile.readAsString()).trim();
+      return message.isEmpty ? null : message;
+    } on FileSystemException {
+      // The worker creates this file only when it has an error to report.
+      return null;
+    }
+  }
+
+  Future<Process> _startWorker(
+    String executable,
+    List<String> arguments, {
+    required String workingDirectory,
+    required Map<String, String> environment,
+    required bool runInShell,
+  }) async {
+    try {
+      return await Process.start(
+        executable,
+        arguments,
+        workingDirectory: workingDirectory,
+        environment: environment,
+        runInShell: runInShell,
+      );
+    } on ProcessException catch (error) {
+      if (Platform.isLinux && executable == linuxTunWorkerPath) {
+        throw const RuntimeException('无法启动 TUN 组件。请确认当前用户已获得 TUN 授权并重新登录。');
+      }
+      throw RuntimeException('无法启动内核（错误代码 ${error.errorCode}）');
+    }
+  }
+
+  Future<Map<String, dynamic>> _waitForReady(Process process) async {
     final deadline = DateTime.now().add(const Duration(seconds: 30));
     while (DateTime.now().isBefore(deadline)) {
+      if (!identical(_process, process) || _stopping) {
+        throw const RuntimeException('内核启动已取消');
+      }
       if (await _readyFile.exists()) {
         try {
           final data = jsonDecode(await _readyFile.readAsString());
@@ -251,10 +317,15 @@ class WindowsRuntimeClient implements RuntimeClient {
       }
       if (await _errorFile.exists()) {
         final message = await _errorFile.readAsString();
-        throw RuntimeException(message.trim().isEmpty ? '内核启动失败' : message.trim());
+        throw RuntimeException(
+          message.trim().isEmpty ? '内核启动失败' : message.trim(),
+        );
       }
       if (_process != null) {
-        final exit = await _process!.exitCode.timeout(const Duration(milliseconds: 1), onTimeout: () => -999);
+        final exit = await _process!.exitCode.timeout(
+          const Duration(milliseconds: 1),
+          onTimeout: () => -999,
+        );
         if (exit != -999) {
           throw RuntimeException(_lastError ?? '内核进程已退出');
         }
@@ -266,7 +337,11 @@ class WindowsRuntimeClient implements RuntimeClient {
 
   Future<void> _connect(int port) async {
     await _closeSocket();
-    final socket = await Socket.connect('127.0.0.1', port, timeout: const Duration(seconds: 8));
+    final socket = await Socket.connect(
+      '127.0.0.1',
+      port,
+      timeout: const Duration(seconds: 8),
+    );
     _socket = socket;
     _authorized = false;
     _authorization = Completer<void>();
@@ -274,21 +349,34 @@ class WindowsRuntimeClient implements RuntimeClient {
         .cast<List<int>>()
         .transform(utf8.decoder)
         .transform(const LineSplitter())
-        .listen(_handleLine, onError: (Object error) {
-      _lastError = '控制连接错误：$error';
-      _failPending(error.toString());
-    }, onDone: () {
-      _failPending('控制连接已关闭');
-      _authorized = false;
-    });
+        .listen(
+          _handleLine,
+          onError: (Object error) {
+            _lastError = '控制连接错误：$error';
+            _failPending(error.toString());
+          },
+          onDone: () {
+            _failPending('控制连接已关闭');
+            _authorized = false;
+          },
+        );
     socket.write('${jsonEncode({'token': _token})}\n');
-    await _authorization!.future.timeout(const Duration(seconds: 8), onTimeout: () {
-      throw const RuntimeException('控制通道鉴权超时');
-    });
+    await _authorization!.future.timeout(
+      const Duration(seconds: 8),
+      onTimeout: () {
+        throw const RuntimeException('控制通道鉴权超时');
+      },
+    );
     _heartbeat?.cancel();
     _heartbeat = Timer.periodic(const Duration(seconds: 15), (_) {
       if (_socket == null) return;
-      unawaited(_request('ping', const {}, timeout: const Duration(seconds: 5)).then((_) {}, onError: (_) {}));
+      unawaited(
+        _request(
+          'ping',
+          const {},
+          timeout: const Duration(seconds: 5),
+        ).then((_) {}, onError: (_) {}),
+      );
     });
   }
 
@@ -318,7 +406,9 @@ class WindowsRuntimeClient implements RuntimeClient {
     if (map['ok'] == true) {
       completer.complete(map);
     } else {
-      completer.completeError(RuntimeException(map['error'] as String? ?? '内核返回错误'));
+      completer.completeError(
+        RuntimeException(map['error'] as String? ?? '内核返回错误'),
+      );
     }
   }
 
@@ -345,14 +435,24 @@ class WindowsRuntimeClient implements RuntimeClient {
     final pending = List.of(_pending.values);
     _pending.clear();
     for (final completer in pending) {
-      if (!completer.isCompleted) completer.completeError(RuntimeException(message));
+      if (!completer.isCompleted)
+        completer.completeError(RuntimeException(message));
     }
   }
 
   @override
   Future<RuntimeStatus> fetchStatus() async {
+    if (Platform.isLinux && _exitCode != null) {
+      _linuxConnected = false;
+      return RuntimeStatus(
+        running: false,
+        error: await _readWorkerError() ?? _lastError,
+      );
+    }
     final response = await _request('status', const {});
-    final data = Map<String, dynamic>.from(response['data'] as Map? ?? const {});
+    final data = Map<String, dynamic>.from(
+      response['data'] as Map? ?? const {},
+    );
     final groups = <String, RuntimeGroup>{};
     final rawGroups = data['groups'];
     if (rawGroups is Map) {
@@ -362,7 +462,9 @@ class WindowsRuntimeClient implements RuntimeClient {
         groups[entry.key.toString()] = RuntimeGroup(
           kind: value['kind'] as String? ?? '',
           selected: value['selected'] as String? ?? '',
-          all: (value['all'] as List? ?? const []).map((e) => e.toString()).toList(),
+          all: (value['all'] as List? ?? const [])
+              .map((e) => e.toString())
+              .toList(),
         );
       }
     }
@@ -379,7 +481,9 @@ class WindowsRuntimeClient implements RuntimeClient {
   @override
   Future<RuntimeTraffic> fetchTraffic() async {
     final response = await _request('traffic', const {});
-    return RuntimeTraffic.fromJson(Map<String, dynamic>.from(response['data'] as Map? ?? const {}));
+    return RuntimeTraffic.fromJson(
+      Map<String, dynamic>.from(response['data'] as Map? ?? const {}),
+    );
   }
 
   @override
@@ -404,21 +508,27 @@ class WindowsRuntimeClient implements RuntimeClient {
   }
 
   @override
-  Future<Map<String, RuntimeTestResult>> test(List<String> tags, String url) async {
-    final response = await _request(
-      'test',
-      {'tags': tags, 'url': url},
-      timeout: const Duration(seconds: 45),
-    );
+  Future<Map<String, RuntimeTestResult>> test(
+    List<String> tags,
+    String url,
+  ) async {
+    final response = await _request('test', {
+      'tags': tags,
+      'url': url,
+    }, timeout: const Duration(seconds: 45));
     final data = response['data'];
     final result = <String, RuntimeTestResult>{};
     if (data is Map) {
       for (final entry in data.entries) {
         final value = entry.value;
         if (value is Map && value['delay'] is num) {
-          result[entry.key.toString()] = RuntimeTestResult(delay: (value['delay'] as num).toInt());
+          result[entry.key.toString()] = RuntimeTestResult(
+            delay: (value['delay'] as num).toInt(),
+          );
         } else if (value is Map) {
-          result[entry.key.toString()] = RuntimeTestResult(error: value['error']?.toString() ?? '测速失败');
+          result[entry.key.toString()] = RuntimeTestResult(
+            error: value['error']?.toString() ?? '测速失败',
+          );
         }
       }
     }
@@ -446,29 +556,42 @@ class WindowsRuntimeClient implements RuntimeClient {
   @override
   Future<void> shutdown() async {
     _stopping = true;
+    final reportError = _linuxConnected;
+    _linuxConnected = false;
     _heartbeat?.cancel();
     _heartbeat = null;
     final socket = _socket;
     if (socket != null && _authorized) {
       try {
-        await _request('shutdown', const {}, timeout: const Duration(seconds: 4));
+        await _request(
+          'shutdown',
+          const {},
+          timeout: const Duration(seconds: 4),
+        );
       } catch (_) {}
     }
     await _closeSocket();
     final process = _process;
+    int? exitCode;
     if (process != null) {
       try {
-        await process.exitCode.timeout(const Duration(seconds: 3));
+        exitCode = await process.exitCode.timeout(const Duration(seconds: 3));
       } on TimeoutException {
         process.kill();
         try {
-          await process.exitCode.timeout(const Duration(seconds: 2));
+          exitCode = await process.exitCode.timeout(
+            Duration(seconds: Platform.isLinux ? 8 : 2),
+          );
         } catch (_) {}
       }
     }
     _process = null;
     _authorized = false;
     _stopping = false;
+    if (reportError && exitCode != 0) {
+      final message = await _readWorkerError();
+      throw RuntimeException(message ?? 'Linux 内核关闭失败');
+    }
   }
 
   @override
@@ -480,12 +603,20 @@ class WindowsRuntimeClient implements RuntimeClient {
       final port = (decoded['port'] as num?)?.toInt();
       final token = decoded['token'] as String?;
       if (port == null || token == null) return;
-      final socket = await Socket.connect('127.0.0.1', port, timeout: const Duration(seconds: 1));
+      final socket = await Socket.connect(
+        '127.0.0.1',
+        port,
+        timeout: const Duration(seconds: 1),
+      );
       _socket = socket;
       _token = token;
       _authorized = false;
       _authorization = Completer<void>();
-      _lineSubscription = socket.cast<List<int>>().transform(utf8.decoder).transform(const LineSplitter()).listen(_handleLine);
+      _lineSubscription = socket
+          .cast<List<int>>()
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .listen(_handleLine);
       socket.write('${jsonEncode({'token': token})}\n');
       await _authorization!.future.timeout(const Duration(seconds: 2));
       await _request('shutdown', const {}, timeout: const Duration(seconds: 2));
@@ -512,8 +643,25 @@ class WindowsRuntimeClient implements RuntimeClient {
 
   String _randomToken() {
     final random = Random.secure();
-    return List.generate(32, (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
+    return List.generate(
+      32,
+      (_) => random.nextInt(256).toRadixString(16).padLeft(2, '0'),
+    ).join();
   }
+}
+
+const linuxTunWorkerPath = '/usr/lib/nekoproxy/nekoproxy-tun-worker';
+
+String desktopWorkerPath({bool tun = false}) {
+  if (Platform.isLinux && tun) {
+    if (!File(linuxTunWorkerPath).existsSync()) {
+      throw const RuntimeException('缺少 TUN 组件，请安装 NekoProxy 的 .deb 软件包。');
+    }
+    return linuxTunWorkerPath;
+  }
+  final name = Platform.isLinux ? 'nekoproxy-worker' : 'nekoproxy-worker.exe';
+  return locateRuntimeBinary(name) ??
+      (throw RuntimeException('未找到 $name，请先构建运行组件。'));
 }
 
 String? locateRuntimeBinary(String name) {
@@ -524,13 +672,19 @@ String? locateRuntimeBinary(String name) {
   }
   final exeDir = File(Platform.resolvedExecutable).parent;
   candidates.add('${exeDir.path}${Platform.pathSeparator}$name');
-  candidates.add('${exeDir.path}${Platform.pathSeparator}runtime${Platform.pathSeparator}$name');
+  candidates.add(
+    '${exeDir.path}${Platform.pathSeparator}runtime${Platform.pathSeparator}$name',
+  );
   var directory = exeDir;
   for (var i = 0; i < 5; i++) {
-    candidates.add('${directory.path}${Platform.pathSeparator}build${Platform.pathSeparator}$name');
+    candidates.add(
+      '${directory.path}${Platform.pathSeparator}build${Platform.pathSeparator}$name',
+    );
     directory = directory.parent;
   }
-  candidates.add('${Directory.current.path}${Platform.pathSeparator}build${Platform.pathSeparator}$name');
+  candidates.add(
+    '${Directory.current.path}${Platform.pathSeparator}build${Platform.pathSeparator}$name',
+  );
   for (final candidate in candidates) {
     if (File(candidate).existsSync()) return candidate;
   }

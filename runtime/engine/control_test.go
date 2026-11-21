@@ -37,7 +37,7 @@ func TestControlReturnsCompletedProbeWhileAnotherIsPending(t *testing.T) {
 	}`)); err != nil {
 		t.Fatal(err)
 	}
-	control, err := NewServer(core, "test-token", nil)
+	control, err := NewServer(core, "test-token", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

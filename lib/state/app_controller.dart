@@ -19,7 +19,9 @@ import '../services/app_update_service.dart';
 import '../services/backup_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/exit_info_service.dart';
+import '../services/linux_system_proxy.dart';
 import '../services/rule_set_manager.dart';
+import '../services/system_proxy.dart';
 import '../services/windows_system_proxy.dart';
 
 const _latencyTestConcurrency = 32;
@@ -45,7 +47,7 @@ class AppController extends ChangeNotifier {
   late final AppStorage storage;
   late final RuntimeClient runtime;
   late final RuleSetManager ruleSets;
-  WindowsSystemProxy? systemProxy;
+  SystemProxy? systemProxy;
 
   RuleSetStatus? ruleSetStatus;
   bool updatingRuleSets = false;
@@ -184,6 +186,8 @@ class AppController extends ChangeNotifier {
   int _appliedStatusRequest = 0;
   int _pollFailures = 0;
   bool _rebuilding = false;
+  bool _closing = false;
+  Future<void>? _connecting;
   bool _changingWireGuard = false;
   bool _savingAdvancedConfig = false;
   int _lastUpTotal = 0;
@@ -192,9 +196,18 @@ class AppController extends ChangeNotifier {
 
   bool get isWindows => Platform.isWindows;
   bool get isAndroid => Platform.isAndroid;
-  bool get supportsSystemProxy => Platform.isWindows;
-  bool get supportsTun => Platform.isWindows || Platform.isAndroid;
-  bool get canChangeTakeover => !busy && !_savingTakeover && !_rebuilding;
+  bool get isLinux => Platform.isLinux;
+  bool get supportsSystemProxy =>
+      Platform.isWindows || (isLinux && systemProxy != null);
+  bool get supportsTun => Platform.isWindows || Platform.isAndroid || isLinux;
+
+  CompileTarget get _compileTarget => isAndroid
+      ? CompileTarget.android
+      : isLinux
+      ? CompileTarget.linux
+      : CompileTarget.windows;
+  bool get canChangeTakeover =>
+      !_closing && !busy && !_savingTakeover && !_rebuilding;
   bool get tunManagedByConfig =>
       snapshot.useCustomConfig || snapshot.advancedJson.containsKey('inbounds');
   bool get tunTakeoverEnabled =>
@@ -459,7 +472,7 @@ class AppController extends ChangeNotifier {
 
   RoutingPreview previewRouting() => ConfigCompiler.previewRouting(
     snapshot,
-    target: isAndroid ? CompileTarget.android : CompileTarget.windows,
+    target: _compileTarget,
     ruleSetPaths: initialized ? ruleSets.pathsByTag : null,
   );
 
@@ -491,10 +504,15 @@ class AppController extends ChangeNotifier {
 
   String? get coreRunError => runtimeStatus?.error ?? error;
 
-  Future<void> initialize() async {
-    paths = await AppPaths.resolve();
+  Future<void> initialize({AppPaths? appPaths}) async {
+    paths = appPaths ?? await AppPaths.resolve();
     storage = AppStorage(paths);
-    systemProxy = Platform.isWindows ? WindowsSystemProxy(paths) : null;
+    final proxySnapshot = paths.proxySnapshotFile;
+    systemProxy = Platform.isWindows
+        ? WindowsSystemProxy(paths)
+        : isLinux
+        ? await LinuxSystemProxy.detect(proxySnapshot)
+        : null;
     final loaded = await storage.load();
     if (_disposed) return;
     snapshot = loaded.snapshot;
@@ -510,19 +528,22 @@ class AppController extends ChangeNotifier {
     loadWarning = loaded.warning;
     runtime = Platform.isAndroid
         ? AndroidRuntimeClient(paths)
-        : WindowsRuntimeClient(paths);
+        : DesktopRuntimeClient(paths);
     // Neither task needs results from the other. Both must finish before
     // the home page can compile a config or start a new core.
     await Future.wait([_initializeRuleSets(), _cleanupStaleRuntime()]);
     if (_disposed) return;
-    if (systemProxy != null) {
-      final restored = systemProxy!.restoreIfOwned();
-      if (!restored.ok) {
-        loadWarning = [
-          loadWarning,
-          restored.error,
-        ].whereType<String>().join('\n');
-      }
+    final restored = await systemProxy?.restoreIfOwned();
+    final restoreWarning =
+        restored?.error ??
+        (isLinux && systemProxy == null && await proxySnapshot.exists()
+            ? '请在原桌面会话中恢复上一次的系统代理设置'
+            : null);
+    if (restoreWarning != null) {
+      loadWarning = [
+        loadWarning,
+        restoreWarning,
+      ].whereType<String>().join('\n');
     }
     initialized = true;
     notifyListeners();
@@ -660,7 +681,7 @@ class AppController extends ChangeNotifier {
   CompiledConfig compile([AppSnapshot? candidate]) {
     return ConfigCompiler.compile(
       candidate ?? snapshot,
-      target: isAndroid ? CompileTarget.android : CompileTarget.windows,
+      target: _compileTarget,
       cachePath: '${paths.runtime.path}${Platform.pathSeparator}cache.db',
       logPath: paths.logFile.path,
       systemDnsServers: _systemDns,
@@ -824,6 +845,17 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> _connect() async {
+    if (_closing || _connecting != null) return;
+    final connecting = _connectOnce();
+    _connecting = connecting;
+    try {
+      await connecting;
+    } finally {
+      _connecting = null;
+    }
+  }
+
+  Future<void> _connectOnce() async {
     if (busy || running || (_changingWireGuard && !_rebuilding)) return;
     if (!canConnect) {
       _setError(
@@ -905,8 +937,8 @@ class AppController extends ChangeNotifier {
       } catch (_) {
         // Status is best effort; the poll loop retries and reports a stop.
       }
-      if (settings.systemProxyEnabled && systemProxy != null) {
-        final result = systemProxy!.enable(settings.inboundOrDefault.localPort);
+      if (!_closing && settings.systemProxyEnabled && systemProxy != null) {
+        final result = await _enableSystemProxy(systemProxy!);
         if (!result.ok) {
           error = result.error;
         }
@@ -918,7 +950,7 @@ class AppController extends ChangeNotifier {
       _pollTimer?.cancel();
       _uiTimer?.cancel();
       _setError(_friendlyError(e));
-      systemProxy?.disable();
+      await _restoreSystemProxy();
       // A timed-out start can still own a live VpnService/TUN; tear it down so
       // the device is never left routing traffic into a dead engine.
       await runtime.shutdown();
@@ -960,7 +992,7 @@ class AppController extends ChangeNotifier {
       return;
     }
     try {
-      systemProxy?.disable();
+      await _restoreSystemProxy();
       await runtime.shutdown();
     } catch (e) {
       if (!silent) _setError(_friendlyError(e));
@@ -1140,6 +1172,47 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<ProxyApplyResult> _enableSystemProxy(SystemProxy proxy) async {
+    var port = settings.inboundOrDefault.localPort;
+    if (isLinux) {
+      final inbounds = _compiled?.json['inbounds'];
+      final mixed = inbounds is List
+          ? inbounds.whereType<Map>().where(
+              (inbound) =>
+                  inbound['type'] == 'mixed' &&
+                  const {'127.0.0.1', '0.0.0.0'}.contains(inbound['listen']),
+            )
+          : const <Map>[];
+      if (mixed.length != 1) {
+        return const ProxyApplyResult(
+          ok: false,
+          error: '系统代理需要一个监听 IPv4 回环的混合入站，请按实际入站手动配置。',
+        );
+      }
+      final inbound = mixed.single;
+      final users = inbound['users'];
+      if (users != null && (users is! List || users.isNotEmpty)) {
+        return const ProxyApplyResult(
+          ok: false,
+          error: '当前混合入站需要认证，请在应用中手动配置代理。',
+        );
+      }
+      final listenPort = inbound['listen_port'];
+      if (listenPort is! int || listenPort < 1 || listenPort > 65535) {
+        return const ProxyApplyResult(ok: false, error: '混合入站端口无效');
+      }
+      port = listenPort;
+    }
+    return proxy.enable(port);
+  }
+
+  Future<void> _restoreSystemProxy() async {
+    final restored = await systemProxy?.disable();
+    if (isLinux && restored?.error != null) {
+      error = [error, restored?.error].whereType<String>().join('\n');
+    }
+  }
+
   Future<void> setSystemProxy(bool enabled) async {
     if (!supportsSystemProxy ||
         !canChangeTakeover ||
@@ -1152,10 +1225,10 @@ class AppController extends ChangeNotifier {
     try {
       await storage.save(snapshot);
       final proxy = systemProxy;
-      if (running && !busy && proxy != null) {
+      if (!_closing && running && !busy && proxy != null) {
         final result = enabled
-            ? proxy.enable(current.inboundOrDefault.localPort)
-            : proxy.disable();
+            ? await _enableSystemProxy(proxy)
+            : await proxy.disable();
         if (!result.ok) {
           current.systemProxyEnabled = !enabled;
           await storage.save(snapshot);
@@ -1478,9 +1551,7 @@ class AppController extends ChangeNotifier {
         }
         testCompiled = ConfigCompiler.compile(
           snapshot,
-          target: Platform.isAndroid
-              ? CompileTarget.android
-              : CompileTarget.windows,
+          target: _compileTarget,
           cachePath: '${paths.runtime.path}${Platform.pathSeparator}cache.db',
           testOnly: true,
           systemDnsServers: _systemDns,
@@ -1611,7 +1682,7 @@ class AppController extends ChangeNotifier {
                 wireGuardProfileId: profile.id,
                 wireGuardProfiles: [profile],
               ),
-              target: isAndroid ? CompileTarget.android : CompileTarget.windows,
+              target: _compileTarget,
               cachePath: paths.runtime.path,
               testOnly: true,
               systemDnsServers: _systemDns,
@@ -2397,6 +2468,8 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> shutdownForExit() async {
+    _closing = true;
+    await _connecting;
     _cancelExitInfo();
     _subscriptionTimer?.cancel();
     _stopRuleSetUpdates();
@@ -2405,7 +2478,7 @@ class AppController extends ChangeNotifier {
     _pollGeneration++;
     _invalidateConnectionRefresh();
     _cancelNodeTests();
-    systemProxy?.disable();
+    await _restoreSystemProxy();
     await _stopTemporaryTestRuntime();
     await runtime.shutdown();
   }
@@ -2561,7 +2634,7 @@ class AppController extends ChangeNotifier {
     _polling = false;
     connectedAt = null;
     error = message;
-    systemProxy?.disable();
+    await _restoreSystemProxy();
     // Stop the host runtime as well; on Android the VpnService and its TUN
     // survive an engine crash and would blackhole all device traffic.
     await runtime.shutdown();

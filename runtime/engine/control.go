@@ -38,12 +38,16 @@ type Server struct {
 	done       chan struct{}
 	closeOnce  sync.Once
 	onStop     func()
+	shutdown   func()
 }
 
-func NewServer(engine *Engine, token string, onStop func()) (*Server, error) {
+func NewServer(engine *Engine, token string, onStop func(), shutdown func()) (*Server, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
+	}
+	if shutdown == nil {
+		shutdown = func() { _ = engine.Close() }
 	}
 	server := &Server{
 		engine:   engine,
@@ -51,6 +55,7 @@ func NewServer(engine *Engine, token string, onStop func()) (*Server, error) {
 		listener: listener,
 		done:     make(chan struct{}),
 		onStop:   onStop,
+		shutdown: shutdown,
 	}
 	server.lastActive.Store(time.Now().UnixMilli())
 	return server, nil
@@ -198,7 +203,7 @@ func (s *Server) execute(ctx context.Context, request Request) Response {
 		s.engine.CloseConnections()
 		return Response{OK: true}
 	case "shutdown":
-		_ = s.engine.Close()
+		s.shutdown()
 		return Response{OK: true}
 	default:
 		return Response{Error: "unknown command"}

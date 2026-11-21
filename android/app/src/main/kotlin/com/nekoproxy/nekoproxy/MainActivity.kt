@@ -81,6 +81,7 @@ class MainActivity : FlutterActivity() {
                 result.error("app_icon_error", error.message, null)
             }
         }
+        LauncherIcon.register(this, messenger)
         AppUpdateInstaller.register(this, messenger)
     }
 

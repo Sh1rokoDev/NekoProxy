@@ -71,7 +71,7 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
       _controller.appearanceTick.addListener(_syncWindowBackground);
       // Native window changes can synchronously notify Flutter of new metrics.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) unawaited(_bootstrap());
+        if (mounted) _startBootstrap();
       });
     } else {
       if (Platform.isLinux) {
@@ -84,7 +84,8 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
   }
 
   void _startBootstrap() {
-    _startup = _bootstrap();
+    if (_startup != null || _ready || _exiting) return;
+    _startup = _bootstrap().whenComplete(() => _startup = null);
     unawaited(_startup);
   }
 
@@ -106,10 +107,14 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
         .open(mode: FileMode.append);
     try {
       await lock.lock(FileLock.exclusive);
-      _linuxInstanceLock = lock;
     } on FileSystemException {
       await lock.close();
       throw StateError('当前用户已有一个 NekoProxy 实例正在运行。');
+    }
+    if (mounted && !_exiting) {
+      _linuxInstanceLock = lock;
+    } else {
+      await lock.close();
     }
     return paths;
   }
@@ -119,18 +124,21 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
       if (Platform.isWindows) {
         _setupWindow();
       }
-      await _controller.initialize(
-        appPaths: Platform.isLinux ? await _linuxAppPaths() : null,
-      );
-      if (!mounted) return;
+      final paths = Platform.isLinux ? await _linuxAppPaths() : null;
+      if (!mounted || _exiting) return;
+      await _controller.initialize(appPaths: paths);
+      if (!mounted || _exiting) return;
       if (Platform.isWindows) {
         _setupTray();
       }
       setState(() => _ready = true);
       _syncWindowBackground();
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _fatal = e);
+      if (!mounted || _exiting) return;
+      setState(() {
+        _ready = false;
+        _fatal = e;
+      });
       _syncWindowBackground();
     }
   }
@@ -181,8 +189,14 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
         : _splashBackground(brightness);
     if (background == _windowBackground) return;
     // The parent fills the exposed area while Flutter's resize is pending.
-    window.backgroundColor = background.toNative();
-    _windowBackground = background;
+    try {
+      window.backgroundColor = background.toNative();
+      _windowBackground = background;
+    } catch (error) {
+      debugPrint(
+        'Could not update the window background: ${error.runtimeType}',
+      );
+    }
   }
 
   void _setupTray() {
@@ -253,20 +267,20 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
   Future<void> _exitApplication() async {
     if (_exiting) return;
     _exiting = true;
-    if (Platform.isLinux) {
-      try {
-        await _startup;
-        if (_ready) await _controller.shutdownForExit();
-      } finally {
-        try {
-          await _linuxInstanceLock?.close();
-        } finally {
-          exit(0);
-        }
-      }
+    try {
+      await Future.wait([?_startup, _controller.shutdownForExit()]);
+    } catch (error) {
+      debugPrint('Could not complete runtime shutdown: ${error.runtimeType}');
     }
-    await _controller.shutdownForExit();
-    if (Platform.isWindows) {
+    if (Platform.isLinux) {
+      final lock = _linuxInstanceLock;
+      _linuxInstanceLock = null;
+      try {
+        await lock?.close();
+      } on FileSystemException catch (error) {
+        debugPrint('Could not close the instance lock: ${error.osError}');
+      }
+    } else if (Platform.isWindows) {
       try {
         _disposeTray();
       } catch (e) {

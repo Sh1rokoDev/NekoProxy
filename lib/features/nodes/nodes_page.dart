@@ -23,6 +23,9 @@ class NodesPage extends StatefulWidget {
 }
 
 class _NodesPageState extends State<NodesPage> {
+  // Keep compact groups as one animated, draggable card.
+  static const _inlineRowLimit = 12;
+
   final Set<String> _updating = {};
   final Set<String> _collapsed = {};
   final Set<String> _collapsedWireGuard = {};
@@ -31,7 +34,12 @@ class _NodesPageState extends State<NodesPage> {
   String _query = '';
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) =>
+        _buildPage(context, constraints.maxWidth),
+  );
+
+  Widget _buildPage(BuildContext context, double width) {
     final controller = AppScope.of(context);
     final dockInset = MediaQuery.paddingOf(context).bottom;
     final hasNodes = controller.hasNodes;
@@ -93,6 +101,34 @@ class _NodesPageState extends State<NodesPage> {
         snapshot.wireGuardProfiles.any(
           (profile) => profile.id != controller.activeWireGuard?.id,
         );
+    const pageInset = 24.0;
+    final gutter =
+        (width - 2 * pageInset - PageFrame.maxContentWidth).clamp(
+          0.0,
+          double.infinity,
+        ) /
+        2;
+    final entries = <({int groupIndex, int? row})>[];
+    final columnsByGroup = <String, int>{};
+    for (final (index, key) in visibleKeys.indexed) {
+      entries.add((groupIndex: index, row: null));
+      final group = groups[key];
+      if (group == null || (_query.isEmpty && _collapsed.contains(group.id))) {
+        continue;
+      }
+      final cardWidth =
+          width -
+          2 * (pageInset + gutter) -
+          ReorderableNodeGroup.leadingInset -
+          (group.active ? 2.8 : 2);
+      final columns = NodeGrid.columnsForWidth(cardWidth);
+      final rows = (group.nodes.length + columns - 1) ~/ columns;
+      if (rows <= _inlineRowLimit) continue;
+      columnsByGroup[key] = columns;
+      for (var row = 0; row < rows; row++) {
+        entries.add((groupIndex: index, row: row));
+      }
+    }
     return PageFrame(
       title: '节点',
       titleWidget: _searchOpen
@@ -216,134 +252,138 @@ class _NodesPageState extends State<NodesPage> {
           )
         else
           SliverPadding(
-            padding: EdgeInsets.fromLTRB(24, 0, 24, 168 + dockInset),
-            sliver: SliverLayoutBuilder(
-              builder: (context, constraints) {
-                final gutter =
-                    (constraints.crossAxisExtent - PageFrame.maxContentWidth)
-                        .clamp(0.0, double.infinity) /
-                    2;
-                return SliverPadding(
-                  padding: EdgeInsets.symmetric(horizontal: gutter),
-                  sliver: SliverReorderableList(
-                    proxyDecorator: (child, _, _) => child,
-                    onReorderItem: (oldIndex, newIndex) => _reorderGroups(
-                      visibleKeys,
-                      controller,
-                      oldIndex,
-                      newIndex,
+            padding: EdgeInsets.fromLTRB(
+              pageInset + gutter,
+              0,
+              pageInset + gutter,
+              168 + dockInset,
+            ),
+            sliver: SliverReorderableList(
+              proxyDecorator: (child, _, _) => child,
+              onReorderItem: (oldIndex, newIndex) => _reorderGroups(
+                visibleKeys,
+                controller,
+                entries[oldIndex].groupIndex,
+                entries[newIndex].groupIndex,
+              ),
+              itemCount: entries.length,
+              itemBuilder: (context, index) {
+                final entry = entries[index];
+                final key = visibleKeys[entry.groupIndex];
+                final wireGuard = wireGuardGroups[key];
+                if (wireGuard != null) {
+                  final id = wireGuard.group.id;
+                  return Padding(
+                    key: ValueKey(key),
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: WireGuardGroupCard(
+                      controller: controller,
+                      group: wireGuard.group,
+                      profiles: wireGuard.profiles,
+                      reorderIndex: index,
+                      reorderEnabled: reorderEnabled,
+                      expanded:
+                          _query.isNotEmpty ||
+                          !_collapsedWireGuard.contains(id),
+                      onToggleExpanded: () => setState(() {
+                        if (!_collapsedWireGuard.remove(id)) {
+                          _collapsedWireGuard.add(id);
+                        }
+                      }),
                     ),
-                    itemCount: visibleKeys.length,
-                    itemBuilder: (context, index) {
-                      final key = visibleKeys[index];
-                      final wireGuard = wireGuardGroups[key];
-                      if (wireGuard != null) {
-                        final id = wireGuard.group.id;
-                        return Padding(
-                          key: ValueKey(key),
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: WireGuardGroupCard(
-                            controller: controller,
-                            group: wireGuard.group,
-                            profiles: wireGuard.profiles,
-                            reorderIndex: index,
-                            reorderEnabled: reorderEnabled,
-                            expanded:
-                                _query.isNotEmpty ||
-                                !_collapsedWireGuard.contains(id),
-                            onToggleExpanded: () => setState(() {
-                              if (!_collapsedWireGuard.remove(id)) {
-                                _collapsedWireGuard.add(id);
-                              }
-                            }),
-                          ),
-                        );
+                  );
+                }
+                final group = groups[key]!;
+                Widget buildNode(int index) => _buildNodeTile(
+                  controller,
+                  group.nodes[index],
+                  highlightedId,
+                );
+                if (entry.row case final row?) {
+                  final columns = columnsByGroup[key]!;
+                  return _NodeGroupRow(
+                    key: ValueKey((key, row)),
+                    row: row,
+                    columns: columns,
+                    nodeCount: group.nodes.length,
+                    active: group.active,
+                    buildNode: buildNode,
+                  );
+                }
+                final hasBodyRows = columnsByGroup.containsKey(key);
+                return Padding(
+                  key: ValueKey(key),
+                  padding: EdgeInsets.only(bottom: hasBodyRows ? 0 : 12),
+                  child: _GroupCard(
+                    group: group,
+                    controller: controller,
+                    reorderIndex: index,
+                    reorderEnabled: reorderEnabled,
+                    hasBodyRows: hasBodyRows,
+                    expanded:
+                        _query.isNotEmpty || !_collapsed.contains(group.id),
+                    updating: _updating.contains(group.id),
+                    countLabel: _countLabel(group),
+                    onToggleExpanded: () => setState(() {
+                      if (!_collapsed.remove(group.id)) {
+                        _collapsed.add(group.id);
                       }
-                      final group = groups[key]!;
-                      return Padding(
-                        key: ValueKey(key),
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: _GroupCard(
-                          group: group,
-                          controller: controller,
-                          reorderIndex: index,
-                          reorderEnabled: reorderEnabled,
-                          highlightedId: highlightedId,
-                          expanded:
-                              _query.isNotEmpty ||
-                              !_collapsed.contains(group.id),
-                          updating: _updating.contains(group.id),
-                          countLabel: _countLabel(group),
-                          onToggleExpanded: () => setState(() {
-                            if (!_collapsed.remove(group.id)) {
-                              _collapsed.add(group.id);
-                            }
-                          }),
-                          onUpdate:
-                              group.subscription?.isUrlSubscription == true
-                              ? () => _updateSubscription(
-                                  controller,
-                                  group.subscription!,
-                                )
-                              : null,
-                          onEditGroup: group.subscription == null
-                              ? null
-                              : () => _showEditGroup(
-                                  context,
-                                  controller,
-                                  group.subscription!,
-                                ),
-                          onAddNode:
-                              group.subscription != null &&
-                                  !group.subscription!.isUrlSubscription
-                              ? () => _showGroupAddSheet(
-                                  context,
-                                  controller,
-                                  group.subscription!,
-                                )
-                              : null,
-                          onDeleteGroup: group.subscription == null
-                              ? null
-                              : () => _deleteGroup(
-                                  context,
-                                  controller,
-                                  group.subscription!,
-                                ),
-                          onFilter: group.subscription == null
-                              ? null
-                              : () => _showFilterDialog(
-                                  context,
-                                  controller,
-                                  group.subscription!,
-                                ),
-                          onSort: group.subscription == null
-                              ? null
-                              : () => _showSortDialog(
-                                  context,
-                                  controller,
-                                  group.subscription!,
-                                ),
-                          onToggleGroupAuto: group.subscription == null
-                              ? null
-                              : () => controller.toggleGroupAutoCandidate(
-                                  group.subscription!.id,
-                                ),
-                          onTest: () => _startNodeTest(
+                    }),
+                    onUpdate: group.subscription?.isUrlSubscription == true
+                        ? () => _updateSubscription(
+                            controller,
+                            group.subscription!,
+                          )
+                        : null,
+                    onEditGroup: group.subscription == null
+                        ? null
+                        : () => _showEditGroup(
                             context,
                             controller,
-                            group.nodes,
-                            groupId: group.id,
+                            group.subscription!,
                           ),
-                          onSelectNode: controller.selectNode,
-                          onToggleAuto: controller.toggleAutoCandidate,
-                          onToggleFavorite: controller.toggleFavorite,
-                          onEditNode: (node) =>
-                              _showEditNode(context, controller, node),
-                          onDeleteNode: (node) =>
-                              _deleteNode(context, controller, node),
-                        ),
-                      );
-                    },
+                    onAddNode:
+                        group.subscription != null &&
+                            !group.subscription!.isUrlSubscription
+                        ? () => _showGroupAddSheet(
+                            context,
+                            controller,
+                            group.subscription!,
+                          )
+                        : null,
+                    onDeleteGroup: group.subscription == null
+                        ? null
+                        : () => _deleteGroup(
+                            context,
+                            controller,
+                            group.subscription!,
+                          ),
+                    onFilter: group.subscription == null
+                        ? null
+                        : () => _showFilterDialog(
+                            context,
+                            controller,
+                            group.subscription!,
+                          ),
+                    onSort: group.subscription == null
+                        ? null
+                        : () => _showSortDialog(
+                            context,
+                            controller,
+                            group.subscription!,
+                          ),
+                    onToggleGroupAuto: group.subscription == null
+                        ? null
+                        : () => controller.toggleGroupAutoCandidate(
+                            group.subscription!.id,
+                          ),
+                    onTest: () => _startNodeTest(
+                      context,
+                      controller,
+                      group.nodes,
+                      groupId: group.id,
+                    ),
+                    buildNode: buildNode,
                   ),
                 );
               },
@@ -352,6 +392,22 @@ class _NodesPageState extends State<NodesPage> {
       ],
     );
   }
+
+  Widget _buildNodeTile(
+    AppController controller,
+    ProxyNode node,
+    String? highlightedId,
+  ) => _NodeTile(
+    key: ValueKey(node.id),
+    node: node,
+    controller: controller,
+    current: node.id == highlightedId,
+    onSelect: () => controller.selectNode(node.id),
+    onToggleAuto: () => controller.toggleAutoCandidate(node.id),
+    onToggleFavorite: () => controller.toggleFavorite(node.id),
+    onEdit: () => _showEditNode(context, controller, node),
+    onDelete: () => _deleteNode(context, controller, node),
+  );
 
   Future<void> _reorderGroups(
     List<String> visibleKeys,
@@ -1410,7 +1466,7 @@ class _GroupCard extends StatelessWidget {
     required this.controller,
     required this.reorderIndex,
     required this.reorderEnabled,
-    required this.highlightedId,
+    required this.hasBodyRows,
     required this.expanded,
     required this.updating,
     required this.countLabel,
@@ -1423,18 +1479,14 @@ class _GroupCard extends StatelessWidget {
     required this.onSort,
     required this.onToggleGroupAuto,
     required this.onTest,
-    required this.onSelectNode,
-    required this.onToggleAuto,
-    required this.onToggleFavorite,
-    required this.onEditNode,
-    required this.onDeleteNode,
+    required this.buildNode,
   });
 
   final _NodeGroup group;
   final AppController controller;
   final int reorderIndex;
   final bool reorderEnabled;
-  final String? highlightedId;
+  final bool hasBodyRows;
   final bool expanded;
   final bool updating;
   final String countLabel;
@@ -1447,15 +1499,14 @@ class _GroupCard extends StatelessWidget {
   final VoidCallback? onSort;
   final VoidCallback? onToggleGroupAuto;
   final VoidCallback onTest;
-  final ValueChanged<String> onSelectNode;
-  final ValueChanged<String> onToggleAuto;
-  final ValueChanged<String> onToggleFavorite;
-  final ValueChanged<ProxyNode> onEditNode;
-  final ValueChanged<ProxyNode> onDeleteNode;
+  final Widget Function(int index) buildNode;
 
   @override
-  Widget build(BuildContext context) =>
-      NodeGroupSurface(active: group.active, builder: _buildContent);
+  Widget build(BuildContext context) => NodeGroupSurface(
+    active: group.active,
+    continuesBelow: hasBodyRows,
+    builder: _buildContent,
+  );
 
   Widget _buildContent(
     BuildContext context,
@@ -1638,32 +1689,28 @@ class _GroupCard extends StatelessWidget {
           ],
         ),
         if (subscription != null) _SubscriptionMeta(subscription: subscription),
-        NodeGroupBody(
-          expanded: expanded,
-          child: group.nodes.isEmpty
-              ? NodeGroupEmpty(
-                  filterActive: group.filterActive,
-                  showAdd: onAddNode != null,
-                  onFilter: onFilter,
-                  onAdd: onAddNode,
-                )
-              : NodeGrid(
-                  itemCount: group.nodes.length,
-                  itemBuilder: (context, index) {
-                    final node = group.nodes[index];
-                    return _NodeTile(
-                      node: node,
-                      controller: controller,
-                      current: node.id == highlightedId,
-                      onSelect: () => onSelectNode(node.id),
-                      onToggleAuto: () => onToggleAuto(node.id),
-                      onToggleFavorite: () => onToggleFavorite(node.id),
-                      onEdit: () => onEditNode(node),
-                      onDelete: () => onDeleteNode(node),
-                    );
-                  },
-                ),
-        ),
+        if (hasBodyRows)
+          Divider(
+            height: 1,
+            indent: 16,
+            endIndent: 16,
+            color: scheme.outlineVariant.withValues(alpha: 0.4),
+          )
+        else
+          NodeGroupBody(
+            expanded: expanded,
+            child: group.nodes.isEmpty
+                ? NodeGroupEmpty(
+                    filterActive: group.filterActive,
+                    showAdd: onAddNode != null,
+                    onFilter: onFilter,
+                    onAdd: onAddNode,
+                  )
+                : NodeGrid(
+                    itemCount: group.nodes.length,
+                    itemBuilder: (context, index) => buildNode(index),
+                  ),
+          ),
       ],
     );
     return ReorderableNodeGroup(
@@ -1671,6 +1718,64 @@ class _GroupCard extends StatelessWidget {
       enabled: reorderEnabled,
       tooltip: isUrlSubscription ? '拖拽调整订阅顺序' : '拖拽调整节点集合顺序',
       child: content,
+    );
+  }
+}
+
+class _NodeGroupRow extends StatelessWidget {
+  const _NodeGroupRow({
+    super.key,
+    required this.row,
+    required this.columns,
+    required this.nodeCount,
+    required this.active,
+    required this.buildNode,
+  });
+
+  final int row;
+  final int columns;
+  final int nodeCount;
+  final bool active;
+  final Widget Function(int index) buildNode;
+
+  @override
+  Widget build(BuildContext context) {
+    final first = row * columns;
+    final last = first + columns >= nodeCount;
+    final decoration = nodeGroupDecoration(
+      Theme.of(context).colorScheme,
+      active: active,
+      first: false,
+      last: last,
+    );
+    return Padding(
+      padding: EdgeInsets.only(
+        left: ReorderableNodeGroup.leadingInset,
+        bottom: last ? 12 : 0,
+      ),
+      child: DecoratedBox(
+        decoration: decoration,
+        child: Padding(
+          padding: decoration.padding.add(
+            EdgeInsets.fromLTRB(10, NodeGrid.spacing, 10, last ? 12 : 0),
+          ),
+          child: SizedBox(
+            height: NodeGrid.tileHeight,
+            child: Row(
+              spacing: NodeGrid.spacing,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var column = 0; column < columns; column++)
+                  Expanded(
+                    child: first + column < nodeCount
+                        ? buildNode(first + column)
+                        : const SizedBox(),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -2031,6 +2136,7 @@ String _updatedText(DateTime time) {
 
 class _NodeTile extends StatelessWidget {
   const _NodeTile({
+    super.key,
     required this.node,
     required this.controller,
     required this.current,

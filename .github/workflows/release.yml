@@ -169,6 +169,13 @@ jobs:
           go-version: '1.27.3'
           cache-dependency-path: runtime/go.sum
 
+      - name: Test the pinned development runtime
+        shell: bash
+        run: |
+          git submodule update --init --depth 1 third_party/sing-box
+          cd runtime
+          go test -mod=readonly -tags with_gvisor,with_quic,with_wireguard,with_utls ./...
+
       - name: Set up Flutter and Linux build tools
         shell: bash
         run: |

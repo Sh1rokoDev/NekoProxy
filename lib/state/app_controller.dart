@@ -41,7 +41,9 @@ class HomeActivity {
 }
 
 class AppController extends ChangeNotifier {
-  AppController();
+  AppController({
+    this._subscriptionDownloadTimeout = const Duration(minutes: 2),
+  });
 
   late final AppPaths paths;
   late final AppStorage storage;
@@ -133,6 +135,10 @@ class AppController extends ChangeNotifier {
   final Set<String> _servicesChecking = {};
   final Set<HttpClient> _serviceAddressClients = {};
   final Map<String, Object> _subscriptionUpdates = {};
+  final _subscriptionClients = <IOClient>{};
+  final Duration _subscriptionDownloadTimeout;
+  Future<void>? _initializing;
+  bool _replacingSnapshot = false;
   List<TrafficSample> samples = const [];
   DateTime? connectedAt;
   ExitInfo? exitInfo;
@@ -175,6 +181,7 @@ class AppController extends ChangeNotifier {
   Future<void>? _connectionRefresh;
   Object? _connectionRefreshToken;
   final _closingConnectionIds = <String>{};
+  Timer? _subscriptionStartupTimer;
   Timer? _subscriptionTimer;
   Timer? _ruleSetTimer;
   Timer? _ruleSetStartupTimer;
@@ -504,50 +511,67 @@ class AppController extends ChangeNotifier {
 
   String? get coreRunError => runtimeStatus?.error ?? error;
 
-  Future<void> initialize({AppPaths? appPaths}) async {
-    paths = appPaths ?? await AppPaths.resolve();
-    storage = AppStorage(paths);
-    final proxySnapshot = paths.proxySnapshotFile;
-    systemProxy = Platform.isWindows
-        ? WindowsSystemProxy(paths)
+  Future<void> initialize({AppPaths? appPaths}) {
+    if (initialized || _disposed || _closing) return Future<void>.value();
+    return _initializing ??= _initialize(appPaths).whenComplete(() {
+      _initializing = null;
+    });
+  }
+
+  Future<void> _initialize(AppPaths? appPaths) async {
+    final resolvedPaths = appPaths ?? await AppPaths.resolve();
+    final localStorage = AppStorage(resolvedPaths);
+    final proxySnapshot = resolvedPaths.proxySnapshotFile;
+    final proxy = Platform.isWindows
+        ? WindowsSystemProxy(resolvedPaths)
         : isLinux
         ? await LinuxSystemProxy.detect(proxySnapshot)
         : null;
-    final loaded = await storage.load();
-    if (_disposed) return;
-    snapshot = loaded.snapshot;
-    appearanceTick.value++;
-    ruleSets = RuleSetManager(
-      paths: paths,
+    final loaded = await localStorage.load();
+    if (_disposed || _closing) return;
+    final rules = RuleSetManager(
+      paths: resolvedPaths,
       clientFactory: _createManagedHttpClient,
       // Expert mode can save a copy of the generated paths in its JSON.
       isSnapshotReferenced: (directory) =>
           snapshot.customConfig.contains(directory) ||
           jsonEncode(snapshot.advancedJsonDraft).contains(directory),
     );
-    loadWarning = loaded.warning;
-    runtime = Platform.isAndroid
-        ? AndroidRuntimeClient(paths)
-        : DesktopRuntimeClient(paths);
+    final client = Platform.isAndroid
+        ? AndroidRuntimeClient(resolvedPaths)
+        : DesktopRuntimeClient(resolvedPaths);
     // Neither task needs results from the other. Both must finish before
     // the home page can compile a config or start a new core.
-    await Future.wait([_initializeRuleSets(), _cleanupStaleRuntime()]);
-    if (_disposed) return;
-    final restored = await systemProxy?.restoreIfOwned();
+    final ruleStartup = _initializeRuleSets(rules);
+    await _cleanupStaleRuntime(client);
+    final (ruleStatus, ruleWarning) = await ruleStartup;
+    if (_disposed || _closing) return;
+    final restored = await proxy?.restoreIfOwned();
     final restoreWarning =
         restored?.error ??
-        (isLinux && systemProxy == null && await proxySnapshot.exists()
+        (isLinux && proxy == null && await proxySnapshot.exists()
             ? '请在原桌面会话中恢复上一次的系统代理设置'
             : null);
-    if (restoreWarning != null) {
-      loadWarning = [
-        loadWarning,
-        restoreWarning,
-      ].whereType<String>().join('\n');
-    }
+    if (_disposed || _closing) return;
+
+    // Publish the late-final dependencies only when a retry is no longer needed.
+    paths = resolvedPaths;
+    storage = localStorage;
+    systemProxy = proxy;
+    ruleSets = rules;
+    runtime = client;
+    ruleSetStatus = ruleStatus;
+    final warnings = [
+      loaded.warning,
+      ruleWarning,
+      restoreWarning,
+    ].whereType<String>().join('\n');
+    loadWarning = warnings.isEmpty ? null : warnings;
+    snapshot = loaded.snapshot;
     initialized = true;
-    notifyListeners();
-    unawaited(_autoUpdateSubscriptions(initial: true));
+    _subscriptionStartupTimer = Timer(const Duration(seconds: 4), () {
+      unawaited(_autoUpdateSubscriptions());
+    });
     _subscriptionTimer = Timer.periodic(const Duration(minutes: 30), (_) {
       unawaited(_autoUpdateSubscriptions());
     });
@@ -557,26 +581,26 @@ class AppController extends ChangeNotifier {
     _ruleSetTimer = Timer.periodic(const Duration(hours: 6), (_) {
       unawaited(_autoUpdateRuleSets());
     });
+    _publishSettings();
     if (settings.autoConnect && canConnect) {
       unawaited(connect());
     }
   }
 
-  Future<void> _initializeRuleSets() async {
+  Future<(RuleSetStatus?, String?)> _initializeRuleSets(
+    RuleSetManager rules,
+  ) async {
     try {
-      await ruleSets.initialize();
-      ruleSetStatus = await ruleSets.readStatus();
+      await rules.initialize();
+      return (await rules.readStatus(), null);
     } catch (e) {
-      loadWarning = [
-        loadWarning,
-        '分流规则目录初始化失败：$e',
-      ].whereType<String>().join('\n');
+      return (null, '分流规则目录初始化失败：$e');
     }
   }
 
-  Future<void> _cleanupStaleRuntime() async {
+  Future<void> _cleanupStaleRuntime(RuntimeClient client) async {
     try {
-      await runtime.cleanupStale();
+      await client.cleanupStale();
     } catch (error) {
       // The previous runtime may already be gone; startup can continue.
       debugPrint(
@@ -585,12 +609,10 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> _autoUpdateSubscriptions({bool initial = false}) async {
-    if (initial) {
-      await Future<void>.delayed(const Duration(seconds: 4));
-    }
+  Future<void> _autoUpdateSubscriptions() async {
     final now = DateTime.now();
     for (final subscription in List<Subscription>.of(snapshot.subscriptions)) {
+      if (_disposed || _closing || _replacingSnapshot) return;
       if (!subscription.isAutoUpdateDue(now)) continue;
       try {
         await updateSubscription(subscription.id, silent: true);
@@ -1361,6 +1383,9 @@ class AppController extends ChangeNotifier {
       if (decoded is! Map<String, dynamic>) {
         throw const FormatException('根节点必须是 JSON 对象');
       }
+      if (CompiledConfig.containsRedactedValue(decoded)) {
+        throw const FormatException('请替换预览中的脱敏占位符后再使用此配置');
+      }
       final violations = ConfigPolicy.validate(decoded);
       if (violations.isNotEmpty) {
         throw FormatException(
@@ -1970,6 +1995,8 @@ class AppController extends ChangeNotifier {
     String? name,
     String userAgent = '',
   }) async {
+    final source = snapshot;
+    if (_replacingSnapshot) throw const ParseException('订阅导入已取消');
     final uri = Uri.tryParse(url.trim());
     if (uri == null || !(uri.scheme == 'http' || uri.scheme == 'https')) {
       throw const ParseException('订阅链接必须是 http 或 https');
@@ -1982,6 +2009,12 @@ class AppController extends ChangeNotifier {
       headers: headers,
       subscriptionId: id,
     );
+    if (_disposed ||
+        _closing ||
+        _replacingSnapshot ||
+        !identical(snapshot, source)) {
+      throw const ParseException('订阅导入已取消');
+    }
     final subscription = Subscription(
       id: id,
       name: name?.trim().isNotEmpty == true
@@ -2005,7 +2038,7 @@ class AppController extends ChangeNotifier {
       settings.manualNodeId = parsed.nodes.first.id;
     }
     await storage.save(snapshot);
-    notifyListeners();
+    if (!_disposed && identical(snapshot, source)) notifyListeners();
     return subscription;
   }
 
@@ -2152,6 +2185,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> updateSubscription(String id, {bool silent = false}) async {
+    if (_disposed || _closing || _replacingSnapshot) return;
     final sourceSnapshot = snapshot;
     final existing = sourceSnapshot.subscriptions
         .where((group) => group.id == id)
@@ -2166,6 +2200,8 @@ class AppController extends ChangeNotifier {
 
     Subscription? currentSubscription() {
       if (_disposed ||
+          _closing ||
+          _replacingSnapshot ||
           !identical(snapshot, sourceSnapshot) ||
           !identical(_subscriptionUpdates[id], request)) {
         return null;
@@ -2226,11 +2262,12 @@ class AppController extends ChangeNotifier {
         settings.manualNodeId = null;
       }
       await storage.save(snapshot);
-      if (!identical(snapshot, sourceSnapshot)) return;
+      if (currentSubscription() == null) return;
       _recordHomeActivity('订阅更新完成，共 ${parsed.nodes.length} 个节点');
       notifyListeners();
       if (selectionLost) {
         if (running) await disconnect(silent: true);
+        if (currentSubscription() == null) return;
         error = '原选中节点已从订阅移除，请重新选择节点。';
         notifyListeners();
       } else if (running) {
@@ -2247,6 +2284,7 @@ class AppController extends ChangeNotifier {
       current.lastError = _friendlyError(e);
       _recordHomeActivity('订阅更新失败', failed: true);
       await storage.save(snapshot);
+      if (currentSubscription() == null) return;
       notifyListeners();
       if (!silent && currentSubscription() != null) {
         _setError('订阅更新失败：${current.lastError}');
@@ -2262,6 +2300,7 @@ class AppController extends ChangeNotifier {
     Uri uri, {
     required String userAgent,
   }) async {
+    if (_disposed || _closing) throw const ParseException('订阅请求已取消');
     final inbound = settings.inboundOrDefault;
     final raw = HttpClient()..connectionTimeout = const Duration(seconds: 30);
     if (running) {
@@ -2279,7 +2318,8 @@ class AppController extends ChangeNotifier {
       }
     }
     final client = IOClient(raw);
-    try {
+    _subscriptionClients.add(client);
+    Future<http.Response> download() async {
       final request = http.Request('GET', uri);
       request.headers['User-Agent'] = userAgent.isEmpty
           ? 'NekoProxy/1.0 (sing-box)'
@@ -2310,6 +2350,12 @@ class AppController extends ChangeNotifier {
         headers: streamed.headers,
         request: streamed.request,
       );
+    }
+
+    try {
+      return await download().timeout(_subscriptionDownloadTimeout);
+    } on TimeoutException {
+      throw const ParseException('订阅下载超时，请稍后重试');
     } on SocketException catch (error) {
       final message = _friendlyError(error);
       throw ParseException(message == error.toString() ? '无法连接订阅服务器' : message);
@@ -2320,8 +2366,17 @@ class AppController extends ChangeNotifier {
     } on HandshakeException {
       throw const ParseException('订阅服务器 TLS 握手失败');
     } finally {
+      _subscriptionClients.remove(client);
       client.close();
     }
+  }
+
+  void _cancelSubscriptionRequests() {
+    _subscriptionUpdates.clear();
+    for (final client in _subscriptionClients) {
+      client.close();
+    }
+    _subscriptionClients.clear();
   }
 
   Future<void> deleteSubscription(String id) async {
@@ -2422,17 +2477,25 @@ class AppController extends ChangeNotifier {
 
   Future<void> importBackup(String content, {String? password}) async {
     final restored = await BackupService.import(content, password: password);
-    await disconnect();
-    snapshot = restored;
-    await storage.save(snapshot);
-    notifyListeners();
+    await _replaceSnapshot(restored);
   }
 
-  Future<void> resetAll() async {
-    await disconnect();
-    snapshot = AppSnapshot.empty();
-    await storage.save(snapshot);
-    notifyListeners();
+  Future<void> resetAll() => _replaceSnapshot(AppSnapshot.empty());
+
+  Future<void> _replaceSnapshot(AppSnapshot replacement) async {
+    if (_replacingSnapshot) throw StateError('正在恢复本地数据');
+    _replacingSnapshot = true;
+    try {
+      _cancelSubscriptionRequests();
+      await disconnect();
+      if (_disposed || _closing) return;
+      await storage.save(replacement);
+      if (_disposed || _closing) return;
+      snapshot = replacement;
+      _publishSettings();
+    } finally {
+      _replacingSnapshot = false;
+    }
   }
 
   Future<void> setCpuWakeLockEnabled(bool enabled) async {
@@ -2463,21 +2526,29 @@ class AppController extends ChangeNotifier {
 
   Future<void> saveSettings() async {
     await storage.save(snapshot);
+    _publishSettings();
+  }
+
+  void _publishSettings() {
+    if (_disposed) return;
     appearanceTick.value++;
     notifyListeners();
   }
 
   Future<void> shutdownForExit() async {
     _closing = true;
-    await _connecting;
     _cancelExitInfo();
+    _subscriptionStartupTimer?.cancel();
     _subscriptionTimer?.cancel();
+    _cancelSubscriptionRequests();
     _stopRuleSetUpdates();
     _pollTimer?.cancel();
     _uiTimer?.cancel();
     _pollGeneration++;
     _invalidateConnectionRefresh();
     _cancelNodeTests();
+    await _connecting;
+    if (!initialized) return;
     await _restoreSystemProxy();
     await _stopTemporaryTestRuntime();
     await runtime.shutdown();
@@ -2486,7 +2557,9 @@ class AppController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _subscriptionStartupTimer?.cancel();
     _subscriptionTimer?.cancel();
+    _cancelSubscriptionRequests();
     _pollTimer?.cancel();
     _uiTimer?.cancel();
     _pollGeneration++;
@@ -2672,9 +2745,3 @@ class _ProxyLatencyNotifier extends ChangeNotifier {
 
   void publish() => notifyListeners();
 }
-
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
-}
-
-List<int> jsonBytes(Object value) => utf8.encode(jsonEncode(value));

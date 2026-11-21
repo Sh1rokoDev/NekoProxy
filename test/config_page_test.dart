@@ -1,9 +1,14 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/app/widgets.dart';
 import 'package:nekoproxy/data/app_storage.dart';
+import 'package:nekoproxy/domain/config_compiler.dart';
 import 'package:nekoproxy/domain/models.dart';
+import 'package:nekoproxy/features/tools/advanced_page.dart';
 import 'package:nekoproxy/features/tools/config_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
@@ -114,10 +119,10 @@ void main() {
     expect(tester.getTopLeft(save), savePosition);
     expect(tester.getBottomLeft(editor).dy, editorBottom);
     expect(find.text('使用完整的 sing-box 配置'), findsNothing);
-    expect(find.text('载入当前配置'), findsOneWidget);
+    expect(find.text('载入完整配置'), findsOneWidget);
     expect(find.byType(Switch), findsNothing);
     expect(
-      tester.getCenter(find.text('载入当前配置')).dy,
+      tester.getCenter(find.text('载入完整配置')).dy,
       closeTo(tester.getCenter(format).dy, 1),
     );
     expect(
@@ -132,7 +137,7 @@ void main() {
     await tester.binding.setSurfaceSize(const Size(360, 800));
     await tester.pumpAndSettle();
     expect(find.byIcon(Icons.rule_rounded), findsOneWidget);
-    final load = find.text('载入当前配置');
+    final load = find.text('载入完整配置');
     final formatBounds = tester.getRect(format);
     for (final label in [validate, load]) {
       final bounds = tester.getRect(label);
@@ -173,6 +178,88 @@ void main() {
     );
     expect(controller.snapshot.advancedJson['log'], {'level': 'info'});
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('配置预览和剪贴板共用脱敏结果，真实配置不受影响', (tester) async {
+    final controller = _ConfigController();
+    addTearDown(controller.dispose);
+    String? copied;
+    final messenger = tester.binding.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String;
+      }
+      return null;
+    });
+    addTearDown(() {
+      messenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const AdvancedPage()),
+      ),
+    );
+    final open = find.text('查看生成配置');
+    await tester.ensureVisible(open);
+    await tester.tap(open);
+    await tester.pumpAndSettle();
+    final preview = tester
+        .widget<SelectableText>(find.byType(SelectableText))
+        .data;
+    expect(preview, contains('fixture-node'));
+    expect(preview, contains('<已隐藏>'));
+    for (final value in _secretValues) {
+      expect(preview, isNot(contains(value)));
+      expect(controller.config.encoded, contains(value));
+    }
+    await tester.tap(find.text('复制脱敏配置'));
+    await tester.pump();
+    expect(copied, preview);
+  });
+
+  testWidgets('覆写编辑器确认后载入完整配置，拒绝保存脱敏预览', (tester) async {
+    final controller = _ConfigController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const ConfigPage()),
+      ),
+    );
+    await tester.tap(find.text('覆盖'));
+    await tester.pumpAndSettle();
+    final editor = find.byType(TextField);
+    final load = find.text('载入完整配置');
+    final prior = tester.widget<TextField>(editor).controller?.text;
+
+    await tester.tap(load);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('编辑器将显示节点密码和私钥'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(editor).controller?.text, prior);
+
+    await tester.tap(load);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('载入'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(editor).controller?.text,
+      controller.config.encoded,
+    );
+    final save = find.text('保存并应用');
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    expect(controller.snapshot.customConfig, controller.config.encoded);
+    ScaffoldMessenger.of(tester.element(editor))
+      ..clearSnackBars()
+      ..removeCurrentSnackBar();
+
+    await tester.enterText(editor, jsonEncode(controller.config.redactedJson));
+    await tester.tap(save);
+    await tester.pump();
+    expect(find.textContaining('脱敏占位符'), findsOneWidget);
+    expect(controller.snapshot.customConfig, controller.config.encoded);
   });
 
   testWidgets('长 JSON 只在文本框内滚动，键盘弹出时文本框随页面缩小', (tester) async {
@@ -233,6 +320,76 @@ void main() {
     expect(tester.getBottomLeft(save).dy, lessThan(380));
     expect(tester.takeException(), isNull);
   });
+}
+
+const _secretValues = [
+  'fixture-password',
+  'fixture-user',
+  'fixture-uuid',
+  'fixture-auth',
+  'fixture-key',
+  'fixture-preshared',
+  'fixture-bearer',
+  'fixture-cookie',
+  'fixture-url-login',
+  'fixture-url-token',
+];
+
+class _ConfigController extends AppController {
+  _ConfigController() {
+    storage = _MemoryStorage();
+    snapshot
+      ..useCustomConfig = true
+      ..customConfig = '{"outbounds":[]}';
+  }
+
+  late final config = CompiledConfig(
+    json: _json,
+    encoded: jsonEncode(_json),
+    warnings: const [],
+    nodeTags: const {},
+    proxyGroupTag: 'proxy',
+    autoGroupTag: 'auto',
+    custom: true,
+  );
+
+  static const _json = <String, dynamic>{
+    'inbounds': [
+      {
+        'users': [
+          {'password': 'fixture-password', 'username': 'fixture-user'},
+        ],
+        'auth_password': 'fixture-auth',
+      },
+    ],
+    'outbounds': [
+      {
+        'tag': 'fixture-node',
+        'uuid': 'fixture-uuid',
+        'headers': {
+          'Authorization': 'fixture-bearer',
+          'Cookie': ['fixture-cookie'],
+        },
+      },
+    ],
+    'endpoints': [
+      {
+        'private_key': 'fixture-key',
+        'peers': [
+          {'pre_shared_key': 'fixture-preshared'},
+        ],
+      },
+    ],
+    'route': {
+      'rule_set': [
+        {'url': 'https://fixture-url-login@example.invalid/rules'},
+        {'url': 'https://example.invalid/rules?access=fixture-url-token'},
+      ],
+    },
+  };
+
+  @override
+  Future<CompiledConfig> compileForExport() async => config;
 }
 
 class _MemoryStorage extends AppStorage {

@@ -7,9 +7,11 @@ class NodeGroupSurface extends StatefulWidget {
     super.key,
     required this.active,
     required this.builder,
+    this.continuesBelow = false,
   });
 
   final bool active;
+  final bool continuesBelow;
   final Widget Function(
     BuildContext context,
     bool hovered,
@@ -53,20 +55,18 @@ class _NodeGroupSurfaceState extends State<NodeGroupSurface>
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: AnimatedContainer(
+        // Border.lerp cannot animate between a closed card and an open edge.
+        key: ValueKey(widget.continuesBelow),
         duration: const Duration(milliseconds: 220),
         curve: Curves.easeOutCubic,
         clipBehavior: Clip.antiAlias,
-        decoration: BoxDecoration(
-          color: _hovered
+        decoration: nodeGroupDecoration(
+          scheme,
+          active: widget.active,
+          last: !widget.continuesBelow,
+          background: _hovered
               ? Color.alphaBlend(theme.hoverColor, background)
               : background,
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            width: widget.active ? 1.4 : 1,
-            color: widget.active
-                ? scheme.primary.withValues(alpha: 0.65)
-                : scheme.outlineVariant.withValues(alpha: 0.35),
-          ),
         ),
         child: Stack(
           children: [
@@ -84,6 +84,35 @@ class _NodeGroupSurfaceState extends State<NodeGroupSurface>
       ),
     );
   }
+}
+
+BoxDecoration nodeGroupDecoration(
+  ColorScheme scheme, {
+  required bool active,
+  bool first = true,
+  bool last = true,
+  Color? background,
+}) {
+  final side = BorderSide(
+    width: active ? 1.4 : 1,
+    color: active
+        ? scheme.primary.withValues(alpha: 0.65)
+        : scheme.outlineVariant.withValues(alpha: 0.35),
+  );
+  const corner = Radius.circular(22);
+  return BoxDecoration(
+    color: background ?? scheme.surfaceContainerLow,
+    borderRadius: BorderRadius.vertical(
+      top: first ? corner : Radius.zero,
+      bottom: last ? corner : Radius.zero,
+    ),
+    border: Border(
+      top: first ? side : BorderSide.none,
+      left: side,
+      right: side,
+      bottom: last ? side : BorderSide.none,
+    ),
+  );
 }
 
 ButtonStyle nodeGroupActionStyle(
@@ -270,14 +299,19 @@ class NodeGrid extends StatelessWidget {
   final int itemCount;
   final IndexedWidgetBuilder itemBuilder;
 
+  static const tileHeight = 74.0;
+  static const spacing = 8.0;
+
+  static int columnsForWidth(double width) => width >= 940
+      ? 4
+      : width >= 620
+      ? 3
+      : 2;
+
   @override
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
-      final columns = constraints.maxWidth >= 940
-          ? 4
-          : constraints.maxWidth >= 620
-          ? 3
-          : 2;
+      final columns = columnsForWidth(constraints.maxWidth);
       return GridView.builder(
         shrinkWrap: true,
         primary: false,
@@ -286,9 +320,9 @@ class NodeGrid extends StatelessWidget {
         itemCount: itemCount,
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: columns,
-          mainAxisExtent: 74,
-          crossAxisSpacing: 8,
-          mainAxisSpacing: 8,
+          mainAxisExtent: tileHeight,
+          crossAxisSpacing: spacing,
+          mainAxisSpacing: spacing,
         ),
         itemBuilder: itemBuilder,
       );
@@ -439,6 +473,7 @@ class ReorderableNodeGroup extends StatelessWidget {
   final bool enabled;
   final String tooltip;
   final Widget child;
+  static const leadingInset = 20.0;
 
   @override
   Widget build(BuildContext context) {
@@ -446,7 +481,10 @@ class ReorderableNodeGroup extends StatelessWidget {
     return Stack(
       alignment: Alignment.centerLeft,
       children: [
-        Padding(padding: const EdgeInsets.only(left: 20), child: child),
+        Padding(
+          padding: const EdgeInsets.only(left: leadingInset),
+          child: child,
+        ),
         Positioned(
           left: 0,
           child: ReorderableDragStartListener(

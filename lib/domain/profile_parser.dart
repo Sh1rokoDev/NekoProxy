@@ -354,7 +354,7 @@ class ProfileParser {
   }
 
   static String _displayName(Uri uri, Map<String, dynamic> outbound) {
-    if (uri.fragment.isNotEmpty) return Uri.decodeComponent(uri.fragment);
+    if (uri.fragment.isNotEmpty) return _decodeComponent(uri.fragment);
     final server = outbound['server']?.toString() ?? '';
     final type = outbound['type']?.toString().toUpperCase() ?? 'NODE';
     return '$type $server';
@@ -397,11 +397,27 @@ class ProfileParser {
     final raw = uri.userInfo;
     if (raw.isEmpty) return ('', '');
     final index = raw.indexOf(':');
-    if (index < 0) return (Uri.decodeComponent(raw), '');
+    if (index < 0) return (_decodeComponent(raw), '');
     return (
-      Uri.decodeComponent(raw.substring(0, index)),
-      Uri.decodeComponent(raw.substring(index + 1)),
+      _decodeComponent(raw.substring(0, index)),
+      _decodeComponent(raw.substring(index + 1)),
     );
+  }
+
+  static String _decodeComponent(String value) =>
+      _decodeUriValue(() => Uri.decodeComponent(value));
+
+  static Map<String, String> _queryParameters(Uri uri) =>
+      _decodeUriValue(() => uri.queryParameters);
+
+  static T _decodeUriValue<T>(T Function() decode) {
+    try {
+      return decode();
+    } on ArgumentError {
+      throw const ParseException('节点链接的百分号编码无效');
+    } on FormatException {
+      throw const ParseException('节点链接含有无效的 UTF-8 字符');
+    }
   }
 
   static Map<String, dynamic> _parseShadowsocks(Uri uri) {
@@ -443,7 +459,7 @@ class ProfileParser {
       'method': method,
       'password': password,
     };
-    final query = uri.queryParameters;
+    final query = _queryParameters(uri);
     final plugin = query['plugin'];
     if (plugin != null && plugin.isNotEmpty) {
       final parts = plugin.split(';');
@@ -471,7 +487,7 @@ class ProfileParser {
     if (fragment >= 0) payload = payload.substring(0, fragment);
     final query = payload.indexOf('?');
     if (query >= 0) payload = payload.substring(0, query);
-    final decoded = _decodeBase64(Uri.decodeComponent(payload));
+    final decoded = _decodeBase64(_decodeComponent(payload));
     final Object? raw;
     try {
       raw = jsonDecode(decoded);
@@ -518,7 +534,7 @@ class ProfileParser {
     final server = uri.host;
     final port = _port(uri);
     _require(uuid.isNotEmpty && server.isNotEmpty, 'VLESS 必要字段缺失');
-    final q = uri.queryParameters;
+    final q = _queryParameters(uri);
     final outbound = <String, dynamic>{
       'type': 'vless',
       'server': server,
@@ -555,7 +571,7 @@ class ProfileParser {
     final server = uri.host;
     final port = _port(uri);
     _require(password.isNotEmpty && server.isNotEmpty, 'Trojan 必要字段缺失');
-    final q = uri.queryParameters;
+    final q = _queryParameters(uri);
     final outbound = <String, dynamic>{
       'type': 'trojan',
       'server': server,
@@ -588,7 +604,7 @@ class ProfileParser {
     final server = uri.host;
     final port = _port(uri);
     _require(server.isNotEmpty, 'Hysteria2 必要字段缺失');
-    final q = uri.queryParameters;
+    final q = _queryParameters(uri);
     final outbound = <String, dynamic>{
       'type': 'hysteria2',
       'server': server,
@@ -614,7 +630,7 @@ class ProfileParser {
   static Map<String, dynamic> _parseTuic(Uri uri) {
     final userInfo = _userInfo(uri);
     _require(userInfo.$1.isNotEmpty, 'TUIC 缺少 UUID');
-    final q = uri.queryParameters;
+    final q = _queryParameters(uri);
     final outbound = <String, dynamic>{
       'type': 'tuic',
       'server': uri.host,
@@ -636,7 +652,7 @@ class ProfileParser {
   }
 
   static Map<String, dynamic> _parseAnyTls(Uri uri) {
-    final q = uri.queryParameters;
+    final q = _queryParameters(uri);
     return <String, dynamic>{
       'type': 'anytls',
       'server': uri.host,

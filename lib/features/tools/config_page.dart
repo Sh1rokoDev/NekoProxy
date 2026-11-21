@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../../app/app_scope.dart';
 import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
+import '../../domain/config_compiler.dart';
 import '../../domain/config_policy.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
@@ -172,7 +173,7 @@ class _ConfigPageState extends State<ConfigPage> {
             button('校验', Icons.rule_rounded, () => _validateJson(editor)),
             if (isCustom)
               button(
-                '载入当前配置',
+                '载入完整配置',
                 Icons.auto_fix_high_rounded,
                 () => _loadGenerated(controller),
               ),
@@ -212,6 +213,9 @@ class _ConfigPageState extends State<ConfigPage> {
     try {
       final decoded = jsonDecode(editor.text);
       if (decoded is! Map) throw const FormatException('根节点必须是 JSON 对象');
+      if (CompiledConfig.containsRedactedValue(decoded)) {
+        throw const FormatException('请替换预览中的脱敏占位符后再使用此配置');
+      }
       final violations = ConfigPolicy.validate(
         Map<String, dynamic>.from(decoded),
       );
@@ -236,6 +240,19 @@ class _ConfigPageState extends State<ConfigPage> {
 
   Future<void> _loadGenerated(AppController controller) async {
     final previousText = _custom.text;
+    final confirmed = await confirmDialog(
+      context,
+      title: '载入完整配置',
+      message: '编辑器将显示节点密码和私钥等凭据，并替换当前草稿。',
+      confirmLabel: '载入',
+    );
+    if (!confirmed ||
+        !mounted ||
+        _saving ||
+        _mode != AdvancedConfigMode.override ||
+        _custom.text != previousText) {
+      return;
+    }
     try {
       final compiled = await controller.compileForExport();
       if (!mounted ||
@@ -244,10 +261,7 @@ class _ConfigPageState extends State<ConfigPage> {
           _custom.text != previousText) {
         return;
       }
-      setState(() {
-        _custom.text = const JsonEncoder.withIndent('  ')
-            .convert(compiled.redactedJson);
-      });
+      _custom.text = compiled.encoded;
       _showInfo('已载入当前配置。请检查后保存并应用。');
     } catch (e) {
       if (!mounted) return;

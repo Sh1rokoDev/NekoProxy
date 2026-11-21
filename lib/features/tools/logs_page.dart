@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -16,22 +18,38 @@ class LogsPage extends StatefulWidget {
 }
 
 class _LogsPageState extends State<LogsPage> {
+  static const _readSize = 256 * 1024;
+  static const _anchorSize = 64;
+  static const _lineLimit = 1500;
+
   final _scrollController = ScrollController();
-  final List<String> _lines = [];
+  List<String> _lines = [];
+  final _partialLine = <int>[];
+  List<int> _anchor = const [];
   Timer? _timer;
+  Future<void>? _reading;
+  int _generation = 0;
   int _offset = 0;
   bool _paused = false;
+  bool _clearing = false;
+  bool _readFailed = false;
   String _path = '';
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final controller = AppScope.read(context);
-    _path = controller.paths.logFile.path;
-    _read(reset: true);
-    _timer ??= Timer.periodic(const Duration(seconds: 1), (_) {
-      if (!_paused) _read();
-    });
+    final path = AppScope.of(context).paths.logFile.path;
+    if (path != _path) {
+      _path = path;
+      _generation++;
+      _resetTail();
+      _readFailed = false;
+      _requestRead();
+    }
+    _timer ??= Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _requestRead(),
+    );
   }
 
   @override
@@ -41,48 +59,162 @@ class _LogsPageState extends State<LogsPage> {
     super.dispose();
   }
 
-  Future<void> _read({bool reset = false}) async {
-    if (_paused) return;
-    final file = File(_path);
-    if (!await file.exists()) return;
+  void _resetTail() {
+    _lines = [];
+    _partialLine.clear();
+    _anchor = const [];
+    _offset = 0;
+  }
+
+  void _requestRead() {
+    if (_paused || _clearing || _reading != null) return;
+    final generation = _generation;
+    _reading = _read(_path, generation).whenComplete(() {
+      _reading = null;
+      if (mounted && generation != _generation) _requestRead();
+    });
+  }
+
+  bool _canApplyRead(int generation) =>
+      mounted && generation == _generation && !_paused && !_clearing;
+
+  Future<void> _read(String path, int generation) async {
     try {
-      final length = await file.length();
-      if (reset || length < _offset) {
-        _offset = 0;
-        if (_lines.isNotEmpty) _lines.clear();
-      }
-      if (length == _offset) return;
-      final raf = await file.open();
+      final raf = await File(path).open();
+      final offset = _offset;
+      final anchor = _anchor;
+      List<int> bytes;
+      int start;
       try {
-        await raf.setPosition(_offset);
-        final bytes = await raf.read(length - _offset);
-        _offset = length;
-        final text = String.fromCharCodes(bytes);
-        final newLines = text.split('\n');
-        if (newLines.isNotEmpty) {
-          setState(() {
-            _lines.addAll(newLines.where((line) => line.trim().isNotEmpty));
-            if (_lines.length > 1500) {
-              _lines.removeRange(0, _lines.length - 1500);
-            }
-          });
-          _scrollToEnd();
+        if (!_canApplyRead(generation)) return;
+        final length = await raf.length();
+        start = length < offset ? 0 : offset;
+        if (start > 0 && anchor.isNotEmpty) {
+          // A new core can replace the file with one that is already longer.
+          await raf.setPosition(start - anchor.length);
+          final previous = await raf.read(anchor.length);
+          if (previous.length != anchor.length ||
+              previous.indexed.any((entry) => entry.$2 != anchor[entry.$1])) {
+            start = 0;
+          }
         }
+        await raf.setPosition(start);
+        bytes = await raf.read(_readSize);
       } finally {
         await raf.close();
       }
-    } catch (_) {}
+      if (!_canApplyRead(generation)) return;
+      if (bytes.isEmpty && start == _offset && !_readFailed) return;
+      final position = _scrollController.hasClients
+          ? _scrollController.position
+          : null;
+      final followOffset =
+          position == null || position.maxScrollExtent - position.pixels < 160
+          ? position?.pixels ?? 0.0
+          : null;
+      setState(() {
+        if (start != _offset) _resetTail();
+        _readFailed = false;
+        _offset = start + bytes.length;
+        if (bytes.isNotEmpty) {
+          _anchor = bytes.length >= _anchorSize
+              ? bytes.sublist(bytes.length - _anchorSize)
+              : [
+                  ..._anchor.skip(
+                    math.max(0, _anchor.length + bytes.length - _anchorSize),
+                  ),
+                  ...bytes,
+                ];
+          _appendLines(bytes);
+        }
+      });
+      if (followOffset != null) _scrollToEnd(generation, followOffset);
+    } on PathNotFoundException {
+      if (_canApplyRead(generation) && (_offset != 0 || _readFailed)) {
+        setState(() {
+          _resetTail();
+          _readFailed = false;
+        });
+      }
+    } on FileSystemException {
+      if (_canApplyRead(generation) && !_readFailed) {
+        setState(() => _readFailed = true);
+      }
+    }
   }
 
-  void _scrollToEnd() {
+  void _appendLines(List<int> bytes) {
+    final added = <String>[];
+    var start = 0;
+    for (var index = 0; index < bytes.length; index++) {
+      if (bytes[index] != 0x0A) continue;
+      _partialLine.addAll(bytes.getRange(start, index));
+      if (_partialLine.isNotEmpty && _partialLine.last == 0x0D) {
+        _partialLine.removeLast();
+      }
+      final line = utf8.decode(_partialLine, allowMalformed: true);
+      if (line.trim().isNotEmpty) added.add(line);
+      _partialLine.clear();
+      start = index + 1;
+    }
+    _partialLine.addAll(bytes.getRange(start, bytes.length));
+    if (_partialLine.length > _readSize) {
+      _partialLine.removeRange(0, _partialLine.length - _readSize);
+    }
+    if (added.isEmpty) return;
+    final combined = [..._lines, ...added];
+    _lines = combined.length > _lineLimit
+        ? combined.sublist(combined.length - _lineLimit)
+        : combined;
+  }
+
+  void _scrollToEnd(int generation, double previousOffset) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_scrollController.hasClients) return;
+      if (!_canApplyRead(generation) || !_scrollController.hasClients) return;
       final position = _scrollController.position;
-      if (position.maxScrollExtent - position.pixels < 160 ||
-          _paused == false) {
+      if (!position.isScrollingNotifier.value &&
+          position.pixels == previousOffset) {
         _scrollController.jumpTo(position.maxScrollExtent);
       }
     });
+  }
+
+  Future<void> _clearLog() async {
+    final path = _path;
+    final confirmed = await confirmDialog(
+      context,
+      title: '清空日志',
+      message: '清空当前日志文件？正在运行的核心会在下一次输出时重新写入。',
+      confirmLabel: '清空',
+      destructive: true,
+    );
+    if (!confirmed || !mounted || _clearing || path != _path) return;
+    setState(() {
+      _clearing = true;
+      _generation++;
+    });
+    try {
+      await _reading;
+      if (!mounted || _path != path) return;
+      final file = File(path);
+      if (await file.exists()) await file.writeAsString('');
+      if (mounted && _path == path) {
+        setState(() {
+          _resetTail();
+          _readFailed = false;
+        });
+      }
+    } on FileSystemException {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('无法清空日志文件')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _clearing = false);
+        _requestRead();
+      }
+    }
   }
 
   @override
@@ -95,7 +227,10 @@ class _LogsPageState extends State<LogsPage> {
       actions: [
         HeaderIconButton(
           tooltip: _paused ? '继续' : '暂停',
-          onPressed: () => setState(() => _paused = !_paused),
+          onPressed: () {
+            setState(() => _paused = !_paused);
+            _requestRead();
+          },
           icon: _paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
           active: _paused,
         ),
@@ -108,29 +243,7 @@ class _LogsPageState extends State<LogsPage> {
         ),
         HeaderIconButton(
           tooltip: '清空文件',
-          onPressed: _lines.isEmpty
-              ? null
-              : () async {
-                  final confirmed = await confirmDialog(
-                    context,
-                    title: '清空日志',
-                    message: '清空当前日志文件？正在运行的核心会在下一次输出时重新写入。',
-                    confirmLabel: '清空',
-                    destructive: true,
-                  );
-                  if (!confirmed) return;
-                  try {
-                    final file = File(_path);
-                    if (await file.exists()) await file.writeAsString('');
-                    setState(() => _lines.clear());
-                    _offset = 0;
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context)
-                          .showSnackBar(SnackBar(content: Text('清空失败：$e')));
-                    }
-                  }
-                },
+          onPressed: _lines.isEmpty || _clearing ? null : _clearLog,
           icon: Icons.delete_sweep_outlined,
         ),
       ],
@@ -154,9 +267,9 @@ class _LogsPageState extends State<LogsPage> {
                     ),
                   ),
                 ),
-                if (!controller.running)
+                if (_readFailed || !controller.running)
                   Text(
-                    '核心未运行',
+                    _readFailed ? '日志读取失败' : '核心未运行',
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.error,
                     ),

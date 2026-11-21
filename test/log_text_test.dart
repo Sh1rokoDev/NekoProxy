@@ -1,7 +1,14 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/app/theme.dart';
+import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/features/tools/log_text.dart';
+import 'package:nekoproxy/features/tools/logs_page.dart';
+import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
   const timestamp = '+0800 2026-11-19 11:37:52 ';
@@ -81,4 +88,129 @@ void main() {
       expect(styleOf(lines.last), isNull);
     });
   }
+
+  testWidgets('轮询按行解码 UTF-8，暂停和翻看历史时保留用户位置', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('neko-logs-');
+    final paths = AppPaths.forDirectory(directory.path);
+    final log = paths.logFile;
+    log.parent.createSync();
+    final controller = _LogsController()..paths = paths;
+    addTearDown(() {
+      controller.dispose();
+      directory.deleteSync(recursive: true);
+    });
+
+    final original = List.generate(100, (index) => 'INFO 历史日志 $index');
+    log.writeAsStringSync('${original.join('\n')}\n');
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const LogsPage()),
+      ),
+    );
+
+    List<String> lines() =>
+        tester.widgetList<LogText>(find.byType(LogText)).firstOrNull?.lines ??
+        const [];
+
+    Future<void> awaitView(bool Function() condition) async {
+      for (var attempt = 0; attempt < 50 && !condition(); attempt++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 10)),
+        );
+        await tester.pump();
+      }
+      expect(condition(), isTrue);
+    }
+
+    await awaitView(() => lines().length == original.length);
+    expect(lines(), original);
+    final scroll = tester.widget<Scrollbar>(find.byType(Scrollbar)).controller!;
+    expect(scroll.offset, greaterThan(160));
+    scroll.jumpTo(0);
+    await tester.pump();
+
+    final bytes = utf8.encode('跨块写入\r\n');
+    log.writeAsBytesSync(bytes.take(1).toList(), mode: FileMode.append);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 20)),
+    );
+    await tester.pump();
+    expect(lines(), original);
+    log.writeAsBytesSync(bytes.skip(1).toList(), mode: FileMode.append);
+    await tester.pump(const Duration(seconds: 1));
+    await awaitView(() => lines().last == '跨块写入');
+    expect(lines(), [...original, '跨块写入']);
+    expect(scroll.offset, 0);
+
+    await tester.tap(find.byTooltip('暂停'));
+    log.writeAsStringSync('INFO 文件已替换\n');
+    controller.changed();
+    await tester.pump(const Duration(seconds: 2));
+    expect(lines().last, '跨块写入');
+    await tester.tap(find.byTooltip('继续'));
+    await awaitView(() => lines().length == 1);
+    expect(lines(), ['INFO 文件已替换']);
+
+    await tester.tap(find.byTooltip('清空文件'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('清空'));
+    await tester.pump();
+    await awaitView(() => lines().isEmpty);
+    expect(log.readAsStringSync(), '');
+
+    log.writeAsStringSync('INFO 新日志\n');
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpWidget(const SizedBox.shrink());
+    for (var step = 0; step < 4; step++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('普通控制器通知不会重置日志文件的读取位置', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('neko-logs-tick-');
+    final paths = AppPaths.forDirectory(directory.path);
+    final file = paths.logFile;
+    file.parent.createSync();
+    file.writeAsStringSync('INFO previous\n');
+    final controller = _LogsController()..paths = paths;
+    addTearDown(() {
+      controller.dispose();
+      directory.deleteSync(recursive: true);
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const LogsPage()),
+      ),
+    );
+    for (
+      var attempt = 0;
+      attempt < 50 && find.byType(LogText).evaluate().isEmpty;
+      attempt++
+    ) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    final logText = find.byType(LogText);
+    expect(tester.widget<LogText>(logText).lines, ['INFO previous']);
+    file.writeAsStringSync('INFO replaced\n');
+    controller.changed();
+    await tester.pump();
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 30)),
+    );
+    await tester.pump();
+    expect(tester.widget<LogText>(logText).lines, ['INFO previous']);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+}
+
+class _LogsController extends AppController {
+  void changed() => notifyListeners();
 }

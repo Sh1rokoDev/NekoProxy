@@ -136,6 +136,29 @@ void main() {
         throwsA(isA<ParseException>()),
       );
     });
+
+    test('URI 解码失败只跳过坏链接，错误提示不包含原始凭据', () {
+      const good = 'trojan://example-password@example.invalid:443#%E4%B8%AD';
+      for (final bad in [
+        'vmess://fixture-private%',
+        'trojan://fixture-private@example.invalid:443#%FF',
+        'trojan://fixture-private@example.invalid:443?security=%FF',
+      ]) {
+        expect(ProfileParser.parse('$bad\n$good').nodes.single.name, '中');
+        expect(
+          () => ProfileParser.parse(bad),
+          throwsA(
+            isA<ParseException>()
+                .having((error) => error.message, '提示', contains('节点链接均无法解析'))
+                .having(
+                  (error) => error.message,
+                  '原始凭据',
+                  isNot(contains('fixture-private')),
+                ),
+          ),
+        );
+      }
+    });
   });
 
   group('ProfileParser sing-box json', () {

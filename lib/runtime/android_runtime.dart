@@ -90,7 +90,9 @@ class AndroidRuntimeClient implements RuntimeClient {
   @override
   Future<RuntimeTraffic> fetchTraffic() async {
     final result = await _invoke<Map<Object?, Object?>>('traffic');
-    return RuntimeTraffic.fromJson(Map<String, dynamic>.from(result ?? const {}));
+    return RuntimeTraffic.fromJson(
+      Map<String, dynamic>.from(result ?? const {}),
+    );
   }
 
   @override
@@ -113,11 +115,13 @@ class AndroidRuntimeClient implements RuntimeClient {
   }
 
   @override
-  Future<Map<String, RuntimeTestResult>> test(List<String> tags, String url) async {
-    final result = await _channel.invokeMethod<Map<Object?, Object?>>('test', {
-      'tags': tags,
-      'url': url,
-    }).timeout(const Duration(seconds: 120));
+  Future<Map<String, RuntimeTestResult>> test(
+    List<String> tags,
+    String url,
+  ) async {
+    final result = await _channel
+        .invokeMethod<Map<Object?, Object?>>('test', {'tags': tags, 'url': url})
+        .timeout(const Duration(seconds: 120));
     final output = <String, RuntimeTestResult>{};
     if (result != null) {
       for (final entry in result.entries) {
@@ -135,15 +139,17 @@ class AndroidRuntimeClient implements RuntimeClient {
 
   @override
   Future<void> startTest({required String config}) async {
-    await _channel.invokeMethod<void>('startTest', {
-      'config': config,
-    }).timeout(const Duration(seconds: 30));
+    await _channel
+        .invokeMethod<void>('startTest', {'config': config})
+        .timeout(const Duration(seconds: 30));
   }
 
   @override
   Future<void> stopTest() async {
     try {
-      await _channel.invokeMethod<void>('stopTest').timeout(const Duration(seconds: 8));
+      await _channel
+          .invokeMethod<void>('stopTest')
+          .timeout(const Duration(seconds: 8));
     } on TimeoutException {
       // The Go engine may be draining; never block the next VPN start.
     } on MissingPluginException {
@@ -196,7 +202,9 @@ class AndroidRuntimeClient implements RuntimeClient {
         groups[entry.key.toString()] = RuntimeGroup(
           kind: value['kind'] as String? ?? '',
           selected: value['selected'] as String? ?? '',
-          all: (value['all'] as List? ?? const []).map((e) => e.toString()).toList(),
+          all: (value['all'] as List? ?? const [])
+              .map((e) => e.toString())
+              .toList(),
         );
       }
     }
@@ -209,13 +217,4 @@ class AndroidRuntimeClient implements RuntimeClient {
       inboundPort: (data['inboundPort'] as num?)?.toInt() ?? 0,
     );
   }
-}
-
-Map<String, dynamic> decodeRuntimeData(Object? value) {
-  if (value is Map) return Map<String, dynamic>.from(value);
-  if (value is String) {
-    final decoded = jsonDecode(value);
-    if (decoded is Map) return Map<String, dynamic>.from(decoded);
-  }
-  return {};
 }

@@ -187,6 +187,8 @@ class _AdvancedPageState extends State<AdvancedPage> {
     try {
       final compiled = await controller.compileForExport();
       if (!mounted) return;
+      final preview = const JsonEncoder.withIndent('  ')
+          .convert(compiled.redactedJson);
       await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
@@ -196,8 +198,7 @@ class _AdvancedPageState extends State<AdvancedPage> {
             height: 520,
             child: SingleChildScrollView(
               child: SelectableText(
-                const JsonEncoder.withIndent('  ')
-                    .convert(compiled.redactedJson),
+                preview,
                 style: const TextStyle(
                   fontFamily: 'monospace',
                   fontSize: 11,
@@ -209,14 +210,9 @@ class _AdvancedPageState extends State<AdvancedPage> {
           actions: [
             TextButton(
               onPressed: () async {
-                await copyText(
-                  context,
-                  const JsonEncoder.withIndent('  ')
-                      .convert(compiled.redactedJson),
-                  message: '配置已复制',
-                );
+                await copyText(context, preview, message: '已复制脱敏配置');
               },
-              child: const Text('复制'),
+              child: const Text('复制脱敏配置'),
             ),
             FilledButton(
               onPressed: () => Navigator.pop(context),

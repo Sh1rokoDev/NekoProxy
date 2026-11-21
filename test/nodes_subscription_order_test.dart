@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/models.dart';
+import 'package:nekoproxy/features/nodes/node_group_widgets.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
@@ -191,6 +192,65 @@ void main() {
         tester.getTopLeft(find.text(name)).dy,
     ];
     expect(positions, orderedEquals([...positions]..sort()));
+  });
+
+  testWidgets('大订阅按视口构建，折叠、搜索和分组排序仍可用', (tester) async {
+    final compact = _group('compact', '小分组', isLocal: true);
+    final large = _group('large', '大订阅')
+      ..nodes = List.generate(
+        1000,
+        (index) => ProxyNode(
+          id: 'large-$index',
+          tag: 'large-$index',
+          name: '订阅节点 $index',
+          subscriptionId: 'large',
+          outbound: const {'type': 'trojan', 'server': 'example.invalid'},
+        ),
+      );
+    final controller = AppController()
+      ..storage = _Storage()
+      ..snapshot = AppSnapshot(
+        settings: AppSettings(),
+        subscriptions: [compact, large],
+      );
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(
+          controller: controller,
+          child: const Scaffold(body: NodesPage()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('订阅节点 0'), findsOneWidget);
+    expect(find.text('订阅节点 999'), findsNothing);
+    expect(find.byType(NodeTile).evaluate().length, lessThan(100));
+
+    final start = tester.getCenter(find.byTooltip('拖拽调整节点集合顺序'));
+    final end = Offset(start.dx, tester.getCenter(find.text('订阅节点 2')).dy);
+    await tester.timedDragFrom(start, end - start, const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(controller.snapshot.orderedNodeGroupKeys.take(2), [
+      'subscription:large',
+      'subscription:compact',
+    ]);
+
+    await tester.tap(find.text('大订阅'));
+    await tester.pumpAndSettle();
+    expect(find.text('订阅节点 0'), findsNothing);
+    await tester.tap(find.text('大订阅'));
+    await tester.pumpAndSettle();
+    expect(find.text('订阅节点 0'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('搜索节点'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '订阅节点 999');
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(NodeTile, '订阅节点 999'), findsOneWidget);
+    expect(find.text('订阅节点 0'), findsNothing);
+    expect(tester.takeException(), isNull);
   });
 }
 

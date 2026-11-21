@@ -102,4 +102,52 @@ void main() {
     expect(target.autoUpdate, isTrue);
     expect(target.updateIntervalMinutes, 6 * 60);
   }, skip: !Platform.isWindows);
+
+  test('持续收到小块数据也会在总时限内中止，保留旧节点', () async {
+    final client = AppController(
+      subscriptionDownloadTimeout: const Duration(milliseconds: 500),
+    )..storage = _MemoryStorage();
+    addTearDown(client.dispose);
+    final target = Subscription(
+      id: 'target',
+      name: '订阅',
+      url: url,
+      nodes: [
+        ProxyNode(
+          id: 'old',
+          tag: 'old',
+          name: '原节点',
+          outbound: const {'type': 'direct'},
+        ),
+      ],
+    );
+    client.snapshot.subscriptions.add(target);
+    final update = client.updateSubscription(target.id);
+    final request = await nextRequest();
+    final response = request.response..bufferOutput = false;
+    response.write(nodeLink);
+    await response.flush();
+    var chunks = 0;
+    final timer = Timer.periodic(const Duration(milliseconds: 40), (_) {
+      response.write('\n');
+      chunks++;
+    });
+    try {
+      await update.timeout(const Duration(seconds: 3));
+    } finally {
+      timer.cancel();
+      await response.close();
+    }
+    expect(chunks, greaterThan(1));
+    expect(target.nodes.single.id, 'old');
+    expect(target.lastUpdated, isNull);
+    expect(target.lastError, contains('订阅下载超时'));
+  });
+}
+
+class _MemoryStorage extends AppStorage {
+  _MemoryStorage() : super(AppPaths.forDirectory('.'));
+
+  @override
+  Future<void> save(AppSnapshot snapshot) async {}
 }

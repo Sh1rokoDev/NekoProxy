@@ -56,18 +56,61 @@ class CompiledConfig {
 
   bool get hasTunInbound => _hasTunInbound(json['inbounds']);
 
-  Map<String, dynamic> get redactedJson =>
-      Map<String, dynamic>.from(_redact(json) as Map);
+  static const _hidden = '<已隐藏>';
+  static const _credentialFields = {
+    'auth',
+    'auth_str',
+    'password',
+    'username',
+    'uuid',
+    'secret',
+    'token',
+    'private_key',
+    'pre_shared_key',
+    'api_key',
+    'authorization',
+    'proxy-authorization',
+    'cookie',
+    'x-api-key',
+  };
+  static final _credentialSuffix = RegExp(
+    r'_(password|username|passphrase|token|secret|private_key|api_key)$',
+  );
+
+  Map<String, dynamic> get redactedJson => _redactFields(json);
+
+  static bool containsRedactedValue(Object? value) => switch (value) {
+    Map() => value.values.any(containsRedactedValue),
+    List() => value.any(containsRedactedValue),
+    _ => value == _hidden,
+  };
+
+  static Map<String, dynamic> _redactFields(Map fields) => {
+    for (final entry in fields.entries)
+      if (entry.key case final String key) key: _redactField(key, entry.value),
+  };
+
+  static Object? _redactField(String key, Object? value) {
+    final name = key.toLowerCase();
+    if (_credentialFields.contains(name) || _credentialSuffix.hasMatch(name)) {
+      return _hidden;
+    }
+    if ((name == 'headers' || name.endsWith('_headers')) && value is Map) {
+      return {for (final key in value.keys) key: _hidden};
+    }
+    return _redact(value);
+  }
 
   static Object? _redact(Object? value) {
     if (value is List) return value.map(_redact).toList();
-    if (value is Map) {
-      return {
-        for (final entry in value.entries)
-          entry.key: const {'private_key', 'pre_shared_key'}.contains(entry.key)
-              ? '<已隐藏>'
-              : _redact(entry.value),
-      };
+    if (value is Map) return _redactFields(value);
+    if (value is String && value.contains('://')) {
+      final uri = Uri.tryParse(value);
+      if (uri != null &&
+          uri.hasAuthority &&
+          (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment)) {
+        return _hidden;
+      }
     }
     return value;
   }
@@ -662,8 +705,10 @@ class ConfigCompiler {
     final Object? decoded;
     try {
       decoded = jsonDecode(text);
-    } catch (e) {
-      throw ConfigCompileException('自定义配置 JSON 格式错误：$e');
+    } on FormatException catch (error) {
+      throw ConfigCompileException(
+        '自定义配置 JSON 格式错误（字符位置 ${error.offset ?? 0}）',
+      );
     }
     if (decoded is! Map) {
       throw const ConfigCompileException('自定义配置根节点必须是 JSON 对象');

@@ -58,14 +58,10 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
   Future<void>? _startup;
   RandomAccessFile? _linuxInstanceLock;
   static const _linuxLifecycle = MethodChannel('nekoproxy/linux_lifecycle');
-  static const _androidLauncherIcon = MethodChannel('nekoproxy/launcher_icon');
 
   @override
   void initState() {
     super.initState();
-    if (Platform.isAndroid) {
-      _controller.appearanceTick.addListener(_syncAndroidLauncherIcon);
-    }
     if (Platform.isWindows) {
       WidgetsBinding.instance.addObserver(this);
       _controller.appearanceTick.addListener(_syncWindowBackground);
@@ -87,17 +83,6 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
     if (_startup != null || _ready || _exiting) return;
     _startup = _bootstrap().whenComplete(() => _startup = null);
     unawaited(_startup);
-  }
-
-  Future<void> _syncAndroidLauncherIcon() async {
-    try {
-      await _androidLauncherIcon.invokeMethod<void>(
-        'setTheme',
-        _controller.settings.theme.name,
-      );
-    } on PlatformException catch (error) {
-      debugPrint('Could not update the Android launcher icon: ${error.code}');
-    }
   }
 
   Future<AppPaths> _linuxAppPaths() async {
@@ -328,9 +313,6 @@ class _NekoProxyBootstrapState extends State<NekoProxyBootstrap>
 
   @override
   void dispose() {
-    if (Platform.isAndroid) {
-      _controller.appearanceTick.removeListener(_syncAndroidLauncherIcon);
-    }
     if (Platform.isWindows) {
       WidgetsBinding.instance.removeObserver(this);
       _controller.appearanceTick.removeListener(_syncWindowBackground);

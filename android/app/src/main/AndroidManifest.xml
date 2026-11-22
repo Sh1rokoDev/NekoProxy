@@ -55,11 +55,6 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- VPN notifications must still open the app when a themed launcher is selected. -->
-        <activity-alias
-            android:name=".NotificationActivity"
-            android:targetActivity=".MainActivity"
-            android:exported="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

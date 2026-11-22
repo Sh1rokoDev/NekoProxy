@@ -499,7 +499,7 @@ class NekoVpnService : VpnService() {
         val pending = PendingIntent.getActivity(
             this,
             0,
-            Intent().setClassName(this, "$packageName.NotificationActivity"),
+            Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

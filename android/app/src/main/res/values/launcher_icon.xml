@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Debug/profile retain the manifest launcher activity for flutter run. -->
-    <bool name="switch_launcher_icon">false</bool>
-    <color name="launcher_background_light">#F4F8FC</color>
-    <color name="launcher_background_dark">#202636</color>
-    <item type="mipmap" name="ic_launcher">@mipmap/ic_launcher_light</item>
-</resources>

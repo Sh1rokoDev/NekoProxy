@@ -210,36 +210,20 @@ class ProfileParser {
       throw ParseException('JSON 解析失败（字符位置 ${e.offset ?? 0}）');
     }
 
-    Map<String, dynamic>? root;
-    if (raw is Map) {
-      root = Map<String, dynamic>.from(raw);
-    } else if (raw is List) {
-      final outbounds = raw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList();
-      return _profileFromOutbounds(outbounds, subscriptionId, 'sing-box');
-    } else {
-      throw const ParseException('JSON 根节点必须是对象或数组');
+    final entries = switch (raw) {
+      List() => raw,
+      {'outbounds': final List outbounds} => outbounds,
+      Map() => [raw],
+      _ => throw const ParseException('JSON 根节点必须是对象或数组'),
+    };
+    final outbounds = entries
+        .whereType<Map<String, dynamic>>()
+        .where(_isUsableOutbound)
+        .toList();
+    if (outbounds.isEmpty) {
+      throw const ParseException('sing-box JSON 中没有可导入的出站节点');
     }
-
-    final outboundsRaw = root['outbounds'];
-    if (outboundsRaw is List) {
-      final outbounds = outboundsRaw
-          .whereType<Map>()
-          .map((e) => Map<String, dynamic>.from(e))
-          .where(_isUsableOutbound)
-          .toList();
-      if (outbounds.isEmpty) {
-        throw const ParseException('sing-box 配置中没有可导入的出站节点');
-      }
-      return _profileFromOutbounds(outbounds, subscriptionId, 'sing-box');
-    }
-
-    if (_isUsableOutbound(root)) {
-      return _profileFromOutbounds([root], subscriptionId, 'sing-box');
-    }
-    throw const ParseException('sing-box JSON 中没有可导入的出站节点');
+    return _profileFromOutbounds(outbounds, subscriptionId, 'sing-box');
   }
 
   static bool _isUsableOutbound(Map<String, dynamic> outbound) {

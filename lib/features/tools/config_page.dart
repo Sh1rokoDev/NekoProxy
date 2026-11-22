@@ -52,7 +52,7 @@ class _ConfigPageState extends State<ConfigPage> {
     final controller = AppScope.of(context);
     final isCustom = _mode == AdvancedConfigMode.override;
     final editor = isCustom ? _custom : _advanced;
-    return HeaderScaffold(
+    final page = HeaderScaffold(
       title: const FittedBox(
         fit: BoxFit.scaleDown,
         alignment: AlignmentDirectional.centerStart,
@@ -102,6 +102,7 @@ class _ConfigPageState extends State<ConfigPage> {
         ),
       ),
     );
+    return PopScope(canPop: !_saving, child: page);
   }
 
   Widget _buildEditor(

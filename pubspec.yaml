@@ -40,7 +40,6 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/icons/app_icon.ico
     - assets/icons/app_icon.png
     - assets/icons/tray_icon.png
     - assets/icons/services/

@@ -162,6 +162,31 @@ void main() {
   });
 
   group('ProfileParser sing-box json', () {
+    test('数组和 outbounds 对象共用过滤规则', () {
+      final entries = [
+        {'type': 'trojan', 'tag': 'valid', 'server': 'example.invalid'},
+        {'tag': 'missing-type'},
+        {'type': 'trojan', 'tag': 42},
+        {'type': 'direct', 'tag': 'built-in'},
+        null,
+      ];
+      for (final value in [
+        entries,
+        {'outbounds': entries},
+      ]) {
+        expect(
+          ProfileParser.parse(jsonEncode(value)).nodes.single.name,
+          'valid',
+        );
+      }
+      for (final value in [[], entries.skip(1).toList()]) {
+        expect(
+          () => ProfileParser.parse(jsonEncode(value)),
+          throwsA(isA<ParseException>()),
+        );
+      }
+    });
+
     test('imports supported outbounds and skips built-ins', () {
       final profile = ProfileParser.parse(
         jsonEncode({

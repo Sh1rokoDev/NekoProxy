@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/netip"
+	"slices"
 	"sync"
 
 	"github.com/sagernet/sing-box/adapter"
@@ -30,13 +31,18 @@ type OwnerFinder interface {
 	FindOwner(protocol int32, sourceAddress string, sourcePort int32, destinationAddress string, destinationPort int32) (string, error)
 }
 
+// TunOpener applies the core's resolved options and transfers an owned FD.
+type TunOpener interface {
+	OpenTun(settingsJSON string) (int32, error)
+}
+
 type androidPlatform struct {
 	protector Protector
 	finder    OwnerFinder
 	monitor   interfaceMonitor
+	tunOpener TunOpener
 
 	mu      sync.Mutex
-	tunFD   int
 	tunName string
 	address []netip.Addr
 }
@@ -66,17 +72,21 @@ func (p *androidPlatform) OpenInterface(options *tun.Options, platformOptions op
 	if len(options.IncludeAndroidUser) > 0 {
 		return nil, E.New("platform: android_user is not supported")
 	}
-	p.mu.Lock()
-	fd := p.tunFD
-	p.mu.Unlock()
-	if fd == 0 {
-		return nil, E.New("platform: no TUN file descriptor was provided by VpnService")
+	if p.tunOpener == nil {
+		return nil, E.New("platform: VpnService TUN callback is unavailable")
 	}
-	dupFD, err := dupFd(fd)
+	settings, err := androidTunSettings(options)
 	if err != nil {
-		return nil, E.Cause(err, "duplicate TUN file descriptor")
+		return nil, err
 	}
-	options.FileDescriptor = dupFD
+	fd, err := p.tunOpener.OpenTun(settings)
+	if err != nil {
+		return nil, err
+	}
+	if fd <= 0 {
+		return nil, E.New("platform: VpnService returned an invalid TUN descriptor")
+	}
+	options.FileDescriptor = int(fd)
 	if options.Name == "" {
 		options.Name = "tun0"
 	}
@@ -91,6 +101,45 @@ func (p *androidPlatform) OpenInterface(options *tun.Options, platformOptions op
 	}
 	p.mu.Unlock()
 	return tun.New(*options)
+}
+
+func androidTunSettings(options *tun.Options) (string, error) {
+	addresses := append(slices.Clone(options.Inet4Address), options.Inet6Address...)
+	var routes []netip.Prefix
+	var dns []netip.Addr
+	if options.AutoRoute {
+		var err error
+		routes, err = options.BuildAutoRouteRanges(true)
+		if err != nil {
+			return "", err
+		}
+	}
+	if options.DNSModeOrDefault() != tun.DNSModeDisabled {
+		for _, addressesForFamily := range []func() ([]netip.Addr, error){
+			options.Inet4DNSAddress, options.Inet6DNSAddress,
+		} {
+			family, err := addressesForFamily()
+			if err != nil {
+				return "", err
+			}
+			dns = append(dns, family...)
+		}
+	}
+	for _, address := range dns {
+		if options.AutoRoute && !slices.ContainsFunc(routes, func(prefix netip.Prefix) bool {
+			return prefix.Contains(address)
+		}) {
+			// Virtual DNS remains reachable even when its subnet bypasses TUN.
+			routes = append(routes, netip.PrefixFrom(address, address.BitLen()))
+		}
+	}
+	data, err := json.Marshal(struct {
+		MTU       uint32         `json:"mtu"`
+		Addresses []netip.Prefix `json:"addresses"`
+		Routes    []netip.Prefix `json:"routes"`
+		DNS       []netip.Addr   `json:"dns"`
+	}{options.MTU, addresses, routes, dns})
+	return string(data), err
 }
 
 func (p *androidPlatform) ProcessPlatformOptions(options option.TunPlatformOptions) error {

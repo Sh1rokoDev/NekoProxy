@@ -683,7 +683,7 @@ void main() {
 
       snapshot.rules.firstWhere((rule) => rule.value == 'geosite-cn').enabled =
           true;
-      expect(snapshot.hasEnabledRuleSet('geosite-cn'), isTrue);
+      expect(snapshot.activeBuiltInRuleSets, contains('geosite-cn'));
       expect(snapshot.settings.dnsOrDefault.dnsRouting, isTrue);
       expect(snapshot.settings.splitMode, SplitMode.rule);
       compiled = ConfigCompiler.compile(
@@ -1094,37 +1094,33 @@ void main() {
 
   group('ConfigPolicy structure matching', () {
     test('does not flag ordinary strings that contain forbidden names', () {
-      final violations = ConfigPolicy.validateText(
-        jsonEncode({
-          'outbounds': [
-            {
-              'type': 'shadowsocks',
-              'tag': 'node-fakeip-clash',
-              'server': 'example.com',
-              'server_port': 8388,
-              'method': 'aes-128-gcm',
-              'password': 'clash_mode-fakeip',
-            },
-          ],
-        }),
-      );
+      final violations = ConfigPolicy.validate({
+        'outbounds': [
+          {
+            'type': 'shadowsocks',
+            'tag': 'node-fakeip-clash',
+            'server': 'example.com',
+            'server_port': 8388,
+            'method': 'aes-128-gcm',
+            'password': 'clash_mode-fakeip',
+          },
+        ],
+      });
       expect(violations, isEmpty);
     });
 
     test('finds nested forbidden keys and legacy DNS formats', () {
-      final violations = ConfigPolicy.validateText(
-        jsonEncode({
-          'experimental': {
-            'clash_api': {'external_controller': '127.0.0.1:9090'},
-          },
-          'dns': {
-            'servers': [
-              {'address': 'https://1.1.1.1/dns-query'},
-              {'type': 'fakeip', 'tag': 'fake'},
-            ],
-          },
-        }),
-      );
+      final violations = ConfigPolicy.validate({
+        'experimental': {
+          'clash_api': {'external_controller': '127.0.0.1:9090'},
+        },
+        'dns': {
+          'servers': [
+            {'address': 'https://1.1.1.1/dns-query'},
+            {'type': 'fakeip', 'tag': 'fake'},
+          ],
+        },
+      });
       expect(violations, hasLength(3));
     });
   });

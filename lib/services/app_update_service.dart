@@ -159,9 +159,8 @@ class AppUpdateService {
       ),
       4096,
     );
-    final entry = RegExp(
-      r'^([0-9a-fA-F]{64}) [ *](.+)$',
-    ).firstMatch(checksum.trim());
+    final entry = RegExp(r'^([0-9a-fA-F]{64}) [ *](.+)$')
+        .firstMatch(checksum.trim());
     if (entry == null || entry[2] != update.fileName) {
       throw const AppUpdateException('更新包的校验文件格式无效。');
     }

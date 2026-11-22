@@ -61,7 +61,9 @@ class AppController extends ChangeNotifier {
 
   AppSnapshot snapshot = AppSnapshot.empty();
   bool initialized = false;
-  bool busy = false;
+  bool _busy = false;
+  bool get busy => _busy || _savingAdvancedConfig;
+  set busy(bool value) => _busy = value;
   bool running = false;
   bool _savingTakeover = false;
   bool _applyingTunTakeover = false;
@@ -197,11 +199,11 @@ class AppController extends ChangeNotifier {
   Future<void>? _connecting;
   bool _changingWireGuard = false;
   bool _savingAdvancedConfig = false;
+  Future<void>? _configApply;
   int _lastUpTotal = 0;
   int _lastDownTotal = 0;
   DateTime? _lastTrafficAt;
 
-  bool get isWindows => Platform.isWindows;
   bool get isAndroid => Platform.isAndroid;
   bool get isLinux => Platform.isLinux;
   bool get supportsSystemProxy =>
@@ -383,7 +385,7 @@ class AppController extends ChangeNotifier {
       settings.homeMobile = layout;
     }
     try {
-      await storage.save(source);
+      await _saveSnapshot(source);
     } catch (_) {
       final current = desktop
           ? source.settings.homeDesktop
@@ -509,8 +511,6 @@ class AppController extends ChangeNotifier {
     return '手动选择';
   }
 
-  String? get coreRunError => runtimeStatus?.error ?? error;
-
   Future<void> initialize({AppPaths? appPaths}) {
     if (initialized || _disposed || _closing) return Future<void>.value();
     return _initializing ??= _initialize(appPaths).whenComplete(() {
@@ -622,16 +622,17 @@ class AppController extends ChangeNotifier {
 
   Future<void> _autoUpdateRuleSets() async {
     if (!settings.ruleSetAutoUpdate) return;
-    final checkedAt = ruleSetStatus?.checkedAt;
-    if (checkedAt != null &&
-        DateTime.now().difference(checkedAt) < const Duration(hours: 24)) {
+    if (ruleSetStatus != null &&
+        !await ruleSets.isUpdateDue(const Duration(hours: 24))) {
       return;
     }
     await updateRuleSets(automatic: true);
   }
 
   Future<void> updateRuleSets({bool automatic = false}) async {
-    if (_ruleSetUpdatesStopped || updatingRuleSets) return;
+    if (_ruleSetUpdatesStopped || updatingRuleSets || _savingAdvancedConfig) {
+      return;
+    }
     updatingRuleSets = true;
     ruleSetError = null;
     notifyListeners();
@@ -652,7 +653,9 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> resetBuiltInRuleSets() async {
-    if (_ruleSetUpdatesStopped || updatingRuleSets) return;
+    if (_ruleSetUpdatesStopped || updatingRuleSets || _savingAdvancedConfig) {
+      return;
+    }
     updatingRuleSets = true;
     ruleSetError = null;
     notifyListeners();
@@ -689,15 +692,6 @@ class AppController extends ChangeNotifier {
       }
     }
     return client;
-  }
-
-  String get ruleSetVersionLabel {
-    final updated = ruleSetStatus?.updatedAt;
-    if (updated == null) return ruleSetStatus?.sourceLabel ?? '内置';
-    final local = updated.toLocal();
-    final month = local.month.toString().padLeft(2, '0');
-    final day = local.day.toString().padLeft(2, '0');
-    return '$month-$day';
   }
 
   CompiledConfig compile([AppSnapshot? candidate]) {
@@ -863,7 +857,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> connect() async {
-    if (!_rebuilding) await _connect();
+    if (!_rebuilding && !_savingAdvancedConfig) await _connect();
   }
 
   Future<void> _connect() async {
@@ -898,72 +892,13 @@ class AppController extends ChangeNotifier {
       await _refreshSystemDns();
       ruleSets.pinActiveSnapshotForCore();
       final compiled = compile();
-      if (isAndroid &&
-          compiled.hasTunInbound &&
-          settings.perAppMode == PerAppMode.allow &&
-          settings.perAppPackages.isEmpty) {
-        throw const RuntimeException('应用过滤已选择“代理所选”，但还没有勾选任何应用。');
-      }
       await ruleSets.prepareLocalFiles(compiled.localRuleSetPaths);
-      _compiled = compiled;
-      final namesById = <String, String>{};
-      for (final subscription in snapshot.subscriptions) {
-        for (final node in subscription.nodes) {
-          namesById.putIfAbsent(node.id, () => node.name);
-        }
-      }
-      final connectionNodeNames = <String, String>{};
-      final nodeIdsByTag = <String, String>{};
-      for (final entry in compiled.nodeTags.entries) {
-        nodeIdsByTag[entry.value] = entry.key;
-        final name = namesById[entry.key];
-        if (name != null && name.isNotEmpty) {
-          connectionNodeNames[entry.value] = name;
-        }
-      }
-      _connectionNodeNames = connectionNodeNames;
-      _nodeIdsByTag = nodeIdsByTag;
-      _effectiveTag = null;
-      if (compiled.warnings.isNotEmpty) notice = compiled.warnings.first;
-      final tunMode = compiled.hasTunInbound;
-      final client = runtime;
-      if (client is AndroidRuntimeClient) {
-        await client.setCpuWakeLockEnabled(settings.cpuWakeLockEnabled);
-      }
-      await runtime.start(
-        config: compiled.encoded,
-        mode: tunMode ? 'tun' : 'normal',
-        perAppMode: settings.perAppMode.name,
-        perAppPackages: settings.perAppPackages,
-      );
-      running = true;
-      connectedAt = DateTime.now();
-      // sing-box restores a group's last selection from its cache file, which
-      // would silently override the node chosen in the app before connecting.
-      if (settings.selectionMode == SelectionMode.manual) {
-        final tag = compiled.nodeTags[settings.manualNodeId];
-        if (tag != null) {
-          try {
-            await runtime.select(tag);
-          } catch (_) {}
-        }
-      }
-      _lastUpTotal = 0;
-      _lastDownTotal = 0;
-      _lastTrafficAt = null;
-      samples = const [];
-      if (!_applyingTunTakeover) _recordHomeActivity('代理已连接');
-      _startPolling();
+      final status = await _startConfiguredCore(compiled, settings);
+      _publishRunningCore(compiled, status);
       try {
         await _refreshStatus();
       } catch (_) {
         // Status is best effort; the poll loop retries and reports a stop.
-      }
-      if (!_closing && settings.systemProxyEnabled && systemProxy != null) {
-        final result = await _enableSystemProxy(systemProxy!);
-        if (!result.ok) {
-          error = result.error;
-        }
       }
     } catch (e) {
       running = false;
@@ -983,11 +918,85 @@ class AppController extends ChangeNotifier {
         unawaited(refreshExitInfo());
       }
       unawaited(_refreshConnectionLatency());
-      await storage.save(snapshot);
+      await _saveSnapshot(snapshot);
     }
   }
 
+  Future<RuntimeStatus> _startConfiguredCore(
+    CompiledConfig compiled,
+    AppSettings configSettings, {
+    bool strict = false,
+  }) async {
+    if (isAndroid &&
+        compiled.hasTunInbound &&
+        configSettings.perAppMode == PerAppMode.allow &&
+        configSettings.perAppPackages.isEmpty) {
+      throw const RuntimeException('应用过滤已选择“代理所选”，但还没有勾选任何应用。');
+    }
+    final client = runtime;
+    if (client is AndroidRuntimeClient) {
+      await client.setCpuWakeLockEnabled(configSettings.cpuWakeLockEnabled);
+    }
+    final status = await client.start(
+      config: compiled.encoded,
+      mode: compiled.hasTunInbound ? 'tun' : 'normal',
+      perAppMode: configSettings.perAppMode.name,
+      perAppPackages: configSettings.perAppPackages,
+    );
+    if (!status.running) {
+      throw RuntimeException(status.error ?? '核心尚未就绪');
+    }
+    final tag = compiled.nodeTags[configSettings.manualNodeId];
+    if (configSettings.selectionMode == SelectionMode.manual && tag != null) {
+      try {
+        await client.select(tag);
+      } catch (cause) {
+        if (strict) rethrow;
+        debugPrint('Could not apply the selected node: ${cause.runtimeType}');
+      }
+    }
+    final proxy = systemProxy;
+    if (!_closing && configSettings.systemProxyEnabled && proxy != null) {
+      final result = await _applySystemProxy(proxy, compiled);
+      if (!result.ok) {
+        final message = result.error ?? '设置系统代理失败';
+        if (strict) throw RuntimeException(message);
+        error = message;
+      }
+    }
+    return status;
+  }
+
+  void _publishRunningCore(CompiledConfig compiled, RuntimeStatus status) {
+    _compiled = compiled;
+    runtimeStatus = status;
+    final names = {for (final node in snapshot.allNodes) node.id: node.name};
+    _connectionNodeNames = {
+      for (final entry in compiled.nodeTags.entries)
+        if (names[entry.key] case final name? when name.isNotEmpty)
+          entry.value: name,
+    };
+    _nodeIdsByTag = {
+      for (final entry in compiled.nodeTags.entries) entry.value: entry.key,
+    };
+    _effectiveTag = null;
+    if (compiled.warnings.isNotEmpty) notice = compiled.warnings.first;
+    running = true;
+    connectedAt = DateTime.now();
+    _lastUpTotal = 0;
+    _lastDownTotal = 0;
+    _lastTrafficAt = null;
+    samples = const [];
+    if (!_applyingTunTakeover) _recordHomeActivity('代理已连接');
+    _startPolling();
+  }
+
   Future<void> disconnect({bool silent = false}) async {
+    await _waitForAdvancedConfig();
+    await _disconnect(silent: silent);
+  }
+
+  Future<void> _disconnect({required bool silent, bool strict = false}) async {
     _cancelExitInfo();
     final wasRunning = running;
     busy = true;
@@ -1014,9 +1023,10 @@ class AppController extends ChangeNotifier {
       return;
     }
     try {
-      await _restoreSystemProxy();
+      await _restoreSystemProxy(strict: strict);
       await runtime.shutdown();
     } catch (e) {
+      if (strict) rethrow;
       if (!silent) _setError(_friendlyError(e));
     } finally {
       running = false;
@@ -1069,7 +1079,7 @@ class AppController extends ChangeNotifier {
     current.perAppMode = mode;
     current.perAppPackages = List.of(packages);
     try {
-      await storage.save(snapshot);
+      await _saveSnapshot(snapshot);
     } catch (_) {
       current.perAppMode = previousMode;
       current.perAppPackages = previousPackages;
@@ -1086,7 +1096,7 @@ class AppController extends ChangeNotifier {
     notifyListeners();
     try {
       try {
-        await storage.save(snapshot);
+        await _saveSnapshot(snapshot);
       } catch (error) {
         settings.splitMode = previous;
         if (!_disposed) _setError('规则模式保存失败：${_friendlyError(error)}');
@@ -1100,7 +1110,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> setSelectionMode(SelectionMode mode) async {
-    if (_changingWireGuard) return;
+    if (_changingWireGuard || _savingAdvancedConfig) return;
     if (outboundMode == OutboundMode.wireGuard && mode == SelectionMode.auto) {
       try {
         await _changeWireGuard((draft) {
@@ -1117,13 +1127,13 @@ class AppController extends ChangeNotifier {
     }
     if (settings.selectionMode == mode) return;
     settings.selectionMode = mode;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) await restartCore();
   }
 
   Future<void> selectNode(String nodeId) async {
-    if (_changingWireGuard) return;
+    if (_changingWireGuard || _savingAdvancedConfig) return;
     final node = snapshot.nodeById(nodeId);
     if (node == null) return;
     if (outboundMode == OutboundMode.wireGuard) {
@@ -1141,7 +1151,7 @@ class AppController extends ChangeNotifier {
     final wasAuto = settings.selectionMode == SelectionMode.auto;
     settings.manualNodeId = nodeId;
     settings.selectionMode = SelectionMode.manual;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) {
       if (wasAuto) {
@@ -1165,7 +1175,7 @@ class AppController extends ChangeNotifier {
     final node = snapshot.nodeById(nodeId);
     if (node == null) return;
     node.autoEnabled = !node.autoEnabled;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running && settings.selectionMode == SelectionMode.auto) {
       await restartCore();
@@ -1179,7 +1189,7 @@ class AppController extends ChangeNotifier {
     if (index < 0) return;
     final group = snapshot.subscriptions[index];
     group.autoEnabled = !group.autoEnabled;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running && settings.selectionMode == SelectionMode.auto) {
       await restartCore();
@@ -1190,46 +1200,58 @@ class AppController extends ChangeNotifier {
     final node = snapshot.nodeById(nodeId);
     if (node == null) return;
     node.favorite = !node.favorite;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
   }
 
-  Future<ProxyApplyResult> _enableSystemProxy(SystemProxy proxy) async {
-    var port = settings.inboundOrDefault.localPort;
-    if (isLinux) {
-      final inbounds = _compiled?.json['inbounds'];
-      final mixed = inbounds is List
-          ? inbounds.whereType<Map>().where(
-              (inbound) =>
-                  inbound['type'] == 'mixed' &&
-                  const {'127.0.0.1', '0.0.0.0'}.contains(inbound['listen']),
-            )
-          : const <Map>[];
-      if (mixed.length != 1) {
-        return const ProxyApplyResult(
-          ok: false,
-          error: '系统代理需要一个监听 IPv4 回环的混合入站，请按实际入站手动配置。',
-        );
-      }
-      final inbound = mixed.single;
-      final users = inbound['users'];
-      if (users != null && (users is! List || users.isNotEmpty)) {
-        return const ProxyApplyResult(
-          ok: false,
-          error: '当前混合入站需要认证，请在应用中手动配置代理。',
-        );
-      }
-      final listenPort = inbound['listen_port'];
-      if (listenPort is! int || listenPort < 1 || listenPort > 65535) {
-        return const ProxyApplyResult(ok: false, error: '混合入站端口无效');
-      }
-      port = listenPort;
+  int _systemProxyPort(CompiledConfig config) {
+    final inbounds = config.json['inbounds'];
+    final mixed = inbounds is List
+        ? inbounds.whereType<Map>().where(
+            (inbound) =>
+                inbound['type'] == 'mixed' &&
+                const {'127.0.0.1', '0.0.0.0'}.contains(inbound['listen']),
+          )
+        : const <Map>[];
+    if (mixed.length != 1) {
+      throw const ConfigCompileException('系统代理需要一个监听 IPv4 回环的混合入站，请按实际入站手动配置。');
     }
-    return proxy.enable(port);
+    final inbound = mixed.single;
+    final users = inbound['users'];
+    if (users != null && (users is! List || users.isNotEmpty)) {
+      throw const ConfigCompileException('当前混合入站需要认证，请在应用中手动配置代理。');
+    }
+    final listenPort = inbound['listen_port'];
+    if (listenPort is! int || listenPort < 1 || listenPort > 65535) {
+      throw const ConfigCompileException('混合入站端口无效');
+    }
+    return listenPort;
   }
 
-  Future<void> _restoreSystemProxy() async {
+  Future<ProxyApplyResult> _enableSystemProxy(SystemProxy proxy) async {
+    final config = _compiled;
+    if (config == null) {
+      return const ProxyApplyResult(ok: false, error: '核心尚未应用配置');
+    }
+    return _applySystemProxy(proxy, config);
+  }
+
+  Future<ProxyApplyResult> _applySystemProxy(
+    SystemProxy proxy,
+    CompiledConfig config,
+  ) async {
+    try {
+      return await proxy.enable(_systemProxyPort(config));
+    } on ConfigCompileException catch (error) {
+      return ProxyApplyResult(ok: false, error: error.message);
+    }
+  }
+
+  Future<void> _restoreSystemProxy({bool strict = false}) async {
     final restored = await systemProxy?.disable();
+    if (strict && restored?.ok == false) {
+      throw RuntimeException(restored?.error ?? '恢复系统代理失败');
+    }
     if (isLinux && restored?.error != null) {
       error = [error, restored?.error].whereType<String>().join('\n');
     }
@@ -1245,7 +1267,7 @@ class AppController extends ChangeNotifier {
     final current = settings;
     current.systemProxyEnabled = enabled;
     try {
-      await storage.save(snapshot);
+      await _saveSnapshot(snapshot);
       final proxy = systemProxy;
       if (!_closing && running && !busy && proxy != null) {
         final result = enabled
@@ -1253,7 +1275,7 @@ class AppController extends ChangeNotifier {
             : await proxy.disable();
         if (!result.ok) {
           current.systemProxyEnabled = !enabled;
-          await storage.save(snapshot);
+          await _saveSnapshot(snapshot);
           _setError(result.error ?? '切换系统代理失败');
         }
       }
@@ -1293,7 +1315,7 @@ class AppController extends ChangeNotifier {
     update(enabled);
     try {
       try {
-        await storage.save(snapshot);
+        await _saveSnapshot(snapshot);
       } catch (error) {
         update(!enabled);
         _setError('接管设置保存失败：${_friendlyError(error)}');
@@ -1322,31 +1344,11 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> updateInbound(
-    InboundSettings Function(InboundSettings) change,
-  ) async {
-    final value = settings.inboundOrDefault;
-    change(value);
-    settings.inbound = value;
-    await storage.save(snapshot);
-    notifyListeners();
-    if (running) await restartCore();
-  }
-
-  Future<void> updateTun(TunSettings Function(TunSettings) change) async {
-    final value = settings.tunOrDefault;
-    change(value);
-    settings.tun = value;
-    await storage.save(snapshot);
-    notifyListeners();
-    if (running && supportsTun) await restartCore();
-  }
-
   Future<void> updateDns(DnsSettings Function(DnsSettings) change) async {
     final value = settings.dnsOrDefault;
     change(value);
     settings.dns = value;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) await restartCore();
   }
@@ -1358,20 +1360,28 @@ class AppController extends ChangeNotifier {
     final value = settings.advancedOrDefault;
     change(value);
     settings.advanced = value;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (restart && running) await restartCore();
   }
 
   Future<void> saveRules(List<RoutingRule> rules) async {
     snapshot.rules = rules;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) await restartCore();
   }
 
   Future<void> saveAdvancedConfig(AdvancedConfigMode mode, String text) async {
-    if (busy || _rebuilding || _changingWireGuard || _savingAdvancedConfig) {
+    if (_closing ||
+        busy ||
+        _replacingSnapshot ||
+        _connecting != null ||
+        _rebuilding ||
+        _savingTakeover ||
+        _changingSplitMode ||
+        _changingWireGuard ||
+        updatingRuleSets) {
       throw const ConfigCompileException('正在应用配置，请稍后重试。');
     }
     Map<String, dynamic> json = const {};
@@ -1398,50 +1408,122 @@ class AppController extends ChangeNotifier {
       }
       json = decoded;
     }
-    final previousAdvancedJson = snapshot.advancedJson;
-    final previousInactiveJson = snapshot.inactiveAdvancedJson;
-    final previousCustomConfig = snapshot.customConfig;
-    final previousUseCustom = snapshot.useCustomConfig;
+    final draft = AppSnapshot.fromJson(snapshot.toJson());
     final useExtension = mode == AdvancedConfigMode.extension;
     final useOverride = mode == AdvancedConfigMode.override;
+    draft
+      ..inactiveAdvancedJson = useExtension ? null : snapshot.advancedJsonDraft
+      ..advancedJson = useExtension ? json : const {}
+      ..customConfig = useOverride ? text : snapshot.customConfig
+      ..useCustomConfig = useOverride;
     _savingAdvancedConfig = true;
+    final task = _applyAdvancedConfig(draft);
+    _configApply = task;
+    notifyListeners();
     try {
-      snapshot
-        ..inactiveAdvancedJson = useExtension
-            ? null
-            : snapshot.advancedJsonDraft
-        ..advancedJson = useExtension ? json : const {}
-        ..customConfig = useOverride ? text : previousCustomConfig
-        ..useCustomConfig = useOverride;
-      try {
-        await storage.save(snapshot);
-      } catch (_) {
-        snapshot
-          ..advancedJson = previousAdvancedJson
-          ..inactiveAdvancedJson = previousInactiveJson
-          ..customConfig = previousCustomConfig
-          ..useCustomConfig = previousUseCustom;
-        rethrow;
-      }
-      if (_disposed) return;
-      notifyListeners();
-      if (running) await restartCore();
+      await task;
     } finally {
+      _configApply = null;
       _savingAdvancedConfig = false;
+      if (!_closing && !_disposed) {
+        notifyListeners();
+        if (running && !checkingExitInfo && exitInfo == null) {
+          unawaited(refreshExitInfo());
+          unawaited(_refreshConnectionLatency());
+        }
+      }
     }
   }
 
-  Future<void> verifyConfig() async {
-    try {
-      final compiled = compile();
-      notice = compiled.warnings.isEmpty
-          ? '配置校验通过'
-          : compiled.warnings.join('；');
-      error = null;
-    } catch (e) {
-      _setError(_friendlyError(e));
+  Future<void> _applyAdvancedConfig(AppSnapshot draft) async {
+    final original = _compiled;
+    final wasRunning = running;
+    CompiledConfig? candidate;
+    if ((initialized || wasRunning) &&
+        (wasRunning ||
+            draft.useCustomConfig ||
+            draft.hasNodes ||
+            draft.wireGuardProfile != null)) {
+      if (wasRunning) await _refreshSystemDns();
+      candidate = compile(draft);
+      final validator = runtime;
+      if (validator is RuntimeConfigValidator) {
+        await validator.validateConfig(candidate.encoded);
+      }
+      if (wasRunning &&
+          draft.settings.systemProxyEnabled &&
+          systemProxy != null) {
+        _systemProxyPort(candidate);
+      }
+      await ruleSets.prepareLocalFiles(candidate.localRuleSetPaths);
     }
-    notifyListeners();
+
+    void checkActive() {
+      if (_closing || _disposed) {
+        throw const ConfigCompileException('已取消应用配置');
+      }
+    }
+
+    checkActive();
+    RuntimeStatus? status;
+    var switched = false;
+    try {
+      if (wasRunning && candidate != null) {
+        switched = true;
+        await _disconnect(silent: true, strict: true);
+        checkActive();
+        status = await _startConfiguredCore(
+          candidate,
+          draft.settings,
+          strict: true,
+        );
+      }
+      checkActive();
+      final updated = AppSnapshot.fromJson(snapshot.toJson())
+        ..inactiveAdvancedJson = draft.inactiveAdvancedJson
+        ..advancedJson = draft.advancedJson
+        ..customConfig = draft.customConfig
+        ..useCustomConfig = draft.useCustomConfig;
+      await storage.save(updated);
+    } catch (cause) {
+      if (!switched || _closing || _disposed) rethrow;
+      try {
+        await _restoreSystemProxy(strict: true);
+        await runtime.shutdown();
+        if (original == null) throw const RuntimeException('缺少原运行配置');
+        final restored = await _startConfiguredCore(
+          original,
+          settings,
+          strict: true,
+        );
+        _publishRunningCore(original, restored);
+      } catch (rollback) {
+        try {
+          await _restoreSystemProxy();
+          await runtime.shutdown();
+        } catch (cleanup) {
+          debugPrint(
+            'Could not clean up a failed config rollback: ${cleanup.runtimeType}',
+          );
+        }
+        throw ConfigCompileException(
+          '应用配置失败：${_friendlyError(cause)}；原连接恢复失败：${_friendlyError(rollback)}',
+        );
+      }
+      throw ConfigCompileException('应用配置失败，已恢复原连接：${_friendlyError(cause)}');
+    }
+    snapshot
+      ..inactiveAdvancedJson = draft.inactiveAdvancedJson
+      ..advancedJson = draft.advancedJson
+      ..customConfig = draft.customConfig
+      ..useCustomConfig = draft.useCustomConfig;
+    if (!_closing && !_disposed && status != null && candidate != null) {
+      error = null;
+      notice = null;
+      _unexpectedStop = false;
+      ruleSets.pinActiveSnapshotForCore();
+      _publishRunningCore(candidate, status);
+    }
   }
 
   Future<void> _stopTemporaryTestRuntime() async {
@@ -2037,7 +2119,7 @@ class AppController extends ChangeNotifier {
     if (settings.manualNodeId == null && parsed.nodes.isNotEmpty) {
       settings.manualNodeId = parsed.nodes.first.id;
     }
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     if (!_disposed && identical(snapshot, source)) notifyListeners();
     return subscription;
   }
@@ -2074,7 +2156,7 @@ class AppController extends ChangeNotifier {
     if (added.isEmpty) throw const ParseException('该分组中已存在这些节点');
     group.nodes = <ProxyNode>[...group.nodes, ...added];
     settings.manualNodeId ??= added.first.id;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) await restartCore();
     return added.length;
@@ -2088,7 +2170,7 @@ class AppController extends ChangeNotifier {
     }
     final group = Subscription(id: _newId(), name: trimmed);
     snapshot.subscriptions.add(group);
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     return group;
   }
@@ -2112,7 +2194,7 @@ class AppController extends ChangeNotifier {
     if (listEquals(current, reordered)) return;
     source.nodeGroupOrder = reordered;
     try {
-      await storage.save(source);
+      await _saveSnapshot(source);
     } catch (exception) {
       if (!identical(snapshot, source)) return;
       if (identical(source.nodeGroupOrder, reordered)) {
@@ -2138,7 +2220,7 @@ class AppController extends ChangeNotifier {
     if (excludeFilter != null) group.excludeFilter = excludeFilter;
     if (sortMode != null) group.sortMode = sortMode;
     if (sortDescending != null) group.sortDescending = sortDescending;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
   }
 
@@ -2180,12 +2262,14 @@ class AppController extends ChangeNotifier {
       updateIntervalMinutes: updateIntervalMinutes,
       clearError: true,
     );
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
   }
 
   Future<void> updateSubscription(String id, {bool silent = false}) async {
-    if (_disposed || _closing || _replacingSnapshot) return;
+    if (_disposed || _closing || _replacingSnapshot || _savingAdvancedConfig) {
+      return;
+    }
     final sourceSnapshot = snapshot;
     final existing = sourceSnapshot.subscriptions
         .where((group) => group.id == id)
@@ -2202,6 +2286,7 @@ class AppController extends ChangeNotifier {
       if (_disposed ||
           _closing ||
           _replacingSnapshot ||
+          _savingAdvancedConfig ||
           !identical(snapshot, sourceSnapshot) ||
           !identical(_subscriptionUpdates[id], request)) {
         return null;
@@ -2261,7 +2346,7 @@ class AppController extends ChangeNotifier {
       if (selectionLost) {
         settings.manualNodeId = null;
       }
-      await storage.save(snapshot);
+      await _saveSnapshot(snapshot);
       if (currentSubscription() == null) return;
       _recordHomeActivity('订阅更新完成，共 ${parsed.nodes.length} 个节点');
       notifyListeners();
@@ -2283,7 +2368,7 @@ class AppController extends ChangeNotifier {
       if (current == null) return;
       current.lastError = _friendlyError(e);
       _recordHomeActivity('订阅更新失败', failed: true);
-      await storage.save(snapshot);
+      await _saveSnapshot(snapshot);
       if (currentSubscription() == null) return;
       notifyListeners();
       if (!silent && currentSubscription() != null) {
@@ -2390,7 +2475,7 @@ class AppController extends ChangeNotifier {
       settings.manualNodeId = null;
       error = '当前节点随分组一起删除，请重新选择节点。';
     }
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running && ids.isNotEmpty) {
       if (selectionLost && settings.selectionMode == SelectionMode.manual) {
@@ -2426,7 +2511,7 @@ class AppController extends ChangeNotifier {
     final node = parsed.copyWith(subscriptionId: group.id);
     group.nodes = <ProxyNode>[...group.nodes, node];
     settings.manualNodeId ??= node.id;
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) await restartCore();
     return node;
@@ -2447,7 +2532,7 @@ class AppController extends ChangeNotifier {
         break;
       }
     }
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) await restartCore();
   }
@@ -2460,7 +2545,7 @@ class AppController extends ChangeNotifier {
       settings.manualNodeId = null;
       error = '当前节点已删除，请重新选择节点。';
     }
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     notifyListeners();
     if (running) await restartCore();
   }
@@ -2507,7 +2592,7 @@ class AppController extends ChangeNotifier {
     final current = settings;
     current.cpuWakeLockEnabled = enabled;
     try {
-      await storage.save(snapshot);
+      await _saveSnapshot(snapshot);
     } catch (error) {
       if (current.cpuWakeLockEnabled == enabled) {
         current.cpuWakeLockEnabled = !enabled;
@@ -2525,8 +2610,14 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> saveSettings() async {
-    await storage.save(snapshot);
+    await _saveSnapshot(snapshot);
     _publishSettings();
+  }
+
+  Future<void> _saveSnapshot(AppSnapshot source) async {
+    // Wait for the config commit before AppStorage captures the snapshot.
+    if (_configApply != null) await _waitForAdvancedConfig();
+    await storage.save(source);
   }
 
   void _publishSettings() {
@@ -2548,10 +2639,20 @@ class AppController extends ChangeNotifier {
     _invalidateConnectionRefresh();
     _cancelNodeTests();
     await _connecting;
+    await _waitForAdvancedConfig();
     if (!initialized) return;
     await _restoreSystemProxy();
     await _stopTemporaryTestRuntime();
     await runtime.shutdown();
+  }
+
+  Future<void> _waitForAdvancedConfig() async {
+    try {
+      await _configApply;
+    } catch (cause) {
+      // The caller that applied the config reports the failure.
+      debugPrint('Advanced config application ended: ${cause.runtimeType}');
+    }
   }
 
   @override
@@ -2582,17 +2683,6 @@ class AppController extends ChangeNotifier {
     _ruleSetUpdatesStopped = true;
     _ruleSetStartupTimer?.cancel();
     _ruleSetTimer?.cancel();
-  }
-
-  void clearMessages() {
-    error = null;
-    notice = null;
-    notifyListeners();
-  }
-
-  void dismissLoadWarning() {
-    loadWarning = null;
-    notifyListeners();
   }
 
   void _startPolling() {

@@ -10,20 +10,6 @@ class WindowsStartup {
 
   static bool get supported => Platform.isWindows;
 
-  static bool isEnabled() {
-    if (!supported) return false;
-    try {
-      final key = CURRENT_USER.open(_keyPath);
-      try {
-        return key.getString(_valueName) == _command;
-      } finally {
-        key.close();
-      }
-    } catch (_) {
-      return false;
-    }
-  }
-
   static void setEnabled(bool enabled) {
     if (!supported) return;
     final key = CURRENT_USER.open(

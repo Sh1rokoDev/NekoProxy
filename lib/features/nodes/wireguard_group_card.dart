@@ -38,7 +38,7 @@ class WireGuardGroupCard extends StatefulWidget {
     required this.controller,
     required this.group,
     required this.profiles,
-    required this.reorderIndex,
+    required this.order,
     required this.reorderEnabled,
     required this.expanded,
     required this.onToggleExpanded,
@@ -47,7 +47,7 @@ class WireGuardGroupCard extends StatefulWidget {
   final AppController controller;
   final WireGuardGroup group;
   final List<WireGuardProfile> profiles;
-  final int reorderIndex;
+  final NodeGroupOrder order;
   final bool reorderEnabled;
   final bool expanded;
   final VoidCallback onToggleExpanded;
@@ -382,7 +382,7 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
     return NodeGroupSurface(
       active: activeProfile?.groupId == widget.group.id,
       builder: (context, hovered, onHighlightChanged) => ReorderableNodeGroup(
-        index: widget.reorderIndex,
+        order: widget.order,
         enabled: enabled && widget.reorderEnabled,
         tooltip: '拖拽调整 WireGuard 分组顺序',
         child: Column(

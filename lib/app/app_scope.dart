@@ -29,10 +29,9 @@ class AppScope extends InheritedNotifier<AppController> {
 }
 
 class ShellScope extends InheritedWidget {
-  const ShellScope({super.key, required this.switchTab, required this.openConnections, required super.child});
+  const ShellScope({super.key, required this.switchTab, required super.child});
 
   final void Function(int index) switchTab;
-  final VoidCallback openConnections;
 
   static ShellScope? maybeOf(BuildContext context) =>
       context.dependOnInheritedWidgetOfExactType<ShellScope>();

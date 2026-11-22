@@ -171,6 +171,36 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('打开大日志时首次读取就显示文件末尾', (tester) async {
+    final directory = Directory.systemTemp.createTempSync('neko-logs-tail-');
+    final paths = AppPaths.forDirectory(directory.path);
+    final file = paths.logFile;
+    file.parent.createSync();
+    final line = 'INFO ${List.filled(101, 'x').join()}\n';
+    file.writeAsStringSync('${List.filled(105000, line).join()}INFO 最新一条\n');
+    final controller = _LogsController()..paths = paths;
+    addTearDown(() {
+      controller.dispose();
+      directory.deleteSync(recursive: true);
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: AppScope(controller: controller, child: const LogsPage()),
+      ),
+    );
+    final view = find.byType(LogText);
+    for (var attempt = 0; attempt < 50 && view.evaluate().isEmpty; attempt++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 10)),
+      );
+      await tester.pump();
+    }
+    final lines = tester.widget<LogText>(view).lines;
+    expect(lines, hasLength(1500));
+    expect(lines.last, 'INFO 最新一条');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('普通控制器通知不会重置日志文件的读取位置', (tester) async {
     final directory = Directory.systemTemp.createTempSync('neko-logs-tick-');
     final paths = AppPaths.forDirectory(directory.path);

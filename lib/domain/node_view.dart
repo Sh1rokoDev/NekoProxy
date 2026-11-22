@@ -8,16 +8,6 @@ List<String> splitFilterKeywords(String raw) => raw
     .where((item) => item.isNotEmpty)
     .toList();
 
-bool nodeMatchesFilter(
-  ProxyNode node, {
-  required String includeFilter,
-  required String excludeFilter,
-}) => _matches(
-  node,
-  splitFilterKeywords(includeFilter),
-  splitFilterKeywords(excludeFilter),
-);
-
 bool _matches(ProxyNode node, List<String> include, List<String> exclude) {
   if (include.isEmpty && exclude.isEmpty) return true;
   final haystack = '${node.name} ${node.server} ${node.protocol}'.toLowerCase();

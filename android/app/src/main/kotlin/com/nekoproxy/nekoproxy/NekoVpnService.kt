@@ -7,6 +7,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.net.ConnectivityManager
@@ -17,6 +18,7 @@ import android.util.Log
 import com.nekoproxy.mobile.Engine
 import com.nekoproxy.mobile.Mobile
 import com.nekoproxy.mobile.Protector
+import com.nekoproxy.mobile.TunOpener
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.Executors
@@ -28,9 +30,7 @@ class NekoVpnService : VpnService() {
         private const val CHANNEL_ID = "nekoproxy-vpn"
         private const val NOTIFICATION_ID = 1029
         private const val ACTION_START = "com.nekoproxy.nekoproxy.START"
-        private const val ACTION_STOP = "com.nekoproxy.nekoproxy.STOP"
         private const val EXTRA_CONFIG = "config"
-        private const val EXTRA_CACHE = "cache"
         private const val EXTRA_LOG = "log"
         private const val EXTRA_USE_VPN = "use_vpn"
         private const val EXTRA_PER_APP_MODE = "per_app_mode"
@@ -73,7 +73,6 @@ class NekoVpnService : VpnService() {
         fun start(
             context: Context,
             config: String,
-            cachePath: String,
             logPath: String,
             useVpn: Boolean,
             perAppMode: String,
@@ -85,7 +84,6 @@ class NekoVpnService : VpnService() {
             val intent = Intent(context, NekoVpnService::class.java).apply {
                 action = ACTION_START
                 putExtra(EXTRA_CONFIG, config)
-                putExtra(EXTRA_CACHE, cachePath)
                 putExtra(EXTRA_LOG, logPath)
                 putExtra(EXTRA_USE_VPN, useVpn)
                 putExtra(EXTRA_PER_APP_MODE, perAppMode)
@@ -99,7 +97,7 @@ class NekoVpnService : VpnService() {
         }
 
         @Synchronized
-        fun stop(context: Context) {
+        fun stop() {
             startToken++
             val current = engine
             engine = null
@@ -203,10 +201,6 @@ class NekoVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
         if (intent?.action != ACTION_START) {
             return START_NOT_STICKY
         }
@@ -276,7 +270,14 @@ class NekoVpnService : VpnService() {
                 networkMonitor = monitor
                 monitor.start()
             }
-            if (useVpn) prepareVpn(core, parsed, perAppMode, perAppPackages)
+            if (useVpn) {
+                core.setTunOpener(TunOpener { settings ->
+                    synchronized(Companion) {
+                        check(!destroyed && token == startToken) { "VPN 启动已取消" }
+                        establishVpn(JSONObject(settings), parsed, perAppMode, perAppPackages)
+                    }
+                })
+            }
             Log.i(TAG, "starting sing-box core")
             core.start(parsed.toString())
             val published = synchronized(Companion) {
@@ -312,53 +313,32 @@ class NekoVpnService : VpnService() {
         }
     }
 
-    private fun prepareVpn(
-        core: Engine,
+    private fun establishVpn(
+        settings: JSONObject,
         parsed: JSONObject,
         perAppMode: String,
         perAppPackages: List<String>,
-    ) {
-        val tunOptions = findTunInbound(parsed)
-            ?: throw IllegalStateException("配置中没有 TUN 入站")
-        val addresses = tunOptions.optJSONArray("address") ?: JSONArray()
-        val mtu = if (tunOptions.has("mtu")) tunOptions.optInt("mtu", 9000) else 9000
-        val ipv6 = (0 until addresses.length()).any {
-            addresses.optString(it).contains(':')
-        }
-        val autoRoute = tunOptions.optBoolean("auto_route", true)
-
+    ): Int {
+        check(tunInterface == null) { "VPN 接口已建立" }
         val builder = Builder()
             .setSession("NekoProxy")
-            .setMtu(mtu)
+            .setMtu(settings.getInt("mtu"))
             .setBlocking(true)
-        val addressValues = ArrayList<String>(addresses.length())
-        for (index in 0 until addresses.length()) {
-            val value = addresses.optString(index)
-            val slash = value.indexOf('/')
-            if (slash > 0) {
-                builder.addAddress(value.substring(0, slash), value.substring(slash + 1).toInt())
-            } else {
-                builder.addAddress(value, if (value.contains(':')) 128 else 32)
-            }
-            addressValues.add(value)
+        val addresses = settings.getJSONArray("addresses")
+        for (i in 0 until addresses.length()) {
+            val prefix = addresses.getString(i)
+            builder.addAddress(prefix.substringBefore('/'), prefix.substringAfter('/').toInt())
         }
-        if (autoRoute) {
-            val routes = tunOptions.optJSONArray("route_address")
-            if (routes == null || routes.length() == 0) {
-                builder.addRoute("0.0.0.0", 0)
-                if (ipv6) builder.addRoute("::", 0)
-            } else {
-                for (index in 0 until routes.length()) {
-                    val route = routes.getString(index)
-                    builder.addRoute(route.substringBefore('/'), route.substringAfter('/').toInt())
-                }
-                builder.addRoute("172.19.0.2", 32)
-                if (ipv6) builder.addRoute("fdfe:dcba:9876::2", 128)
+        settings.optJSONArray("routes")?.let { routes ->
+            for (i in 0 until routes.length()) {
+                val prefix = routes.getString(i)
+                builder.addRoute(prefix.substringBefore('/'), prefix.substringAfter('/').toInt())
             }
         }
         applyPerAppSelection(builder, perAppMode, perAppPackages)
-        builder.addDnsServer("172.19.0.2")
-        if (ipv6) builder.addDnsServer("fdfe:dcba:9876::2")
+        settings.optJSONArray("dns")?.let { dns ->
+            for (i in 0 until dns.length()) builder.addDnsServer(dns.getString(i))
+        }
         parsed.optJSONObject("dns")?.optJSONArray("servers")?.let { servers ->
             for (i in 0 until servers.length()) {
                 val server = servers.optJSONObject(i) ?: continue
@@ -373,8 +353,8 @@ class NekoVpnService : VpnService() {
         }
         val pfd = builder.establish() ?: throw IllegalStateException("VpnService 未能建立 TUN 接口")
         tunInterface = pfd
-
-        core.prepareTun(pfd.fd, JSONArray(addressValues).toString())
+        // Keep the service's handle while Go owns and closes its duplicate.
+        return ParcelFileDescriptor.dup(pfd.fileDescriptor).detachFd()
     }
 
     private fun applyPerAppSelection(builder: Builder, mode: String, packages: List<String>) {
@@ -382,31 +362,26 @@ class NekoVpnService : VpnService() {
             .filter { it.matches(Regex("^[A-Za-z0-9_]+(\\.[A-Za-z0-9_]+)+$")) }
             .filter { it != packageName }
             .distinct()
-        if (valid.isEmpty()) {
-            if (mode == "allow" || mode == "block") {
-                Log.w(TAG, "per-app $mode list is empty; all installed apps are proxied")
-            }
-            return
-        }
         when (mode) {
-            "allow" -> valid.forEach { name ->
-                runCatching { builder.addAllowedApplication(name) }
-                    .onFailure { Log.w(TAG, "cannot allow $name", it) }
+            "allow" -> {
+                val added = valid.count { name ->
+                    try {
+                        builder.addAllowedApplication(name)
+                        true
+                    } catch (_: PackageManager.NameNotFoundException) {
+                        false
+                    }
+                }
+                check(added > 0) { "所选应用均不可用，请重新选择要代理的应用" }
             }
             "block" -> valid.forEach { name ->
-                runCatching { builder.addDisallowedApplication(name) }
-                    .onFailure { Log.w(TAG, "cannot exclude $name", it) }
+                try {
+                    builder.addDisallowedApplication(name)
+                } catch (_: PackageManager.NameNotFoundException) {
+                    // An uninstalled app no longer needs an exclusion.
+                }
             }
         }
-    }
-
-    private fun findTunInbound(config: JSONObject): JSONObject? {
-        val inbounds = config.optJSONArray("inbounds") ?: return null
-        for (index in 0 until inbounds.length()) {
-            val inbound = inbounds.optJSONObject(index) ?: continue
-            if (inbound.optString("type") == "tun") return inbound
-        }
-        return null
     }
 
     private fun fail(message: String) {

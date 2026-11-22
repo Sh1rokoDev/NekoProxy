@@ -109,8 +109,10 @@ class _NodesPageState extends State<NodesPage> {
         ) /
         2;
     final entries = <({int groupIndex, int? row})>[];
+    final groupStarts = <String, int>{};
     final columnsByGroup = <String, int>{};
     for (final (index, key) in visibleKeys.indexed) {
+      groupStarts[key] = entries.length;
       entries.add((groupIndex: index, row: null));
       final group = groups[key];
       if (group == null || (_query.isEmpty && _collapsed.contains(group.id))) {
@@ -258,38 +260,97 @@ class _NodesPageState extends State<NodesPage> {
               pageInset + gutter,
               168 + dockInset,
             ),
-            sliver: SliverReorderableList(
-              proxyDecorator: (child, _, _) => child,
-              onReorderItem: (oldIndex, newIndex) => _reorderGroups(
-                visibleKeys,
-                controller,
-                entries[oldIndex].groupIndex,
-                entries[newIndex].groupIndex,
-              ),
+            sliver: SliverList.builder(
               itemCount: entries.length,
+              findChildIndexCallback: (key) {
+                if (key is ValueKey<String>) return groupStarts[key.value];
+                if (key is ValueKey<(String, int)>) {
+                  final (id, row) = key.value;
+                  final start = groupStarts[id];
+                  if (start == null) return null;
+                  final index = start + row + 1;
+                  if (index < entries.length &&
+                      visibleKeys[entries[index].groupIndex] == id) {
+                    return index;
+                  }
+                }
+                return null;
+              },
               itemBuilder: (context, index) {
                 final entry = entries[index];
                 final key = visibleKeys[entry.groupIndex];
+                final order = (
+                  id: key,
+                  index: entry.groupIndex,
+                  count: visibleKeys.length,
+                  move: (int target) => _reorderGroups(
+                    visibleKeys,
+                    controller,
+                    entry.groupIndex,
+                    target,
+                  ),
+                );
+                Widget dropTarget(Widget child, {int? row}) =>
+                    DragTarget<String>(
+                      key: row == null ? ValueKey(key) : ValueKey((key, row)),
+                      onWillAcceptWithDetails: (details) =>
+                          reorderEnabled &&
+                          details.data != key &&
+                          visibleKeys.contains(details.data),
+                      onAcceptWithDetails: (details) => _reorderGroups(
+                        visibleKeys,
+                        controller,
+                        visibleKeys.indexOf(details.data),
+                        entry.groupIndex,
+                      ),
+                      builder: (context, incoming, _) => Stack(
+                        children: [
+                          child,
+                          if (incoming.isNotEmpty)
+                            Positioned(
+                              left: ReorderableNodeGroup.leadingInset,
+                              right: 0,
+                              top:
+                                  visibleKeys.indexOf(incoming.first!) >
+                                      entry.groupIndex
+                                  ? 0
+                                  : null,
+                              bottom:
+                                  visibleKeys.indexOf(incoming.first!) <
+                                      entry.groupIndex
+                                  ? 0
+                                  : null,
+                              child: IgnorePointer(
+                                child: ColoredBox(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  child: const SizedBox(height: 2),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    );
                 final wireGuard = wireGuardGroups[key];
                 if (wireGuard != null) {
                   final id = wireGuard.group.id;
-                  return Padding(
-                    key: ValueKey(key),
-                    padding: const EdgeInsets.only(bottom: 12),
-                    child: WireGuardGroupCard(
-                      controller: controller,
-                      group: wireGuard.group,
-                      profiles: wireGuard.profiles,
-                      reorderIndex: index,
-                      reorderEnabled: reorderEnabled,
-                      expanded:
-                          _query.isNotEmpty ||
-                          !_collapsedWireGuard.contains(id),
-                      onToggleExpanded: () => setState(() {
-                        if (!_collapsedWireGuard.remove(id)) {
-                          _collapsedWireGuard.add(id);
-                        }
-                      }),
+                  return dropTarget(
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: WireGuardGroupCard(
+                        controller: controller,
+                        group: wireGuard.group,
+                        profiles: wireGuard.profiles,
+                        order: order,
+                        reorderEnabled: reorderEnabled,
+                        expanded:
+                            _query.isNotEmpty ||
+                            !_collapsedWireGuard.contains(id),
+                        onToggleExpanded: () => setState(() {
+                          if (!_collapsedWireGuard.remove(id)) {
+                            _collapsedWireGuard.add(id);
+                          }
+                        }),
+                      ),
                     ),
                   );
                 }
@@ -301,89 +362,92 @@ class _NodesPageState extends State<NodesPage> {
                 );
                 if (entry.row case final row?) {
                   final columns = columnsByGroup[key]!;
-                  return _NodeGroupRow(
-                    key: ValueKey((key, row)),
+                  return dropTarget(
+                    _NodeGroupRow(
+                      row: row,
+                      columns: columns,
+                      nodeCount: group.nodes.length,
+                      active: group.active,
+                      buildNode: buildNode,
+                    ),
                     row: row,
-                    columns: columns,
-                    nodeCount: group.nodes.length,
-                    active: group.active,
-                    buildNode: buildNode,
                   );
                 }
                 final hasBodyRows = columnsByGroup.containsKey(key);
-                return Padding(
-                  key: ValueKey(key),
-                  padding: EdgeInsets.only(bottom: hasBodyRows ? 0 : 12),
-                  child: _GroupCard(
-                    group: group,
-                    controller: controller,
-                    reorderIndex: index,
-                    reorderEnabled: reorderEnabled,
-                    hasBodyRows: hasBodyRows,
-                    expanded:
-                        _query.isNotEmpty || !_collapsed.contains(group.id),
-                    updating: _updating.contains(group.id),
-                    countLabel: _countLabel(group),
-                    onToggleExpanded: () => setState(() {
-                      if (!_collapsed.remove(group.id)) {
-                        _collapsed.add(group.id);
-                      }
-                    }),
-                    onUpdate: group.subscription?.isUrlSubscription == true
-                        ? () => _updateSubscription(
-                            controller,
-                            group.subscription!,
-                          )
-                        : null,
-                    onEditGroup: group.subscription == null
-                        ? null
-                        : () => _showEditGroup(
-                            context,
-                            controller,
-                            group.subscription!,
-                          ),
-                    onAddNode:
-                        group.subscription != null &&
-                            !group.subscription!.isUrlSubscription
-                        ? () => _showGroupAddSheet(
-                            context,
-                            controller,
-                            group.subscription!,
-                          )
-                        : null,
-                    onDeleteGroup: group.subscription == null
-                        ? null
-                        : () => _deleteGroup(
-                            context,
-                            controller,
-                            group.subscription!,
-                          ),
-                    onFilter: group.subscription == null
-                        ? null
-                        : () => _showFilterDialog(
-                            context,
-                            controller,
-                            group.subscription!,
-                          ),
-                    onSort: group.subscription == null
-                        ? null
-                        : () => _showSortDialog(
-                            context,
-                            controller,
-                            group.subscription!,
-                          ),
-                    onToggleGroupAuto: group.subscription == null
-                        ? null
-                        : () => controller.toggleGroupAutoCandidate(
-                            group.subscription!.id,
-                          ),
-                    onTest: () => _startNodeTest(
-                      context,
-                      controller,
-                      group.nodes,
-                      groupId: group.id,
+                return dropTarget(
+                  Padding(
+                    padding: EdgeInsets.only(bottom: hasBodyRows ? 0 : 12),
+                    child: _GroupCard(
+                      group: group,
+                      controller: controller,
+                      order: order,
+                      reorderEnabled: reorderEnabled,
+                      hasBodyRows: hasBodyRows,
+                      expanded:
+                          _query.isNotEmpty || !_collapsed.contains(group.id),
+                      updating: _updating.contains(group.id),
+                      countLabel: _countLabel(group),
+                      onToggleExpanded: () => setState(() {
+                        if (!_collapsed.remove(group.id)) {
+                          _collapsed.add(group.id);
+                        }
+                      }),
+                      onUpdate: group.subscription?.isUrlSubscription == true
+                          ? () => _updateSubscription(
+                              controller,
+                              group.subscription!,
+                            )
+                          : null,
+                      onEditGroup: group.subscription == null
+                          ? null
+                          : () => _showEditGroup(
+                              context,
+                              controller,
+                              group.subscription!,
+                            ),
+                      onAddNode:
+                          group.subscription != null &&
+                              !group.subscription!.isUrlSubscription
+                          ? () => _showGroupAddSheet(
+                              context,
+                              controller,
+                              group.subscription!,
+                            )
+                          : null,
+                      onDeleteGroup: group.subscription == null
+                          ? null
+                          : () => _deleteGroup(
+                              context,
+                              controller,
+                              group.subscription!,
+                            ),
+                      onFilter: group.subscription == null
+                          ? null
+                          : () => _showFilterDialog(
+                              context,
+                              controller,
+                              group.subscription!,
+                            ),
+                      onSort: group.subscription == null
+                          ? null
+                          : () => _showSortDialog(
+                              context,
+                              controller,
+                              group.subscription!,
+                            ),
+                      onToggleGroupAuto: group.subscription == null
+                          ? null
+                          : () => controller.toggleGroupAutoCandidate(
+                              group.subscription!.id,
+                            ),
+                      onTest: () => _startNodeTest(
+                        context,
+                        controller,
+                        group.nodes,
+                        groupId: group.id,
+                      ),
+                      buildNode: buildNode,
                     ),
-                    buildNode: buildNode,
                   ),
                 );
               },
@@ -415,7 +479,7 @@ class _NodesPageState extends State<NodesPage> {
     int oldIndex,
     int newIndex,
   ) async {
-    if (_savingGroupOrder || oldIndex == newIndex) return;
+    if (_savingGroupOrder || oldIndex < 0 || oldIndex == newIndex) return;
     final orderedKeys = [...visibleKeys];
     orderedKeys.insert(newIndex, orderedKeys.removeAt(oldIndex));
     setState(() => _savingGroupOrder = true);
@@ -1464,7 +1528,7 @@ class _GroupCard extends StatelessWidget {
   const _GroupCard({
     required this.group,
     required this.controller,
-    required this.reorderIndex,
+    required this.order,
     required this.reorderEnabled,
     required this.hasBodyRows,
     required this.expanded,
@@ -1484,7 +1548,7 @@ class _GroupCard extends StatelessWidget {
 
   final _NodeGroup group;
   final AppController controller;
-  final int reorderIndex;
+  final NodeGroupOrder order;
   final bool reorderEnabled;
   final bool hasBodyRows;
   final bool expanded;
@@ -1714,7 +1778,7 @@ class _GroupCard extends StatelessWidget {
       ],
     );
     return ReorderableNodeGroup(
-      index: reorderIndex,
+      order: order,
       enabled: reorderEnabled,
       tooltip: isUrlSubscription ? '拖拽调整订阅顺序' : '拖拽调整节点集合顺序',
       child: content,
@@ -1724,7 +1788,6 @@ class _GroupCard extends StatelessWidget {
 
 class _NodeGroupRow extends StatelessWidget {
   const _NodeGroupRow({
-    super.key,
     required this.row,
     required this.columns,
     required this.nodeCount,

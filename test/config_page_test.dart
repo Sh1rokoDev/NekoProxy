@@ -333,6 +333,7 @@ const _secretValues = [
   'fixture-cookie',
   'fixture-url-login',
   'fixture-url-token',
+  'fixture-url-path-token',
 ];
 
 class _ConfigController extends AppController {
@@ -349,7 +350,6 @@ class _ConfigController extends AppController {
     warnings: const [],
     nodeTags: const {},
     proxyGroupTag: 'proxy',
-    autoGroupTag: 'auto',
     custom: true,
   );
 
@@ -384,6 +384,7 @@ class _ConfigController extends AppController {
       'rule_set': [
         {'url': 'https://fixture-url-login@example.invalid/rules'},
         {'url': 'https://example.invalid/rules?access=fixture-url-token'},
+        {'url': 'https://example.invalid/fixture-url-path-token/rules'},
       ],
     },
   };

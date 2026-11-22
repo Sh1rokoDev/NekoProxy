@@ -25,7 +25,8 @@ String? _decode(Uint8List bytes) {
   var source = img.bakeOrientation(decoded);
   const maxSide = 2400;
   if (source.width > maxSide || source.height > maxSide) {
-    final scale = maxSide / (source.width > source.height ? source.width : source.height);
+    final scale =
+        maxSide / (source.width > source.height ? source.width : source.height);
     source = img.copyResize(
       source,
       width: (source.width * scale).round(),

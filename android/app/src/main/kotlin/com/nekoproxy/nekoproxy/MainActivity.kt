@@ -40,7 +40,6 @@ class MainActivity : FlutterActivity() {
 
     private data class PendingStart(
         val config: String,
-        val cachePath: String,
         val logPath: String,
         val useVpn: Boolean,
         val perAppMode: String,
@@ -112,6 +111,14 @@ class MainActivity : FlutterActivity() {
                     }
                 }
                 "systemDns" -> runAsync(result) { systemDnsServers() }
+                "validateConfig" -> runAsync(result, "invalid_config") {
+                    try {
+                        Mobile.validateConfig(requireNotNull(call.arguments as? String))
+                    } catch (_: Exception) {
+                        throw IllegalArgumentException("核心无法解析候选配置")
+                    }
+                    null
+                }
                 "convertRules" -> runAsync(result, "rules_conversion") {
                     Mobile.convertRules(
                         requireNotNull(call.argument<String>("kind")),
@@ -162,12 +169,12 @@ class MainActivity : FlutterActivity() {
                     startAttempt++
                     pendingStart?.result?.error("vpn_start", "内核启动已取消", null)
                     pendingStart = null
-                    NekoVpnService.stop(this)
+                    NekoVpnService.stop()
                     result.success(null)
                 }
                 "cleanup" -> {
                     if (NekoVpnService.state == NekoVpnService.STATE_ERROR) {
-                        NekoVpnService.stop(this)
+                        NekoVpnService.stop()
                     }
                     result.success(null)
                 }
@@ -276,7 +283,6 @@ class MainActivity : FlutterActivity() {
 
     private fun handleStart(call: MethodCall, result: MethodChannel.Result) {
         val config = call.argument<String>("config") ?: ""
-        val cachePath = call.argument<String>("cachePath") ?: ""
         val logPath = call.argument<String>("logPath") ?: ""
         val useVpn = call.argument<String>("mode") != "normal"
         val perAppMode = call.argument<String>("perAppMode") ?: "off"
@@ -285,7 +291,7 @@ class MainActivity : FlutterActivity() {
             result.error("invalid_config", "内核配置为空", null)
             return
         }
-        val pending = PendingStart(config, cachePath, logPath, useVpn, perAppMode, perAppPackages, result)
+        val pending = PendingStart(config, logPath, useVpn, perAppMode, perAppPackages, result)
         val prepareIntent = if (useVpn) VpnService.prepare(this) else null
         if (prepareIntent != null) {
             pendingStart = pending
@@ -300,7 +306,6 @@ class MainActivity : FlutterActivity() {
             NekoVpnService.start(
                 this,
                 pending.config,
-                pending.cachePath,
                 pending.logPath,
                 pending.useVpn,
                 pending.perAppMode,
@@ -329,7 +334,7 @@ class MainActivity : FlutterActivity() {
         }
         if (System.currentTimeMillis() - startedAt > 60_000) {
             // Never leave a TUN up when the core never finished starting.
-            NekoVpnService.stop(this)
+            NekoVpnService.stop()
             result.error("vpn_start", "等待内核启动超时", null)
             return
         }

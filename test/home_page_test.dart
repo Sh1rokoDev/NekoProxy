@@ -55,7 +55,6 @@ void main() {
         ip: '203.0.113.24',
         region: '香港',
         provider: '示例 ISP · AS1234',
-        checkedAt: DateTime.now(),
       )
       ..samples = [TrafficSample(DateTime.now(), 128, 4096)];
     await showHome(tester, controller, const Size(1280, 1000));
@@ -431,7 +430,6 @@ AllowedIPs = 0.0.0.0/0
         ip: '203.0.113.24',
         region: 'Hong Kong',
         provider: '',
-        checkedAt: DateTime.now(),
       );
     await showHome(
       tester,
@@ -641,7 +639,6 @@ AllowedIPs = 0.0.0.0/0
         ip: '192.0.2.1',
         region: 'Japan · Tokyo',
         provider: '示例运营商',
-        checkedAt: DateTime(2026, 11, 12, 20),
       );
     await showHome(tester, controller, const Size(880, 1000));
     final connectionCard = find.byKey(const ValueKey(HomeCard.connection));
@@ -996,7 +993,6 @@ AllowedIPs = 0.0.0.0/0
         ip: '2001:db8:1234:5678:1234:5678:1234:abcd',
         region: '中国香港 · 香港特别行政区',
         provider: '示例长名称网络运营商 · AS123456',
-        checkedAt: DateTime.now(),
       )
       ..snapshot = AppSnapshot(
         settings: AppSettings(manualNodeId: 'node'),

@@ -170,9 +170,8 @@ class ToolsPage extends StatelessWidget {
       await controller.saveSettings();
     } catch (e) {
       if (context.mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('设置开机启动失败：$e')));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('设置开机启动失败：$e')));
       }
     }
   }
@@ -257,9 +256,9 @@ class _AppearanceActions extends StatelessWidget {
                             controller.settings.seedColor ==
                                 option.color.toARGB32()
                             ? Border.all(
-                                color: Theme.of(
-                                  dialogContext,
-                                ).colorScheme.onSurface,
+                                color: Theme.of(dialogContext)
+                                    .colorScheme
+                                    .onSurface,
                                 width: 3,
                               )
                             : null,

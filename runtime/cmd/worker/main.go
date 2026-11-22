@@ -30,6 +30,7 @@ func main() {
 	var (
 		configPath   = flag.String("config", "", "path to sing-box configuration")
 		readyPath    = flag.String("ready", "", "path to runtime readiness file")
+		check        = flag.Bool("check", false, "validate configuration without starting the core")
 		logPath      = flag.String("log", "", "path to log file")
 		installDir   = flag.String("install-dir", "", "root for configuration output files")
 		token        = flag.String("token", "", "control token")
@@ -39,6 +40,16 @@ func main() {
 		leaseSecs    = flag.Int("lease", 90, "exit after this many seconds without a client")
 	)
 	flag.Parse()
+	if *check {
+		data, err := readConfig(*configPath)
+		if err == nil {
+			err = engine.ValidateConfig(data)
+		}
+		if err != nil {
+			fail("", err.Error())
+		}
+		return
+	}
 
 	if *logPath != "" {
 		_ = os.MkdirAll(filepath.Dir(*logPath), 0o700)

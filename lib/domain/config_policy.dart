@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 class PolicyViolation {
   const PolicyViolation(this.path, this.message);
 
@@ -23,7 +21,11 @@ class ConfigPolicy {
     return violations;
   }
 
-  static void _walk(Object? node, String path, List<PolicyViolation> violations) {
+  static void _walk(
+    Object? node,
+    String path,
+    List<PolicyViolation> violations,
+  ) {
     if (node is Map) {
       for (final entry in node.entries) {
         final key = entry.key.toString();
@@ -46,7 +48,10 @@ class ConfigPolicy {
     }
   }
 
-  static void _validateDns(Map<String, dynamic> config, List<PolicyViolation> violations) {
+  static void _validateDns(
+    Map<String, dynamic> config,
+    List<PolicyViolation> violations,
+  ) {
     final dns = config['dns'];
     if (dns is! Map) return;
     final servers = dns['servers'];
@@ -56,51 +61,32 @@ class ConfigPolicy {
       if (server is! Map) continue;
       final type = server['type'];
       if (type == 'fakeip') {
-        violations.add(PolicyViolation('dns.servers[$i].type', '不允许 FakeIP DNS 服务器'));
+        violations.add(
+          PolicyViolation('dns.servers[$i].type', '不允许 FakeIP DNS 服务器'),
+        );
       }
       if (type == null && server['address'] != null) {
-        violations.add(PolicyViolation(
-          'dns.servers[$i]',
-          '旧版 DNS 服务器格式不受支持，请使用带 type 的新格式',
-        ));
+        violations.add(
+          PolicyViolation('dns.servers[$i]', '旧版 DNS 服务器格式不受支持，请使用带 type 的新格式'),
+        );
       }
     }
   }
 
-  static void _validateExperimental(Map<String, dynamic> config, List<PolicyViolation> violations) {
+  static void _validateExperimental(
+    Map<String, dynamic> config,
+    List<PolicyViolation> violations,
+  ) {
     final services = config['services'];
     if (services is List) {
       for (var i = 0; i < services.length; i++) {
         final service = services[i];
         if (service is Map && service['type'] == 'api') {
-          violations.add(PolicyViolation(
-            'services[$i].type',
-            '不允许开放核心管理 API；应用使用自己的受控本地通道',
-          ));
+          violations.add(
+            PolicyViolation('services[$i].type', '不允许开放核心管理 API；应用使用自己的受控本地通道'),
+          );
         }
       }
     }
-  }
-
-  static bool isValidJson(String text) {
-    try {
-      final value = jsonDecode(text);
-      return value is Map;
-    } catch (_) {
-      return false;
-    }
-  }
-
-  static List<PolicyViolation> validateText(String text) {
-    final Object? decoded;
-    try {
-      decoded = jsonDecode(text);
-    } catch (e) {
-      return [PolicyViolation('root', 'JSON 格式错误：$e')];
-    }
-    if (decoded is! Map) {
-      return const [PolicyViolation('root', '配置根节点必须是 JSON 对象')];
-    }
-    return validate(Map<String, dynamic>.from(decoded));
   }
 }

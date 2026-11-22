@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../features/home/home_page.dart';
 import '../features/nodes/nodes_page.dart';
 import '../features/rules/rules_page.dart';
-import '../features/tools/connections_page.dart';
 import '../features/tools/tools_page.dart';
 import '../state/app_controller.dart';
 import 'app_scope.dart';
@@ -116,11 +115,6 @@ class _AppShellState extends State<AppShell> {
     WidgetsBinding.instance.ensureVisualUpdate();
   }
 
-  void _openConnections() {
-    Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const ConnectionsPage()));
-  }
-
   void _selectTab(int value) {
     if (value == 2 && _controller?.showsRuleMode == false) return;
     if (value == _index) return;
@@ -152,7 +146,6 @@ class _AppShellState extends State<AppShell> {
     );
     return ShellScope(
       switchTab: _selectTab,
-      openConnections: _openConnections,
       child: Scaffold(
         extendBody: !useSideDock,
         body: SafeArea(

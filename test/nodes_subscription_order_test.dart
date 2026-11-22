@@ -237,6 +237,51 @@ void main() {
       'subscription:compact',
     ]);
 
+    final handle = find.byTooltip('拖拽调整订阅顺序');
+    final actions = find
+        .ancestor(
+          of: handle,
+          matching: find.byWidgetPredicate(
+            (widget) =>
+                widget is Semantics &&
+                widget.properties.customSemanticsActions?.isNotEmpty == true,
+          ),
+        )
+        .first;
+    final labels = WidgetsLocalizations.of(tester.element(handle));
+    tester
+        .widget<Semantics>(actions)
+        .properties
+        .customSemanticsActions!
+        .entries
+        .singleWhere((entry) => entry.key.label == labels.reorderItemDown)
+        .value();
+    await tester.pumpAndSettle();
+    expect(controller.snapshot.orderedNodeGroupKeys.take(2), [
+      'subscription:compact',
+      'subscription:large',
+    ]);
+
+    final position = Scrollable.of(tester.element(handle)).position;
+    final handleCenter = tester.getCenter(handle);
+    final bottom = tester.getRect(find.byType(CustomScrollView)).bottom;
+    final drag = await tester.startGesture(handleCenter);
+    await drag.moveBy(const Offset(0, 30));
+    await tester.pump();
+    await drag.moveTo(Offset(handleCenter.dx, bottom - 4));
+    for (var frame = 0; frame < 12; frame++) {
+      await tester.pump(const Duration(milliseconds: 32));
+    }
+    expect(position.pixels, greaterThan(0));
+    await drag.cancel();
+    await tester.pumpAndSettle();
+    expect(controller.snapshot.orderedNodeGroupKeys.take(2), [
+      'subscription:compact',
+      'subscription:large',
+    ]);
+    position.jumpTo(0);
+    await tester.pumpAndSettle();
+
     await tester.tap(find.text('大订阅'));
     await tester.pumpAndSettle();
     expect(find.text('订阅节点 0'), findsNothing);

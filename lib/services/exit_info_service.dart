@@ -9,7 +9,6 @@ class ExitInfo {
     required this.ip,
     required this.region,
     required this.provider,
-    required this.checkedAt,
     this.countryCode = '',
   });
 
@@ -17,7 +16,6 @@ class ExitInfo {
   final String region;
   final String countryCode;
   final String provider;
-  final DateTime checkedAt;
 
   factory ExitInfo.fromTrace(String content) {
     final fields = <String, String>{};
@@ -40,7 +38,6 @@ class ExitInfo {
       region: fields['loc'] ?? '',
       countryCode: (fields['loc'] ?? '').toUpperCase(),
       provider: '',
-      checkedAt: DateTime.now(),
     );
   }
 }
@@ -133,7 +130,6 @@ ExitInfo parseExitInfo(Uri source, String body) {
           !RegExp('\\b$asnLabel\\b', caseSensitive: false).hasMatch(provider))
         asnLabel,
     ].where((part) => part.isNotEmpty).join(' · '),
-    checkedAt: DateTime.now(),
   );
 }
 

@@ -10,7 +10,10 @@ void main() {
       expect(uri.scheme, 'https', reason: service.name);
       expect(uri.host, isNotEmpty, reason: service.name);
     }
-    expect(connectivityServices.where((service) => service.featured), hasLength(4));
+    expect(
+      connectivityServices.where((service) => service.featured),
+      hasLength(4),
+    );
   });
 
   test('failed results carry a short error', () {

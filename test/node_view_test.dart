@@ -33,16 +33,16 @@ void main() {
       );
       expect(visible.map((item) => item.id), ['a', 'b']);
       expect(
-        nodeMatchesFilter(
-          nodes[2],
+        applyNodeView(
+          nodes: [nodes[2]],
           includeFilter: '',
           excludeFilter: 'info.example.com',
         ),
-        isFalse,
+        isEmpty,
       );
       expect(
-        nodeMatchesFilter(nodes[0], includeFilter: 'VLESS', excludeFilter: ''),
-        isTrue,
+        applyNodeView(nodes: [nodes[0]], includeFilter: 'VLESS'),
+        hasLength(1),
       );
     });
 

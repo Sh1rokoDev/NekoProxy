@@ -101,6 +101,23 @@ func (e *Engine) Start(configData []byte) error {
 	return e.StartWithPlatform(configData, nil)
 }
 
+// ValidateConfig decodes options with the same registries as Start, without
+// creating listeners, opening the log, or changing system routes.
+func ValidateConfig(configData []byte) error {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	_, err := decodeConfig(registerWireGuard(ctx), configData)
+	return err
+}
+
+func decodeConfig(ctx context.Context, configData []byte) (option.Options, error) {
+	var options option.Options
+	if err := options.UnmarshalJSONContext(ctx, configData); err != nil {
+		return options, fmt.Errorf("decode configuration: %w", err)
+	}
+	return options, nil
+}
+
 func (e *Engine) StartWithPlatform(configData []byte, platform adapter.PlatformInterface) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -114,10 +131,10 @@ func (e *Engine) StartWithPlatform(configData []byte, platform adapter.PlatformI
 	if platform != nil {
 		service.MustRegister[adapter.PlatformInterface](ctx, platform)
 	}
-	var options option.Options
-	if err := options.UnmarshalJSONContext(ctx, configData); err != nil {
+	options, err := decodeConfig(ctx, configData)
+	if err != nil {
 		cancel()
-		return fmt.Errorf("decode configuration: %w", err)
+		return err
 	}
 	serverByTag := parseServerTags(configData)
 

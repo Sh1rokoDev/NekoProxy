@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"io"
 	"net"
 	"sync"
@@ -221,5 +220,3 @@ func writeResponse(writer io.Writer, response Response) error {
 	encoder := json.NewEncoder(writer)
 	return encoder.Encode(response)
 }
-
-var ErrServerClosed = errors.New("control server closed")

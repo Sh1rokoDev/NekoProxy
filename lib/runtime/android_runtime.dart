@@ -8,7 +8,7 @@ import 'runtime_client.dart';
 
 /// Bridges to the Android VpnService host. The Kotlin side owns the VPN
 /// lifecycle and passes the TUN descriptor to the same Go sing-box engine.
-class AndroidRuntimeClient implements RuntimeClient {
+class AndroidRuntimeClient implements RuntimeConfigValidator {
   AndroidRuntimeClient(this.paths);
 
   static const _channel = MethodChannel('nekoproxy/runtime');
@@ -16,6 +16,10 @@ class AndroidRuntimeClient implements RuntimeClient {
   static const _callTimeout = Duration(seconds: 8);
   static const _stopTimeout = Duration(seconds: 4);
   final AppPaths paths;
+
+  @override
+  Future<void> validateConfig(String config) =>
+      _invoke<void>('validateConfig', config);
 
   Future<T?> _invoke<T>(String method, [Object? arguments]) {
     return _channel.invokeMethod<T>(method, arguments).timeout(_callTimeout);
@@ -34,7 +38,6 @@ class AndroidRuntimeClient implements RuntimeClient {
         .invokeMethod<Map<Object?, Object?>>('start', {
           'config': config,
           'mode': mode,
-          'cachePath': paths.runtime.path,
           'logPath': paths.logFile.path,
           'perAppMode': perAppMode,
           'perAppPackages': perAppPackages,

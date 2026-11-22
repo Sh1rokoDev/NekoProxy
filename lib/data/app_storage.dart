@@ -19,7 +19,6 @@ class AppPaths {
   File get stateFile => File(_join(base.path, 'state.json'));
   File get stateKeyFile => File(_join(base.path, 'state.key'));
   File get proxySnapshotFile => File(_join(runtime.path, 'system_proxy.json'));
-  File get runtimeFile => File(_join(runtime.path, 'runtime.json'));
 
   /// Windows 以管理员权限启动，全部用户数据（包括状态密钥）都放在安装目录的
   /// `userdata` 里。Android 仍使用应用私有目录。

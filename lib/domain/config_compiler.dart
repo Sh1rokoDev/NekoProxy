@@ -28,7 +28,6 @@ class CompiledConfig {
     required this.warnings,
     required this.nodeTags,
     required this.proxyGroupTag,
-    required this.autoGroupTag,
     required this.custom,
     this.routeRuleNames = const {},
   });
@@ -38,7 +37,6 @@ class CompiledConfig {
   final List<String> warnings;
   final Map<String, String> nodeTags;
   final String proxyGroupTag;
-  final String autoGroupTag;
   final bool custom;
   final Map<int, String> routeRuleNames;
 
@@ -108,7 +106,10 @@ class CompiledConfig {
       final uri = Uri.tryParse(value);
       if (uri != null &&
           uri.hasAuthority &&
-          (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment)) {
+          (uri.userInfo.isNotEmpty ||
+              (uri.path.isNotEmpty && uri.path != '/') ||
+              uri.hasQuery ||
+              uri.hasFragment)) {
         return _hidden;
       }
     }
@@ -142,7 +143,6 @@ class ConfigCompiler {
   static const systemTag = 'dns-system';
   static const wireGuardTag = 'neko-wireguard';
   static const physicalTag = 'neko-physical';
-  static const wireGuardDnsTag = 'neko-wireguard-dns';
   static const wireGuardBootstrapTag = 'neko-wireguard-bootstrap';
 
   static String nodeTag(ProxyNode node) => 'node-${node.id}';
@@ -423,7 +423,6 @@ class ConfigCompiler {
       warnings: warnings,
       nodeTags: nodeTags,
       proxyGroupTag: proxyGroupTag,
-      autoGroupTag: autoTag,
       custom: false,
       // Advanced JSON can replace the entire rule list, invalidating its indices.
       routeRuleNames:
@@ -731,7 +730,6 @@ class ConfigCompiler {
       warnings: const ['完整自定义配置模式：节点选择由配置本身决定。'],
       nodeTags: const {},
       proxyGroupTag: proxyTag,
-      autoGroupTag: autoTag,
       custom: true,
     );
   }

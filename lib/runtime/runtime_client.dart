@@ -40,9 +40,6 @@ class RuntimeStatus {
   final int uptimeMs;
   final Map<String, RuntimeGroup> groups;
   final int inboundPort;
-
-  RuntimeGroup? get manualGroup => groups['proxy'];
-  RuntimeGroup? get autoGroup => groups['auto'];
 }
 
 class RuntimeTraffic {
@@ -56,13 +53,6 @@ class RuntimeTraffic {
   final int downloaded;
   final int connections;
   final int uptimeMs;
-
-  Map<String, dynamic> toJson() => {
-    'uploaded': uploaded,
-    'downloaded': downloaded,
-    'connections': connections,
-    'uptimeMs': uptimeMs,
-  };
 
   factory RuntimeTraffic.fromJson(Map<String, dynamic> json) => RuntimeTraffic(
     uploaded: (json['uploaded'] as num?)?.toInt() ?? 0,
@@ -166,7 +156,11 @@ abstract class RuntimeClient {
   Future<List<String>> systemDnsServers() async => const [];
 }
 
-class DesktopRuntimeClient implements RuntimeClient {
+abstract interface class RuntimeConfigValidator implements RuntimeClient {
+  Future<void> validateConfig(String config);
+}
+
+class DesktopRuntimeClient implements RuntimeConfigValidator {
   DesktopRuntimeClient(this.paths);
 
   final AppPaths paths;
@@ -197,6 +191,41 @@ class DesktopRuntimeClient implements RuntimeClient {
 
   @override
   Future<List<String>> systemDnsServers() async => const [];
+
+  @override
+  Future<void> validateConfig(String config) async {
+    final process = await _startWorker(
+      desktopWorkerPath(),
+      ['-check', '-config', '-'],
+      workingDirectory: paths.runtime.path,
+      environment: const {},
+      runInShell: false,
+    );
+    Future<void> sendConfig() async {
+      process.stdin.add(utf8.encode(config));
+      await process.stdin.close();
+    }
+
+    Future<void> checkExitCode() async {
+      final code = await process.exitCode;
+      if (code != 0) throw const RuntimeException('核心无法解析候选配置');
+    }
+
+    try {
+      await Future.wait<void>([
+        process.stdout.drain<void>(),
+        process.stderr.drain<void>(),
+        sendConfig(),
+        checkExitCode(),
+      ], eagerError: true).timeout(const Duration(seconds: 12));
+    } on TimeoutException {
+      process.kill();
+      throw const RuntimeException('核心配置预检超时');
+    } catch (_) {
+      process.kill();
+      rethrow;
+    }
+  }
 
   @override
   Future<RuntimeStatus> start({

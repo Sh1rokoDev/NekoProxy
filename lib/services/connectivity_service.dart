@@ -51,14 +51,46 @@ const connectivityServices = <ConnectivityService>[
     featured: true,
   ),
   ConnectivityService(id: 'claude', name: 'Claude', url: 'https://claude.ai/'),
-  ConnectivityService(id: 'gemini', name: 'Gemini', url: 'https://gemini.google.com/'),
-  ConnectivityService(id: 'netflix', name: 'Netflix', url: 'https://www.netflix.com/'),
-  ConnectivityService(id: 'disney', name: 'Disney+', url: 'https://www.disneyplus.com/'),
-  ConnectivityService(id: 'primevideo', name: 'Prime Video', url: 'https://www.primevideo.com/'),
-  ConnectivityService(id: 'spotify', name: 'Spotify', url: 'https://open.spotify.com/'),
-  ConnectivityService(id: 'tiktok', name: 'TikTok', url: 'https://www.tiktok.com/'),
-  ConnectivityService(id: 'discord', name: 'Discord', url: 'https://discord.com/'),
-  ConnectivityService(id: 'bilibili', name: 'bilibili', url: 'https://www.bilibili.com/'),
+  ConnectivityService(
+    id: 'gemini',
+    name: 'Gemini',
+    url: 'https://gemini.google.com/',
+  ),
+  ConnectivityService(
+    id: 'netflix',
+    name: 'Netflix',
+    url: 'https://www.netflix.com/',
+  ),
+  ConnectivityService(
+    id: 'disney',
+    name: 'Disney+',
+    url: 'https://www.disneyplus.com/',
+  ),
+  ConnectivityService(
+    id: 'primevideo',
+    name: 'Prime Video',
+    url: 'https://www.primevideo.com/',
+  ),
+  ConnectivityService(
+    id: 'spotify',
+    name: 'Spotify',
+    url: 'https://open.spotify.com/',
+  ),
+  ConnectivityService(
+    id: 'tiktok',
+    name: 'TikTok',
+    url: 'https://www.tiktok.com/',
+  ),
+  ConnectivityService(
+    id: 'discord',
+    name: 'Discord',
+    url: 'https://discord.com/',
+  ),
+  ConnectivityService(
+    id: 'bilibili',
+    name: 'bilibili',
+    url: 'https://www.bilibili.com/',
+  ),
 ];
 
 class ServiceCheckResult {
@@ -124,7 +156,13 @@ Future<ServiceCheckResult> probeConnectivityService(
   }
   final stopwatch = Stopwatch()..start();
   try {
-    return await _probe(service, client, stopwatch, viaProxy, viaTun).timeout(const Duration(seconds: 12));
+    return await _probe(
+      service,
+      client,
+      stopwatch,
+      viaProxy,
+      viaTun,
+    ).timeout(const Duration(seconds: 12));
   } on TimeoutException {
     return ServiceCheckResult(
       status: ServiceCheckStatus.failed,
@@ -179,8 +217,9 @@ Future<ServiceCheckResult> _probe(
 ) async {
   final uri = Uri.parse(service.url);
   final addressFuture = _resolveAddress(uri.host);
-  final request = await (service.useGet ? client.getUrl(uri) : client.openUrl('HEAD', uri))
-      .timeout(const Duration(seconds: 8));
+  final request =
+      await (service.useGet ? client.getUrl(uri) : client.openUrl('HEAD', uri))
+          .timeout(const Duration(seconds: 8));
   request.headers.set(HttpHeaders.cacheControlHeader, 'no-cache');
   request.followRedirects = false;
   final response = await request.close().timeout(const Duration(seconds: 8));
@@ -211,7 +250,8 @@ Future<ServiceCheckResult> _probe(
 
 Future<String?> _resolveAddress(String host) async {
   try {
-    final addresses = await InternetAddress.lookup(host).timeout(const Duration(seconds: 3));
+    final addresses = await InternetAddress.lookup(host)
+        .timeout(const Duration(seconds: 3));
     for (final address in addresses) {
       if (address.type == InternetAddressType.IPv4) return address.address;
     }

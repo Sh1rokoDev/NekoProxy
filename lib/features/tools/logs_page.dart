@@ -19,6 +19,7 @@ class LogsPage extends StatefulWidget {
 
 class _LogsPageState extends State<LogsPage> {
   static const _readSize = 256 * 1024;
+  static const _tailReadLimit = 2 * 1024 * 1024;
   static const _anchorSize = 64;
   static const _lineLimit = 1500;
 
@@ -78,6 +79,28 @@ class _LogsPageState extends State<LogsPage> {
   bool _canApplyRead(int generation) =>
       mounted && generation == _generation && !_paused && !_clearing;
 
+  Future<(int, List<int>)> _readTail(RandomAccessFile file, int length) async {
+    final chunks = <List<int>>[];
+    final limit = math.max(0, length - _tailReadLimit);
+    var start = length;
+    var newlines = 0;
+    while (start > limit && newlines <= _lineLimit) {
+      final end = start;
+      start = math.max(limit, end - _readSize);
+      await file.setPosition(start);
+      final chunk = await file.read(end - start);
+      if (chunk.length != end - start) return (0, const <int>[]);
+      chunks.add(chunk);
+      newlines += chunk.where((byte) => byte == 0x0A).length;
+    }
+    final bytes = [for (final chunk in chunks.reversed) ...chunk];
+    if (start == 0) return (start, bytes);
+    // The tail can begin inside a line or UTF-8 character.
+    final firstLine = bytes.indexOf(0x0A);
+    final skip = firstLine < 0 ? bytes.length : firstLine + 1;
+    return (start + skip, bytes.sublist(skip));
+  }
+
   Future<void> _read(String path, int generation) async {
     try {
       final raf = await File(path).open();
@@ -85,26 +108,37 @@ class _LogsPageState extends State<LogsPage> {
       final anchor = _anchor;
       List<int> bytes;
       int start;
+      bool reset;
       try {
         if (!_canApplyRead(generation)) return;
         final length = await raf.length();
-        start = length < offset ? 0 : offset;
-        if (start > 0 && anchor.isNotEmpty) {
+        reset = offset == 0 || length < offset;
+        if (!reset && anchor.isNotEmpty) {
           // A new core can replace the file with one that is already longer.
-          await raf.setPosition(start - anchor.length);
+          await raf.setPosition(offset - anchor.length);
           final previous = await raf.read(anchor.length);
           if (previous.length != anchor.length ||
               previous.indexed.any((entry) => entry.$2 != anchor[entry.$1])) {
-            start = 0;
+            reset = true;
           }
         }
-        await raf.setPosition(start);
-        bytes = await raf.read(_readSize);
+        if (reset) {
+          (start, bytes) = await _readTail(raf, length);
+        } else {
+          start = offset;
+          await raf.setPosition(start);
+          bytes = await raf.read(_readSize);
+        }
       } finally {
         await raf.close();
       }
       if (!_canApplyRead(generation)) return;
-      if (bytes.isEmpty && start == _offset && !_readFailed) return;
+      if (bytes.isEmpty &&
+          start == _offset &&
+          !_readFailed &&
+          (!reset || _lines.isEmpty)) {
+        return;
+      }
       final position = _scrollController.hasClients
           ? _scrollController.position
           : null;
@@ -113,7 +147,7 @@ class _LogsPageState extends State<LogsPage> {
           ? position?.pixels ?? 0.0
           : null;
       setState(() {
-        if (start != _offset) _resetTail();
+        if (reset) _resetTail();
         _readFailed = false;
         _offset = start + bytes.length;
         if (bytes.isNotEmpty) {

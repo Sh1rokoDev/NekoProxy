@@ -1,11 +1,68 @@
 package mobile
 
 import (
+	"encoding/json"
+	"net/netip"
+	"slices"
 	"testing"
 
 	"github.com/sagernet/sing-box/adapter"
+	tun "github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common/control"
 )
+
+func TestAndroidTunSettingsExcludeLANAndKeepVirtualDNS(t *testing.T) {
+	prefix := netip.MustParsePrefix
+	options := &tun.Options{
+		AutoRoute:                true,
+		MTU:                      1500,
+		Inet4Address:             []netip.Prefix{prefix("172.19.0.1/30")},
+		Inet6Address:             []netip.Prefix{prefix("fdfe:dcba:9876::1/126")},
+		Inet4RouteExcludeAddress: []netip.Prefix{prefix("172.16.0.0/12")},
+		Inet6RouteExcludeAddress: []netip.Prefix{prefix("fc00::/7")},
+	}
+	check := func() (routes []netip.Prefix, dns []netip.Addr) {
+		t.Helper()
+		settings, err := androidTunSettings(options)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var plan struct {
+			Routes []netip.Prefix
+			DNS    []netip.Addr
+		}
+		if err := json.Unmarshal([]byte(settings), &plan); err != nil {
+			t.Fatal(err)
+		}
+		return plan.Routes, plan.DNS
+	}
+	routes, dns := check()
+	hasRoute := func(address string) bool {
+		return slices.ContainsFunc(routes, func(route netip.Prefix) bool {
+			return route.Contains(netip.MustParseAddr(address))
+		})
+	}
+	if hasRoute("172.16.1.1") || hasRoute("fc00::1") ||
+		!hasRoute("192.0.2.1") || !hasRoute("2001:db8::1") {
+		t.Fatalf("unexpected LAN or public route coverage: %v", routes)
+	}
+	for _, address := range []string{"172.19.0.2", "fdfe:dcba:9876::2"} {
+		if !slices.Contains(dns, netip.MustParseAddr(address)) || !hasRoute(address) {
+			t.Fatalf("virtual DNS is missing: %s", address)
+		}
+	}
+	options.Inet4RouteExcludeAddress = []netip.Prefix{prefix("0.0.0.0/0")}
+	options.Inet6RouteExcludeAddress = []netip.Prefix{prefix("::/0")}
+	routes, _ = check()
+	if len(routes) != 2 || hasRoute("192.0.2.1") || hasRoute("2001:db8::1") {
+		t.Fatalf("an entirely excluded family recovered a default route: %v", routes)
+	}
+	options.AutoRoute = false
+	routes, _ = check()
+	if len(routes) != 0 {
+		t.Fatalf("auto_route=false installed routes: %v", routes)
+	}
+}
 
 type fakeOwnerFinder struct {
 	result string

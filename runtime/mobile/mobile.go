@@ -3,7 +3,6 @@ package mobile
 import (
 	"context"
 	"encoding/json"
-	"net/netip"
 
 	"nekoproxy/runtime/engine"
 	"nekoproxy/runtime/rulesets"
@@ -13,6 +12,10 @@ import (
 
 func ConvertRules(kind, input, output string) error {
 	return rulesets.Convert(kind, input, output)
+}
+
+func ValidateConfig(config string) error {
+	return engine.ValidateConfig([]byte(config))
 }
 
 // Engine is the gomobile surface used by the Android VpnService.
@@ -28,35 +31,9 @@ func NewEngine(protector Protector, finder OwnerFinder) *Engine {
 	}
 }
 
-// PrepareTun registers the VpnService interface descriptor before Start.
-func (e *Engine) PrepareTun(fd int32, addressesJSON string) error {
-	e.platform.mu.Lock()
-	e.platform.tunFD = int(fd)
-	e.platform.mu.Unlock()
-	if addressesJSON == "" {
-		return nil
-	}
-	var values []string
-	if err := json.Unmarshal([]byte(addressesJSON), &values); err != nil {
-		return err
-	}
-	addresses := make([]netip.Addr, 0, len(values))
-	for _, value := range values {
-		prefix, err := netip.ParsePrefix(value)
-		if err != nil {
-			addr, addrErr := netip.ParseAddr(value)
-			if addrErr != nil {
-				return err
-			}
-			addresses = append(addresses, addr)
-			continue
-		}
-		addresses = append(addresses, prefix.Addr())
-	}
-	e.platform.mu.Lock()
-	e.platform.address = addresses
-	e.platform.mu.Unlock()
-	return nil
+// SetTunOpener registers the VpnService callback before Start.
+func (e *Engine) SetTunOpener(opener TunOpener) {
+	e.platform.tunOpener = opener
 }
 
 func (e *Engine) Start(configJSON string) error {

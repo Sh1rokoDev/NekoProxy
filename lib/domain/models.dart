@@ -18,42 +18,11 @@ enum PerAppMode { off, allow, block }
 
 enum AdvancedConfigMode { extension, override, off }
 
-class BuiltInRuleSetDefinition {
-  const BuiltInRuleSetDefinition({
-    required this.tag,
-    required this.label,
-    required this.target,
-    required this.defaultEnabled,
-  });
-
-  final String tag;
-  final String label;
-  final RuleTarget target;
-  final bool defaultEnabled;
-}
-
-const builtInRuleSets = <BuiltInRuleSetDefinition>[
-  BuiltInRuleSetDefinition(
-    tag: 'geosite-cn',
-    label: '中国大陆域名',
-    target: RuleTarget.direct,
-    defaultEnabled: true,
-  ),
-  BuiltInRuleSetDefinition(
-    tag: 'geoip-cn',
-    label: '中国大陆 IP',
-    target: RuleTarget.direct,
-    defaultEnabled: true,
-  ),
-  BuiltInRuleSetDefinition(
-    tag: 'geosite-category-ads-all',
-    label: '广告与追踪域名',
-    target: RuleTarget.block,
-    defaultEnabled: false,
-  ),
-];
-
-final builtInRuleSetTags = {for (final ruleSet in builtInRuleSets) ruleSet.tag};
+const builtInRuleSetTags = {
+  'geosite-cn',
+  'geoip-cn',
+  'geosite-category-ads-all',
+};
 
 class BuiltInRuleDefinition {
   const BuiltInRuleDefinition({
@@ -1050,8 +1019,6 @@ class AppSnapshot {
 
   Set<String> get activeBuiltInRuleSets =>
       activeRuleSetTags(builtInRuleSetTags.contains);
-
-  bool hasEnabledRuleSet(String tag) => activeBuiltInRuleSets.contains(tag);
 
   Map<String, dynamic> toJson() => {
     'version': formatVersion,

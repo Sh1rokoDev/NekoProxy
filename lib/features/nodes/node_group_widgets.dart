@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
 
 import '../../app/widgets.dart' show formatLatency;
 
@@ -460,50 +461,134 @@ String _protocolBadge(String protocol) => switch (protocol.toLowerCase()) {
         : protocol.substring(0, 3).toUpperCase(),
 };
 
-class ReorderableNodeGroup extends StatelessWidget {
+typedef NodeGroupOrder = ({
+  String id,
+  int index,
+  int count,
+  ValueChanged<int> move,
+});
+
+class ReorderableNodeGroup extends StatefulWidget {
   const ReorderableNodeGroup({
     super.key,
-    required this.index,
+    required this.order,
     required this.enabled,
     required this.tooltip,
     required this.child,
   });
 
-  final int index;
+  final NodeGroupOrder order;
   final bool enabled;
   final String tooltip;
   final Widget child;
   static const leadingInset = 20.0;
 
   @override
+  State<ReorderableNodeGroup> createState() => _ReorderableNodeGroupState();
+}
+
+class _ReorderableNodeGroupState extends State<ReorderableNodeGroup>
+    with AutomaticKeepAliveClientMixin<ReorderableNodeGroup> {
+  EdgeDraggingAutoScroller? _autoScroller;
+
+  @override
+  bool get wantKeepAlive => _autoScroller != null;
+
+  void _stopAutoScroll() {
+    _autoScroller?.stopAutoScroll();
+    _autoScroller = null;
+  }
+
+  @override
+  void dispose() {
+    _stopAutoScroll();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    super.build(context);
     final scheme = Theme.of(context).colorScheme;
+    final (id: id, index: index, count: count, move: move) = widget.order;
+    final labels = WidgetsLocalizations.of(context);
+    final actions = <CustomSemanticsAction, VoidCallback>{
+      if (widget.enabled && index > 0) ...{
+        CustomSemanticsAction(label: labels.reorderItemUp): () =>
+            move(index - 1),
+        CustomSemanticsAction(label: labels.reorderItemToStart): () => move(0),
+      },
+      if (widget.enabled && index < count - 1) ...{
+        CustomSemanticsAction(label: labels.reorderItemDown): () =>
+            move(index + 1),
+        CustomSemanticsAction(label: labels.reorderItemToEnd): () =>
+            move(count - 1),
+      },
+    };
+    final handle = Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: widget.enabled ? SystemMouseCursors.grab : MouseCursor.defer,
+        child: SizedBox(
+          width: 30,
+          height: 44,
+          child: Icon(
+            Icons.drag_indicator_rounded,
+            size: 20,
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
     return Stack(
       alignment: Alignment.centerLeft,
       children: [
         Padding(
-          padding: const EdgeInsets.only(left: leadingInset),
-          child: child,
+          padding: const EdgeInsets.only(
+            left: ReorderableNodeGroup.leadingInset,
+          ),
+          child: widget.child,
         ),
         Positioned(
           left: 0,
-          child: ReorderableDragStartListener(
-            index: index,
-            enabled: enabled,
-            child: Tooltip(
-              message: tooltip,
-              child: MouseRegion(
-                cursor: enabled ? SystemMouseCursors.grab : MouseCursor.defer,
-                child: SizedBox(
+          child: Semantics(
+            container: true,
+            customSemanticsActions: actions,
+            child: Draggable<String>(
+              data: id,
+              axis: Axis.vertical,
+              affinity: Axis.vertical,
+              maxSimultaneousDrags: widget.enabled ? 1 : 0,
+              onDragStarted: () {
+                _autoScroller = EdgeDraggingAutoScroller(
+                  Scrollable.of(context),
+                  velocityScalar: 40,
+                );
+                updateKeepAlive();
+              },
+              onDragUpdate: (details) {
+                _autoScroller?.startAutoScrollIfNecessary(
+                  Rect.fromCenter(
+                    center: details.globalPosition,
+                    width: 30,
+                    height: 52,
+                  ),
+                );
+              },
+              onDragEnd: (_) {
+                _stopAutoScroll();
+                if (mounted) updateKeepAlive();
+              },
+              feedback: Material(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(8),
+                elevation: 4,
+                child: const SizedBox(
                   width: 30,
                   height: 44,
-                  child: Icon(
-                    Icons.drag_indicator_rounded,
-                    size: 20,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  child: Icon(Icons.drag_indicator_rounded),
                 ),
               ),
+              child: handle,
             ),
           ),
         ),

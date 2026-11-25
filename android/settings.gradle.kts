@@ -11,9 +11,11 @@ pluginManagement {
     includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
 
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        if (System.getenv("GITHUB_ACTIONS") != "true") {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+            maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        }
         google()
         mavenCentral()
         gradlePluginPortal()

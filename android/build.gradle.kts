@@ -1,7 +1,9 @@
 allprojects {
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        if (System.getenv("GITHUB_ACTIONS") != "true") {
+            maven { url = uri("https://maven.aliyun.com/repository/google") }
+            maven { url = uri("https://maven.aliyun.com/repository/central") }
+        }
         google()
         mavenCentral()
     }

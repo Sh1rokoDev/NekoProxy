@@ -40,7 +40,10 @@ jobs:
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: '1.27.4'
-          cache-dependency-path: runtime/go.sum
+          # The Windows and Android builds share a runner OS but compile different targets.
+          cache-dependency-path: |
+            runtime/go.sum
+            scripts/build-${{ matrix.platform }}.ps1
 
       - name: Set up Flutter
         shell: pwsh

@@ -30,6 +30,8 @@ class CompiledConfig {
     required this.proxyGroupTag,
     required this.custom,
     this.routeRuleNames = const {},
+    this.hasGeneratedProxyOutbounds = false,
+    this._hasAutoCandidates = false,
   });
 
   final Map<String, dynamic> json;
@@ -39,6 +41,82 @@ class CompiledConfig {
   final String proxyGroupTag;
   final bool custom;
   final Map<int, String> routeRuleNames;
+  final bool hasGeneratedProxyOutbounds;
+  final bool _hasAutoCandidates;
+
+  String? get generatedManualDefault {
+    if (!hasGeneratedProxyOutbounds) return null;
+    for (final outbound in json['outbounds'] as List) {
+      if (outbound case {
+        'tag': ConfigCompiler.proxyTag,
+        'default': String tag,
+      }) {
+        return tag;
+      }
+    }
+    return null;
+  }
+
+  bool hasSameSubscriptionConfig(CompiledConfig other) {
+    if (!_sameJson(_subscriptionOutbounds, other._subscriptionOutbounds)) {
+      return false;
+    }
+    if (_hasAutoCandidates == other._hasAutoCandidates &&
+        proxyGroupTag == other.proxyGroupTag) {
+      return true;
+    }
+    // An advanced override can keep the outbounds fixed while generated DNS
+    // and route rules still switch between the manual and automatic groups.
+    return _sameJson(json['dns'], other.json['dns']) &&
+        _sameRouteField(other, 'final') &&
+        _sameRouteField(other, 'rules');
+  }
+
+  bool _sameRouteField(CompiledConfig other, String key) {
+    final route = json['route'];
+    final otherRoute = other.json['route'];
+    return _sameJson(
+      route is Map ? route[key] : null,
+      otherRoute is Map ? otherRoute[key] : null,
+    );
+  }
+
+  Object? get _subscriptionOutbounds {
+    final outbounds = json['outbounds'];
+    if (!hasGeneratedProxyOutbounds || outbounds is! List) return outbounds;
+    // Choosing a node can hot-switch the selector after startup. Its saved
+    // default and the URL test's initial preference can then differ from the
+    // loaded config. Compare members and keep the original subscription order
+    // in the selector, where it also determines the fallback.
+    return [
+      for (final outbound in outbounds.cast<Map<String, dynamic>>())
+        switch (outbound['tag']) {
+          ConfigCompiler.proxyTag => {...outbound}..remove('default'),
+          ConfigCompiler.autoTag => {
+            ...outbound,
+            'outbounds': (outbound['outbounds'] as List).toSet(),
+          },
+          _ => outbound,
+        },
+    ];
+  }
+
+  static bool _sameJson(Object? first, Object? second) {
+    if (identical(first, second)) return true;
+    return switch ((first, second)) {
+      (final Map a, final Map b) =>
+        a.length == b.length &&
+            a.keys.every(
+              (key) => b.containsKey(key) && _sameJson(a[key], b[key]),
+            ),
+      (final List a, final List b) =>
+        a.length == b.length &&
+            Iterable<int>.generate(a.length)
+                .every((i) => _sameJson(a[i], b[i])),
+      (final Set a, final Set b) => a.length == b.length && a.containsAll(b),
+      _ => first == second,
+    };
+  }
 
   Iterable<String> get localRuleSetPaths sync* {
     final route = json['route'];
@@ -146,6 +224,12 @@ class ConfigCompiler {
   static const wireGuardBootstrapTag = 'neko-wireguard-bootstrap';
 
   static String nodeTag(ProxyNode node) => 'node-${node.id}';
+
+  static Map<String, dynamic> subscriptionOutbound(ProxyNode node) =>
+      Map<String, dynamic>.of(node.outbound)
+        ..remove('tag')
+        ..remove('detour')
+        ..remove('domain_resolver');
 
   static Iterable<ProxyNode> autoCandidates(
     Iterable<ProxyNode> nodes,
@@ -302,11 +386,11 @@ class ConfigCompiler {
     }
 
     for (final node in nodes) {
-      final outbound = Map<String, dynamic>.from(node.outbound);
-      if (outbound.remove('detour') != null) {
+      final outbound = subscriptionOutbound(node);
+      if (node.outbound['detour'] != null) {
         warnings.add('节点「${node.name}」的 detour 引用未包含在订阅中，已忽略。');
       }
-      if (outbound.remove('domain_resolver') != null) {
+      if (node.outbound['domain_resolver'] != null) {
         warnings.add('节点「${node.name}」的 domain_resolver 引用未包含在订阅中，已忽略。');
       }
       outbound['tag'] = nodeTags[node.id]!;
@@ -424,6 +508,9 @@ class ConfigCompiler {
       nodeTags: nodeTags,
       proxyGroupTag: proxyGroupTag,
       custom: false,
+      hasGeneratedProxyOutbounds:
+          !wireGuardOnly && identical(config['outbounds'], outbounds),
+      hasAutoCandidates: autoNodes.isNotEmpty,
       // Advanced JSON can replace the entire rule list, invalidating its indices.
       routeRuleNames:
           effectiveRoute is Map &&

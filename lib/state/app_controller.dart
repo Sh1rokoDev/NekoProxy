@@ -969,12 +969,7 @@ class AppController extends ChangeNotifier {
   void _publishRunningCore(CompiledConfig compiled, RuntimeStatus status) {
     _compiled = compiled;
     runtimeStatus = status;
-    final names = {for (final node in snapshot.allNodes) node.id: node.name};
-    _connectionNodeNames = {
-      for (final entry in compiled.nodeTags.entries)
-        if (names[entry.key] case final name? when name.isNotEmpty)
-          entry.value: name,
-    };
+    _updateConnectionNodeNames(compiled);
     _nodeIdsByTag = {
       for (final entry in compiled.nodeTags.entries) entry.value: entry.key,
     };
@@ -988,6 +983,15 @@ class AppController extends ChangeNotifier {
     samples = const [];
     if (!_applyingTunTakeover) _recordHomeActivity('代理已连接');
     _startPolling();
+  }
+
+  void _updateConnectionNodeNames(CompiledConfig compiled) {
+    final names = {for (final node in snapshot.allNodes) node.id: node.name};
+    _connectionNodeNames = {
+      for (final entry in compiled.nodeTags.entries)
+        if (names[entry.key] case final name? when name.isNotEmpty)
+          entry.value: name,
+    };
   }
 
   Future<void> disconnect({bool silent = false}) async {
@@ -2311,51 +2315,36 @@ class AppController extends ChangeNotifier {
       if (current == null) return;
       // The server interval only seeds new imports; refreshing must not
       // overwrite the per-subscription schedule configured by the user.
-      final oldByFingerprint = <String, ProxyNode>{};
-      for (final node in current.nodes) {
-        oldByFingerprint[ProfileParser.fingerprintOf(node.outbound)] = node;
-      }
-      final merged = <ProxyNode>[];
-      for (final node in parsed.nodes) {
-        final previous =
-            oldByFingerprint[ProfileParser.fingerprintOf(node.outbound)];
-        if (previous != null) {
-          merged.add(
-            previous.copyWith(
-              name: node.name,
-              tag: node.tag,
-              outbound: node.outbound,
-            ),
-          );
-        } else {
-          merged.add(node);
-        }
-      }
+      final selectedBefore = settings.manualNodeId;
+      final hadSelection = snapshot.nodeById(selectedBefore) != null;
       current
-        ..nodes = merged
+        ..nodes = _mergeSubscriptionNodes(current.nodes, parsed.nodes)
         ..lastUpdated = DateTime.now()
         ..lastError = null
         ..uploadBytes = parsed.uploadBytes
         ..downloadBytes = parsed.downloadBytes
         ..totalBytes = parsed.totalBytes
         ..expireAt = parsed.expireAt;
-      final selectedBefore = settings.manualNodeId;
-      final selectionLost =
+      final selectionMissing =
           selectedBefore != null && snapshot.nodeById(selectedBefore) == null;
-      if (selectionLost) {
-        settings.manualNodeId = null;
-      }
+      if (selectionMissing) settings.manualNodeId = null;
       await _saveSnapshot(snapshot);
       if (currentSubscription() == null) return;
+      final active = running ? _compiled : null;
+      if (active != null) _updateConnectionNodeNames(active);
       _recordHomeActivity('订阅更新完成，共 ${parsed.nodes.length} 个节点');
       notifyListeners();
-      if (selectionLost) {
+
+      if (currentSubscription() == null) return;
+      if (_lostSubscriptionSelection(
+        active,
+        hadSelection && selectionMissing,
+      )) {
         if (running) await disconnect(silent: true);
         if (currentSubscription() == null) return;
-        error = '原选中节点已从订阅移除，请重新选择节点。';
-        notifyListeners();
-      } else if (running) {
-        await restartCore();
+        _setError('原选中节点已从订阅移除，请重新选择节点。');
+      } else if (active != null && running && identical(_compiled, active)) {
+        await _applySubscriptionConfig(active);
       }
       final completed = currentSubscription();
       if (!silent && completed != null) {
@@ -2378,6 +2367,92 @@ class AppController extends ChangeNotifier {
         _subscriptionUpdates.remove(id);
       }
     }
+  }
+
+  List<ProxyNode> _mergeSubscriptionNodes(
+    List<ProxyNode> current,
+    List<ProxyNode> incoming,
+  ) {
+    final unmatched = {
+      for (final node in current)
+        ProfileParser.fingerprintOf(node.outbound): node,
+    };
+    final matched = {
+      for (final node in incoming)
+        node.id: ?unmatched.remove(ProfileParser.fingerprintOf(node.outbound)),
+    };
+
+    if (unmatched.isNotEmpty && matched.length < incoming.length) {
+      // Keep existing IDs when just the ignored upstream references change.
+      // Reserve exact matches first when multiple nodes compile identically.
+      String effectiveFingerprint(ProxyNode node) =>
+          ProfileParser.fingerprintOf(
+            ConfigCompiler.subscriptionOutbound(node),
+          );
+      final byEffectiveOutbound = <String, Queue<ProxyNode>>{};
+      for (final node in unmatched.values) {
+        byEffectiveOutbound
+            .putIfAbsent(effectiveFingerprint(node), Queue.new)
+            .addLast(node);
+      }
+      for (final node in incoming) {
+        if (matched.containsKey(node.id)) continue;
+        final candidates = byEffectiveOutbound[effectiveFingerprint(node)];
+        if (candidates != null && candidates.isNotEmpty) {
+          matched[node.id] = candidates.removeFirst();
+        }
+      }
+    }
+
+    return [
+      for (final node in incoming)
+        if (matched[node.id] case final previous?)
+          previous.copyWith(
+            name: node.name,
+            tag: node.tag,
+            outbound: node.outbound,
+          )
+        else
+          node,
+    ];
+  }
+
+  bool _lostSubscriptionSelection(
+    CompiledConfig? active,
+    bool selectionRemoved,
+  ) {
+    if (settings.selectionMode != SelectionMode.manual ||
+        settings.manualNodeId != null) {
+      return false;
+    }
+    if (active == null) {
+      return !running &&
+          selectionRemoved &&
+          !snapshot.useCustomConfig &&
+          outboundMode != OutboundMode.wireGuard &&
+          !snapshot.advancedJson.containsKey('outbounds');
+    }
+    if (!active.hasGeneratedProxyOutbounds ||
+        active.proxyGroupTag != ConfigCompiler.proxyTag) {
+      return false;
+    }
+    final selectedId =
+        _nodeIdsByTag[_effectiveTag ?? active.generatedManualDefault];
+    return selectedId != null && snapshot.nodeById(selectedId) == null;
+  }
+
+  Future<void> _applySubscriptionConfig(CompiledConfig active) async {
+    if (active.nodeTags.isEmpty) return;
+    // A superseded refresh may already have saved its nodes. Compare with
+    // the running config so the next response can still apply those changes.
+    final CompiledConfig updated;
+    try {
+      updated = compile();
+    } on ConfigCompileException catch (exception) {
+      _setError('订阅已更新，但无法应用到当前连接：${exception.message}');
+      return;
+    }
+    if (!active.hasSameSubscriptionConfig(updated)) await restartCore();
   }
 
   Future<http.Response> _fetchSubscription(

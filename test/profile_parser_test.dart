@@ -46,6 +46,7 @@ void main() {
 
     test('parses base64 encoded link list', () {
       const links =
+          '[Nodes]\r\n'
           'trojan://secret@example.org:443?sni=example.org#Node%20A\n'
           'vless://00000000-0000-0000-0000-000000000000@example.net:443?security=tls#Node%20B';
       final encoded = base64.encode(utf8.encode(links));
@@ -233,6 +234,33 @@ void main() {
       expect(profile.nodes.single.outbound['type'], 'trojan');
     });
 
+    test('imports sing-box json array wrapped in base64', () {
+      const json =
+          '[{"type":"trojan","tag":"encoded","server":"example.invalid",'
+          '"server_port":443,"password":"fixture-password"},'
+          '{"type":"direct","tag":"built-in"}]';
+      final plain = ProfileParser.parse(json, subscriptionId: 'group');
+      final wrapped = ProfileParser.parse(
+        base64.encode(utf8.encode(' \n$json\n ')),
+        subscriptionId: 'group',
+      );
+
+      expect(wrapped.format, 'sing-box');
+      expect(wrapped.nodes.single.name, plain.nodes.single.name);
+      expect(wrapped.nodes.single.outbound, plain.nodes.single.outbound);
+      expect(wrapped.nodes.single.subscriptionId, 'group');
+    });
+
+    test('keeps base64 json arrays with link-like text in JSON parsing', () {
+      const json =
+          '[{"type":"trojan","tag":"Line\u2028https://example.invalid",'
+          '"server":"example.invalid","server_port":443,"password":"pw"}]';
+      final wrapped = ProfileParser.parse(base64.encode(utf8.encode(json)));
+
+      expect(wrapped.format, 'sing-box');
+      expect(wrapped.nodes.single.name, 'Line\u2028https://example.invalid');
+    });
+
     test('rejects configuration without usable outbounds', () {
       expect(
         () => ProfileParser.parse(
@@ -245,19 +273,24 @@ void main() {
 
   group('ProfileParser boundaries', () {
     test('does not echo credentials from malformed subscription JSON', () {
-      expect(
-        () => ProfileParser.parse('{"password":"private-test-password",!}'),
-        throwsA(
-          isA<ParseException>().having(
-            (error) => error.message,
-            'message',
-            allOf(
-              contains('JSON 解析失败'),
-              isNot(contains('private-test-password')),
+      for (final content in [
+        '{"password":"private-test-password",!}',
+        base64.encode(utf8.encode('[{"password":"private-test-password"},!]')),
+      ]) {
+        expect(
+          () => ProfileParser.parse(content),
+          throwsA(
+            isA<ParseException>().having(
+              (error) => error.message,
+              'message',
+              allOf(
+                contains('JSON 解析失败'),
+                isNot(contains('private-test-password')),
+              ),
             ),
           ),
-        ),
-      );
+        );
+      }
     });
 
     test('rejects Clash YAML subscriptions', () {

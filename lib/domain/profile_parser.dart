@@ -134,15 +134,14 @@ class ProfileParser {
     }
 
     ParsedProfile result;
-    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    if (_startsWithJsonContainer(trimmed)) {
       result = _parseJson(trimmed, subscriptionId);
     } else {
       final decoded = _tryBase64Text(trimmed);
       if (decoded != null && _containsSupportedLinks(decoded)) {
         result = _parseLinkList(decoded, subscriptionId, format: 'base64');
       } else if (decoded != null &&
-          (decoded.trimLeft().startsWith('{') ||
-              decoded.trimLeft().startsWith('['))) {
+          _startsWithJsonContainer(decoded.trimLeft())) {
         result = _parseJson(decoded.trim(), subscriptionId);
       } else if (_containsSupportedLinks(trimmed)) {
         result = _parseLinkList(trimmed, subscriptionId);
@@ -179,10 +178,16 @@ class ProfileParser {
     return text.startsWith('mixed-port:') || text.startsWith('port:');
   }
 
+  static bool _startsWithJsonContainer(String text) =>
+      text.startsWith('{') || text.startsWith('[');
+
+  // Match the same line breaks as LineSplitter. JSON strings can contain
+  // Unicode line separators that a multiline regexp would treat as breaks.
   static bool _containsSupportedLinks(String text) => RegExp(
-    r'^(?:' + _supportedSchemes.map(RegExp.escape).join('|') + r')://',
+    r'(?:^|[\r\n])(?:' +
+        _supportedSchemes.map(RegExp.escape).join('|') +
+        r')://',
     caseSensitive: false,
-    multiLine: true,
   ).hasMatch(text);
 
   static String? _tryBase64Text(String value) {
@@ -194,7 +199,8 @@ class ProfileParser {
     try {
       final normalized = base64Url.normalize(compact);
       final decoded = utf8.decode(base64.decode(normalized));
-      return decoded.contains('://') || decoded.trimLeft().startsWith('{')
+      return decoded.contains('://') ||
+              _startsWithJsonContainer(decoded.trimLeft())
           ? decoded
           : null;
     } catch (_) {

@@ -1,7 +1,6 @@
 import 'dart:ui';
 
-import 'package:flutter/material.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../state/app_controller.dart';
 import 'app_scope.dart';
@@ -33,11 +32,7 @@ class NekoProxyApp extends StatelessWidget {
             scrollBehavior: const _AppScrollBehavior(),
             locale: const Locale('zh', 'CN'),
             supportedLocales: const [Locale('zh', 'CN'), Locale('en')],
-            localizationsDelegates: const [
-              GlobalMaterialLocalizations.delegate,
-              GlobalWidgetsLocalizations.delegate,
-              GlobalCupertinoLocalizations.delegate,
-            ],
+            localizationsDelegates: GlobalMaterialLocalizations.delegates,
             home: const AppShell(),
           );
         },

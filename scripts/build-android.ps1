@@ -73,23 +73,14 @@ if (-not $jdk) {
 }
 
 $go = Resolve-Tool "go"
-if (-not $go) { throw "Go not found on PATH. Install Go 1.26+ and add it to PATH." }
-$goBin = Join-Path (& $go env GOPATH) "bin"
-$gomobile = Resolve-Tool "gomobile"
-if (-not $gomobile) {
-    $candidate = Join-Path $goBin "gomobile.exe"
-    if (Test-Path $candidate) { $gomobile = $candidate }
-}
-if (-not $gomobile) {
-    throw "gomobile not found. Install it with: go install golang.org/x/mobile/cmd/gomobile@latest"
-}
+if (-not $go) { throw "Go not found on PATH. Install Go 1.26.9+ and add it to PATH." }
 
 $env:JAVA_HOME = $jdk
 $env:ANDROID_HOME = $sdk
 $env:ANDROID_SDK_ROOT = $sdk
 $env:ANDROID_NDK_HOME = $ndk
 if (-not $env:GOPROXY) { $env:GOPROXY = "https://goproxy.cn,direct" }
-$env:PATH = "$jdk\bin;$goBin;$env:PATH"
+$env:PATH = "$jdk\bin;$env:PATH"
 
 $libs = Join-Path $root "android\app\libs"
 New-Item -ItemType Directory -Force -Path $libs | Out-Null
@@ -98,7 +89,12 @@ Invoke-WithLatestNekoRuntime -Root $root -Build {
     param($SourceDir, $CoreVersion)
     & (Join-Path $PSScriptRoot "sync-rules.ps1") -RuntimeDir $SourceDir -CoreVersion $CoreVersion -RequireLatest
     Push-Location $SourceDir
+    $previousPath = $env:PATH
     try {
+        $toolsDir = New-Item -ItemType Directory -Path (Join-Path $SourceDir "mobile-tools")
+        & $go build -mod=readonly -o $toolsDir.FullName golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+        if ($LASTEXITCODE -ne 0) { throw "Go mobile tool build failed" }
+        $env:PATH = "$($toolsDir.FullName);$previousPath"
         $bindArgs = @(
             "bind",
             "-target=android/arm64",
@@ -110,9 +106,10 @@ Invoke-WithLatestNekoRuntime -Root $root -Build {
             "-o", (Join-Path $libs "nekoproxy.aar"),
             "./mobile"
         )
-        & $gomobile @bindArgs
+        & (Join-Path $toolsDir.FullName "gomobile.exe") @bindArgs
         if ($LASTEXITCODE -ne 0) { throw "gomobile bind failed" }
     } finally {
+        $env:PATH = $previousPath
         Pop-Location
     }
 }

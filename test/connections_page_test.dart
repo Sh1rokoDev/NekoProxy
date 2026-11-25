@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/features/tools/connections_page.dart';

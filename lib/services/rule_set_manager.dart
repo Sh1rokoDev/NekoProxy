@@ -92,14 +92,12 @@ class RuleSetUpdateResult {
 class RuleSetManager {
   RuleSetManager({
     required this.paths,
-    required HttpClient Function() clientFactory,
+    required this._clientFactory,
     RuleSetConverter? converter,
     AssetBundle? bundle,
-    bool Function(String directory)? isSnapshotReferenced,
-  }) : _clientFactory = clientFactory,
-       _convert = converter ?? _convertOnPlatform,
-       _bundle = bundle ?? rootBundle,
-       _isSnapshotReferenced = isSnapshotReferenced;
+    this._isSnapshotReferenced,
+  }) : _convert = converter ?? _convertOnPlatform,
+       _bundle = bundle ?? rootBundle;
 
   final AppPaths paths;
   final HttpClient Function() _clientFactory;

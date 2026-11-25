@@ -93,7 +93,6 @@ set(NEKOPROXY_RUNTIME_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../build")
 install(FILES
     "${NEKOPROXY_RUNTIME_DIR}/nekoproxy-worker.exe"
     "${NEKOPROXY_RUNTIME_DIR}/wintun.dll"
-    "${NEKOPROXY_RUNTIME_DIR}/libcronet.dll"
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
   COMPONENT Runtime
   OPTIONAL)

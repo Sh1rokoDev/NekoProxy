@@ -15,7 +15,7 @@ $OutputDir = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPS
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 
 $go = (Get-Command go -ErrorAction SilentlyContinue).Source
-if (-not $go) { throw "Go not found on PATH. Install Go 1.26+ and add it to PATH." }
+if (-not $go) { throw "Go not found on PATH. Install Go 1.26.9+ and add it to PATH." }
 if (-not $env:GOPROXY) { $env:GOPROXY = "https://goproxy.cn,direct" }
 
 $tags = "with_gvisor,with_quic,with_wireguard,with_utls"
@@ -35,10 +35,6 @@ if ($RuntimeDir) {
 } else {
     Invoke-WithLatestNekoRuntime -Root $root -Build $buildWorker
 }
-
-# Remove the retired elevation helper from incremental build directories.
-$legacyHelper = Join-Path $OutputDir "nekoproxy-helper.exe"
-if (Test-Path $legacyHelper) { Remove-Item $legacyHelper -Force }
 
 $wintunDll = Join-Path $OutputDir "wintun.dll"
 if (-not (Test-Path $wintunDll)) {

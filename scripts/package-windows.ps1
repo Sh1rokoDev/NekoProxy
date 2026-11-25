@@ -18,14 +18,11 @@ if ($LASTEXITCODE -ne 0) { throw "Windows build failed" }
 $release = Join-Path $root "build\windows\x64\runner\Release"
 if (-not (Test-Path $release)) { throw "Windows release directory not found: $release" }
 
-# Older incremental builds may still contain the retired elevation helper.
-$legacyHelper = Join-Path $release "nekoproxy-helper.exe"
-if (Test-Path $legacyHelper) { Remove-Item $legacyHelper -Force }
-
 $target = Join-Path $DistDir "NekoProxy-windows-x64"
 if (Test-Path $target) { Remove-Item $target -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $target | Out-Null
-Copy-Item (Join-Path $release "*") $target -Recurse
+# Incremental builds may retain binaries shipped by older releases.
+Copy-Item (Join-Path $release "*") $target -Recurse -Exclude "nekoproxy-helper.exe", "libcronet.dll"
 Copy-Item (Join-Path $root "LICENSE") $target
 Copy-Item (Join-Path $root "README.md") $target
 $readmeIcons = Join-Path $target "assets\icons"

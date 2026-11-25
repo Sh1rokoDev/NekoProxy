@@ -27,7 +27,7 @@ function Invoke-WithLatestNekoRuntime {
     )
 
     $go = (Get-Command go -ErrorAction SilentlyContinue).Source
-    if (-not $go) { throw 'Go not found on PATH. Install Go 1.26+ and add it to PATH.' }
+    if (-not $go) { throw 'Go not found on PATH. Install Go 1.26.9+ and add it to PATH.' }
     $tag = Get-LatestGitHubReleaseTag 'SagerNet/sing-box'
     if ($tag -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
         throw "Unexpected stable sing-box release tag: $tag."

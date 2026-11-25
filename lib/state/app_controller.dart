@@ -208,7 +208,6 @@ class AppController extends ChangeNotifier {
   bool get isLinux => Platform.isLinux;
   bool get supportsSystemProxy =>
       Platform.isWindows || (isLinux && systemProxy != null);
-  bool get supportsTun => Platform.isWindows || Platform.isAndroid || isLinux;
 
   CompileTarget get _compileTarget => isAndroid
       ? CompileTarget.android

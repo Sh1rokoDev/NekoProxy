@@ -464,8 +464,9 @@ class DesktopRuntimeClient implements RuntimeConfigValidator {
     final pending = List.of(_pending.values);
     _pending.clear();
     for (final completer in pending) {
-      if (!completer.isCompleted)
+      if (!completer.isCompleted) {
         completer.completeError(RuntimeException(message));
+      }
     }
   }
 

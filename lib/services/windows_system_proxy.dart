@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 
-import 'package:win32/win32.dart';
 import 'package:win32_registry/win32_registry.dart';
 
 import '../data/app_storage.dart';
@@ -33,6 +32,25 @@ class SystemProxySnapshot {
     appliedServer: server,
   );
 
+  static const loopbackOverride = 'localhost;127.*;[::1]';
+
+  SystemProxySnapshot restoredSettings(SystemProxySnapshot current) {
+    // Server and enable select one manual proxy. Restoring the old switch
+    // alone could disable a replacement proxy configured by another app.
+    final ownsServer =
+        appliedServer != null && current.proxyServer == appliedServer;
+    return SystemProxySnapshot(
+      proxyServer: ownsServer ? proxyServer : current.proxyServer,
+      proxyEnable: ownsServer && current.proxyEnable == 1
+          ? proxyEnable
+          : current.proxyEnable,
+      proxyOverride: current.proxyOverride == loopbackOverride
+          ? proxyOverride
+          : current.proxyOverride,
+      autoConfigUrl: current.autoConfigUrl ?? autoConfigUrl,
+    );
+  }
+
   Map<String, dynamic> toJson() => {
     'proxyEnable': proxyEnable,
     'proxyServer': proxyServer,
@@ -59,13 +77,14 @@ class WindowsSystemProxy implements SystemProxy {
   static const _refresh = 37;
   static const _settingsChanged = 39;
   final AppPaths paths;
-  String? _server;
 
   bool get supported => Platform.isWindows;
 
+  @override
   ProxyApplyResult enable(int port) {
-    if (!supported)
+    if (!supported) {
       return const ProxyApplyResult(ok: false, error: '仅 Windows 支持系统代理');
+    }
     try {
       final key = _openSettings();
       try {
@@ -78,22 +97,22 @@ class WindowsSystemProxy implements SystemProxy {
                 ),
               )
             : null;
-        final original = existingOwned ?? existing;
-        _server = '127.0.0.1:$port';
+        final original = existingOwned?.restoredSettings(existing) ?? existing;
+        final server = '127.0.0.1:$port';
         owned.writeAsStringSync(
-          jsonEncode(original.withAppliedServer(_server!).toJson()),
+          jsonEncode(original.withAppliedServer(server).toJson()),
           flush: true,
         );
         if (existing.autoConfigUrl != null) {
-          _removeValue(key, 'AutoConfigURL');
+          key.removeValue('AutoConfigURL');
         }
         key.setValue('ProxyEnable', const RegistryValue.dword(1));
-        key.setValue('ProxyServer', RegistryValue.string(_server!));
+        key.setValue('ProxyServer', RegistryValue.string(server));
         // Let sing-box rules decide how to route LAN destinations. Only
         // loopback is excluded from the Windows proxy itself.
         key.setValue(
           'ProxyOverride',
-          const RegistryValue.string('localhost;127.*;[::1]'),
+          const RegistryValue.string(SystemProxySnapshot.loopbackOverride),
         );
       } finally {
         key.close();
@@ -105,11 +124,13 @@ class WindowsSystemProxy implements SystemProxy {
     }
   }
 
+  @override
   ProxyApplyResult disable() {
     if (!supported) return const ProxyApplyResult(ok: true);
     return _restore(force: false);
   }
 
+  @override
   ProxyApplyResult restoreIfOwned({bool force = false}) {
     if (!supported) return const ProxyApplyResult(ok: true);
     return _restore(force: force);
@@ -126,20 +147,20 @@ class WindowsSystemProxy implements SystemProxy {
       );
       final key = _openSettings();
       try {
-        final current = key.getString('ProxyServer');
-        final currentEnabled = key.getInt('ProxyEnable');
-        final ours = snapshot.appliedServer ?? _server;
-        final stillOwned =
-            ours != null && current == ours && currentEnabled == 1;
-        if (!force && !stillOwned) {
-          // Another program changed or disabled the proxy after us; keep its change.
-          ownedFile.deleteSync();
-          return const ProxyApplyResult(ok: true);
+        final current = _readSnapshot(key);
+        final target = force ? snapshot : snapshot.restoredSettings(current);
+        if (target.proxyEnable != current.proxyEnable) {
+          _restoreValue(key, 'ProxyEnable', target.proxyEnable, isDword: true);
         }
-        _restoreValue(key, 'ProxyEnable', snapshot.proxyEnable, isDword: true);
-        _restoreValue(key, 'ProxyServer', snapshot.proxyServer);
-        _restoreValue(key, 'ProxyOverride', snapshot.proxyOverride);
-        _restoreValue(key, 'AutoConfigURL', snapshot.autoConfigUrl);
+        if (target.proxyServer != current.proxyServer) {
+          _restoreValue(key, 'ProxyServer', target.proxyServer);
+        }
+        if (target.proxyOverride != current.proxyOverride) {
+          _restoreValue(key, 'ProxyOverride', target.proxyOverride);
+        }
+        if (target.autoConfigUrl != current.autoConfigUrl) {
+          _restoreValue(key, 'AutoConfigURL', target.autoConfigUrl);
+        }
       } finally {
         key.close();
       }
@@ -167,21 +188,13 @@ class WindowsSystemProxy implements SystemProxy {
     bool isDword = false,
   }) {
     if (value == null) {
-      _removeValue(key, name);
+      key.removeValue(name);
       return;
     }
     if (isDword) {
       key.setValue(name, RegistryValue.dword(value as int));
     } else {
       key.setValue(name, RegistryValue.string(value as String));
-    }
-  }
-
-  void _removeValue(RegistryKey key, String name) {
-    try {
-      key.removeValue(name);
-    } on WindowsException {
-      // Missing values are already in the desired state.
     }
   }
 

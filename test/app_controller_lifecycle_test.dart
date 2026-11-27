@@ -50,7 +50,7 @@ void main() {
     expect(controller.appearanceTick.value, 0);
   });
 
-  test('恢复与重置仅在保存成功后更新主题和强调色', () async {
+  test('恢复与重置仅在保存成功后更新外观设置', () async {
     final storage = _MemoryStorage();
     final controller = _AppearanceController()..storage = storage;
     addTearDown(controller.dispose);
@@ -58,15 +58,21 @@ void main() {
     final restored = AppSnapshot.empty();
     restored.settings
       ..theme = ThemePreference.dark
-      ..seedColor = 0xFF222299;
+      ..seedColor = 0xFF222299
+      ..uiScalePercent = 115;
     final backup = jsonEncode({
       'app': 'nekoproxy',
       'version': 2,
       'data': restored.toJson(),
     });
-    final observed = <(ThemePreference, int)>[];
+    final observed = <(ThemePreference, int, int)>[];
     controller.appearanceTick.addListener(() {
-      observed.add((controller.settings.theme, controller.settings.seedColor));
+      final settings = controller.settings;
+      observed.add((
+        settings.theme,
+        settings.seedColor,
+        settings.uiScalePercent,
+      ));
     });
 
     storage.fail = true;
@@ -78,8 +84,8 @@ void main() {
     await controller.importBackup(backup);
     await controller.resetAll();
     expect(observed, [
-      (ThemePreference.dark, restored.settings.seedColor),
-      (ThemePreference.system, AppSettings().seedColor),
+      (ThemePreference.dark, restored.settings.seedColor, 115),
+      (ThemePreference.system, AppSettings().seedColor, 100),
     ]);
   });
 
@@ -107,8 +113,10 @@ void main() {
             ? expectLater(application, throwsStateError)
             : application;
         await storage.writeStarted.future;
-        controller.settings.theme = ThemePreference.dark;
-        final settings = controller.saveSettings();
+        final settings = controller.setAppearance(
+          theme: ThemePreference.dark,
+          uiScalePercent: 115,
+        );
         release.complete();
         await Future.wait([outcome, settings]);
 
@@ -116,9 +124,32 @@ void main() {
         expect(controller.snapshot.customConfig, expected);
         expect(storage.savedConfig, expected);
         expect(storage.savedTheme, ThemePreference.dark);
+        expect(storage.savedUiScalePercent, 115);
       },
     );
   }
+
+  test('外观保存失败时，并发设置写入沿用已提交的外观', () async {
+    final release = Completer<void>();
+    final storage = _MemoryStorage()
+      ..holdWrites = release.future
+      ..rejectedUiScalePercent = 125;
+    final controller = AppController()..storage = storage;
+    addTearDown(controller.dispose);
+
+    final appearance = controller.setAppearance(uiScalePercent: 125);
+    final failed = expectLater(appearance, throwsStateError);
+    await storage.writeStarted.future;
+    expect(controller.settings.uiScalePercent, 100);
+    controller.settings.autoConnect = true;
+    final settings = controller.saveSettings();
+
+    release.complete();
+    await Future.wait([failed, settings]);
+    expect(storage.savedUiScalePercent, 100);
+    expect(storage.savedAutoConnect, isTrue);
+    expect(controller.settings.uiScalePercent, 100);
+  });
 
   test('高级配置在核心和代理就绪后提交，失败时恢复原端口', () async {
     final storage = _MemoryStorage();
@@ -332,8 +363,11 @@ class _MemoryStorage extends AppStorage {
 
   bool fail = false;
   String? rejectedConfig;
+  int? rejectedUiScalePercent;
   String? savedConfig;
   ThemePreference? savedTheme;
+  int? savedUiScalePercent;
+  bool? savedAutoConnect;
   final writeStarted = Completer<void>();
   Future<void>? holdWrites;
 
@@ -341,12 +375,16 @@ class _MemoryStorage extends AppStorage {
   Future<void> save(AppSnapshot snapshot) async {
     final config = snapshot.customConfig;
     final theme = snapshot.settings.theme;
+    final scale = snapshot.settings.uiScalePercent;
+    final autoConnect = snapshot.settings.autoConnect;
     if (!writeStarted.isCompleted) writeStarted.complete();
     await holdWrites;
-    if (fail || config == rejectedConfig) {
+    if (fail || config == rejectedConfig || scale == rejectedUiScalePercent) {
       throw StateError('模拟保存失败');
     }
     savedConfig = config;
     savedTheme = theme;
+    savedUiScalePercent = scale;
+    savedAutoConnect = autoConnect;
   }
 }

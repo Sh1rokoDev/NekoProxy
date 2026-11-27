@@ -5,6 +5,7 @@ class HeaderIconButton extends StatelessWidget {
     super.key,
     required this.icon,
     required this.tooltip,
+    this.label,
     this.onPressed,
     this.active = false,
     this.backgroundColor,
@@ -15,6 +16,7 @@ class HeaderIconButton extends StatelessWidget {
 
   final IconData icon;
   final String tooltip;
+  final String? label;
   final VoidCallback? onPressed;
   final bool active;
   final Color? backgroundColor;
@@ -26,6 +28,32 @@ class HeaderIconButton extends StatelessWidget {
     final fill =
         backgroundColor ??
         (active ? scheme.primaryContainer : scheme.surfaceContainerHighest);
+    final foreground =
+        foregroundColor ??
+        (active ? scheme.onPrimaryContainer : scheme.onSurfaceVariant);
+    final shape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(10),
+    );
+    if (label case final text?) {
+      return Tooltip(
+        message: tooltip,
+        excludeFromSemantics: true,
+        child: TextButton.icon(
+          onPressed: onPressed,
+          style: TextButton.styleFrom(
+            minimumSize: const Size(0, size),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            backgroundColor: fill,
+            disabledBackgroundColor: scheme.surfaceContainerHigh,
+            foregroundColor: foreground,
+            shape: shape,
+          ),
+          icon: Icon(icon, size: 18),
+          label: Text(text),
+        ),
+      );
+    }
     return IconButton(
       tooltip: tooltip,
       onPressed: onPressed,
@@ -36,10 +64,8 @@ class HeaderIconButton extends StatelessWidget {
         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
         backgroundColor: fill,
         disabledBackgroundColor: scheme.surfaceContainerHigh,
-        foregroundColor:
-            foregroundColor ??
-            (active ? scheme.onPrimaryContainer : scheme.onSurfaceVariant),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        foregroundColor: foreground,
+        shape: shape,
       ),
       icon: Icon(icon, size: 21),
     );

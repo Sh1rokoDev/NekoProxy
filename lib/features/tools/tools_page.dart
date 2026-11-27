@@ -4,7 +4,6 @@ import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_scope.dart';
 import '../../app/widgets.dart';
-import '../../domain/models.dart';
 import '../../services/windows_startup.dart';
 import '../../state/app_controller.dart';
 import 'about_page.dart';
@@ -16,6 +15,7 @@ import 'dns_page.dart';
 import 'ingress_page.dart';
 import 'logs_page.dart';
 import 'rule_sets_page.dart';
+import 'theme_dialog.dart';
 
 class ToolsPage extends StatelessWidget {
   const ToolsPage({super.key});
@@ -25,7 +25,15 @@ class ToolsPage extends StatelessWidget {
     final controller = AppScope.of(context);
     return PageFrame(
       title: '更多',
-      actions: _AppearanceActions(controller: controller),
+      actions: HeaderIconButton(
+        icon: Icons.palette_outlined,
+        label: '主题',
+        tooltip: '主题设置',
+        onPressed: () => showDialog<void>(
+          context: context,
+          builder: (_) => const ThemeDialog(),
+        ),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -174,121 +182,6 @@ class ToolsPage extends StatelessWidget {
             .showSnackBar(SnackBar(content: Text('设置开机启动失败：$e')));
       }
     }
-  }
-}
-
-class _AppearanceActions extends StatelessWidget {
-  const _AppearanceActions({required this.controller});
-
-  final AppController controller;
-
-  static const _accents = [
-    (name: '青', color: Color(0xFF0E7490)),
-    (name: '蓝', color: Color(0xFF2563EB)),
-    (name: '靛', color: Color(0xFF4F46E5)),
-    (name: '紫', color: Color(0xFF7C3AED)),
-    (name: '玫红', color: Color(0xFFBE185D)),
-    (name: '红', color: Color(0xFFDC2626)),
-    (name: '橙', color: Color(0xFFB45309)),
-    (name: '绿', color: Color(0xFF15803D)),
-    (name: '橄榄', color: Color(0xFF4D7C0F)),
-    (name: '石墨', color: Color(0xFF475569)),
-  ];
-
-  @override
-  Widget build(BuildContext context) {
-    final preference = controller.settings.theme;
-    final (icon, label) = switch (preference) {
-      ThemePreference.system => (Icons.brightness_auto_rounded, '跟随系统'),
-      ThemePreference.light => (Icons.light_mode_rounded, '浅色'),
-      ThemePreference.dark => (Icons.dark_mode_rounded, '深色'),
-    };
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        HeaderIconButton(
-          icon: icon,
-          tooltip: '主题：$label，点击切换',
-          onPressed: () async {
-            controller.settings.theme = switch (preference) {
-              ThemePreference.system => ThemePreference.light,
-              ThemePreference.light => ThemePreference.dark,
-              ThemePreference.dark => ThemePreference.system,
-            };
-            await controller.saveSettings();
-          },
-        ),
-        const SizedBox(width: 8),
-        HeaderIconButton(
-          icon: Icons.palette_outlined,
-          tooltip: '强调色',
-          onPressed: () => _showAccentDialog(context),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _showAccentDialog(BuildContext context) async {
-    final selected = await showDialog<int>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('强调色'),
-        content: SizedBox(
-          width: 360,
-          child: Wrap(
-            spacing: 14,
-            runSpacing: 14,
-            children: [
-              for (final option in _accents)
-                Tooltip(
-                  message: option.name,
-                  child: InkWell(
-                    customBorder: const CircleBorder(),
-                    onTap: () =>
-                        Navigator.pop(dialogContext, option.color.toARGB32()),
-                    child: Container(
-                      width: 42,
-                      height: 42,
-                      decoration: BoxDecoration(
-                        color: option.color,
-                        shape: BoxShape.circle,
-                        border:
-                            controller.settings.seedColor ==
-                                option.color.toARGB32()
-                            ? Border.all(
-                                color: Theme.of(dialogContext)
-                                    .colorScheme
-                                    .onSurface,
-                                width: 3,
-                              )
-                            : null,
-                      ),
-                      child:
-                          controller.settings.seedColor ==
-                              option.color.toARGB32()
-                          ? const Icon(
-                              Icons.check_rounded,
-                              color: Colors.white,
-                              size: 20,
-                            )
-                          : null,
-                    ),
-                  ),
-                ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-        ],
-      ),
-    );
-    if (selected == null) return;
-    controller.settings.seedColor = selected;
-    await controller.saveSettings();
   }
 }
 

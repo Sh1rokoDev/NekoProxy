@@ -752,6 +752,7 @@ class AppSettings {
   AppSettings({
     this.theme = ThemePreference.system,
     this.seedColor = 0xFF0E7490,
+    this.uiScalePercent = defaultUiScalePercent,
     this.splitMode = SplitMode.rule,
     this.selectionMode = SelectionMode.manual,
     this.manualNodeId,
@@ -776,8 +777,19 @@ class AppSettings {
        homeDesktop = homeDesktop ?? HomeLayout(),
        homeMobile = homeMobile ?? HomeLayout();
 
+  static const defaultUiScalePercent = 100;
+  static const minUiScalePercent = 80;
+  static const maxUiScalePercent = 125;
+  static const uiScaleStep = 5;
+
+  static bool isValidUiScalePercent(int value) =>
+      value >= minUiScalePercent &&
+      value <= maxUiScalePercent &&
+      (value - minUiScalePercent) % uiScaleStep == 0;
+
   ThemePreference theme;
   int seedColor;
+  int uiScalePercent;
   SplitMode splitMode;
   SelectionMode selectionMode;
   String? manualNodeId;
@@ -808,6 +820,7 @@ class AppSettings {
   Map<String, dynamic> toJson() => {
     'theme': theme.name,
     'seedColor': seedColor,
+    'uiScalePercent': uiScalePercent,
     'splitMode': splitMode.name,
     'selectionMode': selectionMode.name,
     'manualNodeId': manualNodeId,
@@ -837,6 +850,10 @@ class AppSettings {
         orElse: () => ThemePreference.system,
       ),
       seedColor: (json['seedColor'] as num?)?.toInt() ?? 0xFF0E7490,
+      uiScalePercent: switch (json['uiScalePercent']) {
+        final int value when isValidUiScalePercent(value) => value,
+        _ => defaultUiScalePercent,
+      },
       splitMode: SplitMode.values.firstWhere(
         (e) => e.name == json['splitMode'],
         orElse: () => SplitMode.rule,

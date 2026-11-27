@@ -90,6 +90,11 @@ void main() {
   }
 
   testWidgets('轮询按行解码 UTF-8，暂停和翻看历史时保留用户位置', (tester) async {
+    const bottomInset = 24.0;
+    tester.view.padding = FakeViewPadding(
+      bottom: bottomInset * tester.view.devicePixelRatio,
+    );
+    addTearDown(tester.view.resetPadding);
     final directory = Directory.systemTemp.createTempSync('neko-logs-');
     final paths = AppPaths.forDirectory(directory.path);
     final log = paths.logFile;
@@ -126,6 +131,26 @@ void main() {
     expect(lines(), original);
     final scroll = tester.widget<Scrollbar>(find.byType(Scrollbar)).controller!;
     expect(scroll.offset, greaterThan(160));
+    scroll.jumpTo(0);
+    await tester.pump();
+
+    final viewport = tester.getRect(find.byType(SingleChildScrollView));
+    final title = tester.getRect(find.text('运行日志'));
+    final logText = find.byType(LogText);
+    final footer = find.text('日志路径：${log.path}');
+    final footerBounds = tester.getRect(footer);
+    final page = tester.getRect(find.byType(Scaffold));
+    expect(viewport.top, page.top);
+    expect(viewport.bottom, lessThan(footerBounds.top));
+    expect(footerBounds.bottom, page.bottom - bottomInset - 12);
+    expect(tester.getCenter(find.text('核心未运行')).dy, footerBounds.center.dy);
+    final firstLineTop = tester.getTopLeft(logText).dy;
+    expect(firstLineTop, greaterThan(title.bottom));
+
+    scroll.jumpTo(firstLineTop - title.center.dy);
+    await tester.pump();
+    expect(tester.getTopLeft(logText).dy, title.center.dy);
+    expect(tester.getRect(footer), footerBounds);
     scroll.jumpTo(0);
     await tester.pump();
 

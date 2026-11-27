@@ -281,58 +281,67 @@ class _LogsPageState extends State<LogsPage> {
           icon: Icons.delete_sweep_outlined,
         ),
       ],
-      scrollsBehindHeader: false,
-      body: (_) => Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            color: theme.colorScheme.surfaceContainer,
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '日志路径：$_path',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                if (_readFailed || !controller.running)
-                  Text(
-                    _readFailed ? '日志读取失败' : '核心未运行',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.error,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: Container(
-              color: theme.colorScheme.surfaceContainerLowest,
-              padding: const EdgeInsets.all(16),
-              child: _lines.isEmpty
-                  ? const Center(
-                      child: EmptyState(
-                        icon: Icons.receipt_long_outlined,
-                        title: '暂无日志',
-                        message: '启动连接后，核心日志会显示在这里。',
-                      ),
-                    )
-                  : Scrollbar(
-                      controller: _scrollController,
-                      child: SingleChildScrollView(
+      body: (headerInset) {
+        final logPadding = EdgeInsets.only(top: headerInset + 16, bottom: 16);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(
+              child: Container(
+                color: theme.colorScheme.surfaceContainerLowest,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: _lines.isEmpty
+                    ? Padding(
+                        padding: logPadding,
+                        child: const Center(
+                          child: EmptyState(
+                            icon: Icons.receipt_long_outlined,
+                            title: '暂无日志',
+                            message: '启动连接后，核心日志会显示在这里。',
+                          ),
+                        ),
+                      )
+                    : Scrollbar(
                         controller: _scrollController,
-                        child: LogText(lines: _lines),
+                        child: SingleChildScrollView(
+                          controller: _scrollController,
+                          padding: logPadding,
+                          child: LogText(lines: _lines),
+                        ),
+                      ),
+              ),
+            ),
+            Container(
+              color: theme.colorScheme.surfaceContainer,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              child: SafeArea(
+                top: false,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '日志路径：$_path',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
+                    if (_readFailed || !controller.running)
+                      Text(
+                        _readFailed ? '日志读取失败' : '核心未运行',
+                        style: theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.error,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 }

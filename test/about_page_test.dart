@@ -1,18 +1,21 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:nekoproxy/app/app_scope.dart';
-import 'package:nekoproxy/app/widgets.dart';
 import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/features/tools/about_page.dart';
+import 'package:nekoproxy/features/tools/app_update_card.dart';
 import 'package:nekoproxy/services/app_update_service.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
+final _columnDivider = find.byKey(const ValueKey('about-column-divider'));
+
 void main() {
-  testWidgets('关于页显示应用图标并并排显示开源协议和许可证入口', (tester) async {
+  setUp(() {
     PackageInfo.setMockInitialValues(
       appName: 'NekoProxy',
       packageName: 'nekoproxy',
@@ -20,65 +23,85 @@ void main() {
       buildNumber: '1',
       buildSignature: '',
     );
+  });
+
+  testWidgets('宽版关于页并排显示版本和项目链接，许可证入口可打开', (tester) async {
     await tester.binding.setSurfaceSize(const Size(800, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     await tester.pumpWidget(
-      const MaterialApp(home: AboutPage(coreVersion: 'v1.14.4')),
+      const MaterialApp(home: AboutPage()),
       phase: EnginePhase.paint,
     );
+    await tester.pump(Duration.zero, EnginePhase.paint);
     expect(
       find.image(const AssetImage('assets/icons/app_icon.png')),
       findsOneWidget,
     );
-    expect(find.text('隐私'), findsNothing);
-    expect(find.text('开源与致谢'), findsNothing);
-    expect(find.text('许可证'), findsNothing);
-    expect(find.text('本地端口'), findsNothing);
-
-    double rightEdgeOf(String value) {
-      final render = tester
-          .state<EditableTextState>(find.text(value))
-          .renderEditable;
-      final end = render.getLocalRectForCaret(
-        TextPosition(offset: value.length),
-      );
-      return render.localToGlobal(end.topLeft).dx;
-    }
-
+    final version = find.text('当前版本');
+    final project = find.widgetWithText(ListTile, 'GitHub 仓库');
+    final icon = find.image(const AssetImage('assets/icons/app_icon.png'));
+    final license = find.widgetWithText(ListTile, 'GPL-3.0-or-later');
+    expect(find.text('1.0.0 (1)'), findsOneWidget);
+    expect(find.text('代理核心'), findsNothing);
+    expect(find.text('界面'), findsNothing);
     expect(
-      rightEdgeOf('sing-box 1.14.4'),
-      closeTo(rightEdgeOf('Flutter · Material 3'), 0.01),
-    );
-
-    final section = find.widgetWithText(SectionCard, '开源协议');
-    final license = find.descendant(
-      of: section,
-      matching: find.text('GPL-3.0-or-later'),
-    );
-    final button = find.descendant(of: section, matching: find.text('查看开源许可证'));
-    expect(
-      tester.getCenter(button).dx,
-      greaterThan(tester.getCenter(license).dx),
+      tester.getBottomLeft(icon).dy,
+      lessThan(tester.getTopLeft(version).dy),
     );
     expect(
-      tester.getCenter(button).dy,
-      closeTo(tester.getCenter(license).dy, 1),
+      tester.getTopRight(version).dx,
+      lessThan(tester.getTopLeft(project).dx),
+    );
+    expect(
+      tester.getTopLeft(project).dy,
+      closeTo(tester.getTopLeft(icon).dy, 1),
+    );
+    final divider = tester.getRect(_columnDivider);
+    expect(divider.left, greaterThan(tester.getTopRight(version).dx));
+    expect(divider.right, lessThan(tester.getTopLeft(project).dx));
+    expect(divider.top, tester.getTopLeft(project).dy);
+    expect(
+      divider.bottom,
+      greaterThanOrEqualTo(tester.getBottomLeft(license).dy),
     );
 
-    await tester.tap(button);
+    await tester.tap(license);
     await tester.pump(Duration.zero, EnginePhase.paint);
     await tester.pump(const Duration(milliseconds: 350), EnginePhase.paint);
     expect(find.byType(LicensePage), findsOneWidget);
   });
 
-  testWidgets('进入关于页自动检查一次，检查进度与右侧按钮并排', (tester) async {
-    PackageInfo.setMockInitialValues(
-      appName: 'NekoProxy',
-      packageName: 'nekoproxy',
-      version: '1.0.0',
-      buildNumber: '1',
-      buildSignature: '',
+  testWidgets('GitHub 项目链接在外部浏览器打开，并提示打开失败', (tester) async {
+    const channel = MethodChannel('plugins.flutter.io/url_launcher');
+    final messenger = tester.binding.defaultBinaryMessenger;
+    final launched = <String>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'launch');
+      expect(call.arguments['useWebView'], isFalse);
+      launched.add(call.arguments['url'] as String);
+      return launched.length < 3;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await tester.pumpWidget(
+      const MaterialApp(home: AboutPage()),
+      phase: EnginePhase.paint,
     );
+
+    for (final label in ['GitHub 仓库', '发布记录', '问题反馈']) {
+      final tile = find.widgetWithText(ListTile, label);
+      await tester.ensureVisible(tile);
+      await tester.tap(tile);
+      await tester.pump(Duration.zero, EnginePhase.paint);
+    }
+    expect(launched, [
+      'https://github.com/Sh1rokoDev/NekoProxy',
+      'https://github.com/Sh1rokoDev/NekoProxy/releases',
+      'https://github.com/Sh1rokoDev/NekoProxy/issues',
+    ]);
+    expect(find.text('无法打开链接，请稍后重试。'), findsOneWidget);
+  });
+
+  testWidgets('更新模块在窄版项目入口上方，缩放窗口时保留检查状态', (tester) async {
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _UpdateController();
@@ -93,23 +116,59 @@ void main() {
     await tester.pump(Duration.zero, EnginePhase.paint);
     expect(controller.checks, 1);
 
-    final button = find.widgetWithText(TextButton, '检查更新');
+    final button = find.widgetWithText(OutlinedButton, '检查更新');
     final progress = find.byType(LinearProgressIndicator);
-    expect(tester.widget<TextButton>(button).onPressed, isNull);
+    final version = find.text('1.0.0 (1)');
+    final project = find.widgetWithText(ListTile, 'GitHub 仓库');
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
     final buttonRect = tester.getRect(button);
     final progressRect = tester.getRect(progress);
-    final titleRect = tester.getRect(find.text('应用更新'));
-    expect(buttonRect.top, greaterThan(titleRect.bottom));
-    expect(buttonRect.left, greaterThan(progressRect.right));
-    expect(buttonRect.top, lessThan(progressRect.center.dy));
-    expect(buttonRect.bottom, greaterThan(progressRect.center.dy));
+    expect(_columnDivider, findsNothing);
+    expect(buttonRect.left, greaterThan(tester.getTopRight(version).dx));
+    expect(progressRect.top, greaterThan(buttonRect.bottom));
+    expect(progressRect.bottom, lessThan(tester.getTopLeft(project).dy));
+
+    await tester.binding.setSurfaceSize(const Size(800, 800));
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    expect(_columnDivider, findsOneWidget);
+    expect(
+      tester.getTopRight(progress).dx,
+      lessThan(tester.getTopLeft(project).dx),
+    );
+    expect(controller.checks, 1);
+    expect(tester.widget<OutlinedButton>(button).onPressed, isNull);
+    final updater = find.byType(AppUpdateCard);
+    expect(
+      tester.getRect(_columnDivider).bottom,
+      tester.getRect(updater).bottom,
+    );
 
     controller.result.complete(null);
     await tester.pump(Duration.zero, EnginePhase.paint);
-    final statusRect = tester.getRect(find.text('没有可用的新版本。'));
-    final settledButtonRect = tester.getRect(button);
-    expect(settledButtonRect.left, greaterThan(statusRect.right));
-    expect(settledButtonRect.center.dy, closeTo(statusRect.center.dy, 1));
+    final status = find.text('没有可用的新版本。');
+    expect(
+      tester.getRect(_columnDivider).bottom,
+      tester.getRect(status).bottom,
+    );
+
+    await tester.binding.setSurfaceSize(const Size(320, 800));
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    tester.platformDispatcher.textScaleFactorTestValue = 2;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pump(Duration.zero, EnginePhase.paint);
+    expect(_columnDivider, findsNothing);
+    final icon = find.image(const AssetImage('assets/icons/app_icon.png'));
+    expect(
+      tester.getBottomLeft(icon).dy,
+      lessThan(tester.getTopLeft(find.text('NekoProxy')).dy),
+    );
+    expect(tester.takeException(), isNull);
+    tester.platformDispatcher.clearTextScaleFactorTestValue();
+    await tester.pump(Duration.zero, EnginePhase.paint);
+
+    final statusRect = tester.getRect(status);
+    expect(statusRect.top, greaterThan(tester.getBottomRight(button).dy));
+    expect(statusRect.bottom, lessThan(tester.getTopLeft(project).dy));
     expect(controller.checks, 1);
 
     await tester.tap(button);
@@ -123,13 +182,6 @@ void main() {
   }, skip: !Platform.isWindows && !Platform.isAndroid);
 
   testWidgets('更新检查出现未知异常时显示兜底提示', (tester) async {
-    PackageInfo.setMockInitialValues(
-      appName: 'NekoProxy',
-      packageName: 'nekoproxy',
-      version: '1.0.0',
-      buildNumber: '1',
-      buildSignature: '',
-    );
     await tester.binding.setSurfaceSize(const Size(390, 844));
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final controller = _FailingUpdateController();
@@ -137,7 +189,7 @@ void main() {
     await tester.pumpWidget(
       AppScope(
         controller: controller,
-        child: const MaterialApp(home: AboutPage(coreVersion: 'v1.14.4')),
+        child: const MaterialApp(home: AboutPage()),
       ),
       phase: EnginePhase.paint,
     );

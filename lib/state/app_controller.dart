@@ -141,6 +141,7 @@ class AppController extends ChangeNotifier {
   final Duration _subscriptionDownloadTimeout;
   Future<void>? _initializing;
   bool _replacingSnapshot = false;
+  Completer<void>? _appearanceSave;
   List<TrafficSample> samples = const [];
   DateTime? connectedAt;
   ExitInfo? exitInfo;
@@ -777,6 +778,7 @@ class AppController extends ChangeNotifier {
     bool removing = false,
     bool allowMissing = false,
   }) async {
+    if (_appearanceSave case final save?) await save.future;
     if (busy || _rebuilding || _changingWireGuard) {
       throw const ConfigCompileException('正在切换连接，请稍后重试。');
     }
@@ -1376,6 +1378,7 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> saveAdvancedConfig(AdvancedConfigMode mode, String text) async {
+    if (_appearanceSave case final save?) await save.future;
     if (_closing ||
         busy ||
         _replacingSnapshot ||
@@ -2688,9 +2691,59 @@ class AppController extends ChangeNotifier {
     _publishSettings();
   }
 
+  Future<void> setAppearance({
+    ThemePreference? theme,
+    int? seedColor,
+    int? uiScalePercent,
+  }) async {
+    if (_appearanceSave != null ||
+        _replacingSnapshot ||
+        _closing ||
+        _disposed) {
+      throw StateError('暂时无法保存主题设置');
+    }
+    if (uiScalePercent != null &&
+        !AppSettings.isValidUiScalePercent(uiScalePercent)) {
+      throw ArgumentError.value(uiScalePercent, 'uiScalePercent');
+    }
+    final save = Completer<void>();
+    _appearanceSave = save;
+    try {
+      if (_configApply != null) await _waitForAdvancedConfig();
+      if (_changingWireGuard || _replacingSnapshot || _closing || _disposed) {
+        throw StateError('暂时无法保存主题设置');
+      }
+      final current = settings;
+      final nextTheme = theme ?? current.theme;
+      final nextColor = seedColor ?? current.seedColor;
+      final nextScale = uiScalePercent ?? current.uiScalePercent;
+      if (nextTheme == current.theme &&
+          nextColor == current.seedColor &&
+          nextScale == current.uiScalePercent) {
+        return;
+      }
+
+      final draft = AppSnapshot.fromJson(snapshot.toJson());
+      draft.settings
+        ..theme = nextTheme
+        ..seedColor = nextColor
+        ..uiScalePercent = nextScale;
+      await storage.save(draft);
+      current
+        ..theme = nextTheme
+        ..seedColor = nextColor
+        ..uiScalePercent = nextScale;
+      if (identical(current, settings)) _publishSettings();
+    } finally {
+      _appearanceSave = null;
+      save.complete();
+    }
+  }
+
   Future<void> _saveSnapshot(AppSnapshot source) async {
-    // Wait for the config commit before AppStorage captures the snapshot.
+    // Capture committed values even when a separate draft is being written.
     if (_configApply != null) await _waitForAdvancedConfig();
+    if (_appearanceSave case final save?) await save.future;
     await storage.save(source);
   }
 
@@ -2714,6 +2767,7 @@ class AppController extends ChangeNotifier {
     _cancelNodeTests();
     await _connecting;
     await _waitForAdvancedConfig();
+    if (_appearanceSave case final save?) await save.future;
     if (!initialized) return;
     await _restoreSystemProxy();
     await _stopTemporaryTestRuntime();

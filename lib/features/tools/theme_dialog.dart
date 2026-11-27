@@ -153,37 +153,44 @@ class _ThemeDialogState extends State<ThemeDialog> {
                 spacing: 10,
                 children: [
                   Expanded(
-                    child: Semantics(
-                      label: '界面缩放',
-                      child: SliderTheme(
-                        data: theme.sliderTheme.copyWith(
-                          trackHeight: 4,
-                          trackShape: const RoundedRectSliderTrackShape(),
-                          thumbShape: const RoundSliderThumbShape(
-                            enabledThumbRadius: 7,
-                            elevation: 0,
-                            pressedElevation: 0,
+                    // Keep the Slider's value-indicator portal in the dialog
+                    // subtree during its entrance (Flutter #190357).
+                    child: Overlay.wrap(
+                      alwaysSizeToContent: true,
+                      clipBehavior: Clip.none,
+                      child: Semantics(
+                        label: '界面缩放',
+                        child: SliderTheme(
+                          data: theme.sliderTheme.copyWith(
+                            trackHeight: 4,
+                            trackShape: const RoundedRectSliderTrackShape(),
+                            thumbShape: const RoundSliderThumbShape(
+                              enabledThumbRadius: 7,
+                              elevation: 0,
+                              pressedElevation: 0,
+                            ),
+                            tickMarkShape: SliderTickMarkShape.noTickMark,
+                            inactiveTrackColor: colors.outlineVariant,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
                           ),
-                          tickMarkShape: SliderTickMarkShape.noTickMark,
-                          inactiveTrackColor: colors.outlineVariant,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                        ),
-                        child: Slider(
-                          value: scale.toDouble(),
-                          min: AppSettings.minUiScalePercent.toDouble(),
-                          max: AppSettings.maxUiScalePercent.toDouble(),
-                          divisions:
-                              (AppSettings.maxUiScalePercent -
-                                  AppSettings.minUiScalePercent) ~/
-                              AppSettings.uiScaleStep,
-                          semanticFormatterCallback: (value) =>
-                              '${value.round()}%',
-                          onChanged: _saving
-                              ? null
-                              : (value) =>
-                                    setState(() => _scaleDraft = value.round()),
-                          onChangeEnd: (value) =>
-                              _save(uiScalePercent: value.round()),
+                          child: Slider(
+                            value: scale.toDouble(),
+                            min: AppSettings.minUiScalePercent.toDouble(),
+                            max: AppSettings.maxUiScalePercent.toDouble(),
+                            divisions:
+                                (AppSettings.maxUiScalePercent -
+                                    AppSettings.minUiScalePercent) ~/
+                                AppSettings.uiScaleStep,
+                            semanticFormatterCallback: (value) =>
+                                '${value.round()}%',
+                            onChanged: _saving
+                                ? null
+                                : (value) => setState(
+                                    () => _scaleDraft = value.round(),
+                                  ),
+                            onChangeEnd: (value) =>
+                                _save(uiScalePercent: value.round()),
+                          ),
                         ),
                       ),
                     ),

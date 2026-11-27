@@ -71,13 +71,12 @@ class PageFrame extends StatelessWidget {
   final Widget? actions;
   final bool wrapHeader;
 
-  static const headerGap = 20.0;
   static const maxContentWidth = 1120.0;
-  static const _fadeTail = 12.0;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final rowHeight = PageHeaderLayout.rowHeightOf(context);
     // Scaffold reports the floating dock's height without shrinking the viewport.
     final dockInset = MediaQuery.paddingOf(context).bottom;
     final body = CustomScrollView(
@@ -90,7 +89,7 @@ class PageFrame extends StatelessWidget {
                 top: 0,
                 left: 0,
                 right: 0,
-                bottom: -_fadeTail,
+                bottom: -PageHeaderLayout.fadeTail,
                 child: HeaderFrost(),
               ),
               SafeArea(
@@ -98,12 +97,15 @@ class PageFrame extends StatelessWidget {
                 right: false,
                 bottom: false,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 20, 24, headerGap),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 24,
+                    vertical: PageHeaderLayout.verticalPadding,
+                  ),
                   child: _constrainWidth(
                     Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [_buildHeader(theme), ?headerBottom],
+                      children: [_buildHeader(theme, rowHeight), ?headerBottom],
                     ),
                   ),
                 ),
@@ -148,38 +150,37 @@ class PageFrame extends StatelessWidget {
     ),
   );
 
-  Widget _buildHeader(ThemeData theme) {
+  Widget _buildHeader(ThemeData theme, double rowHeight) {
+    final heading =
+        titleWidget ??
+        Text(
+          title,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.headlineSmall,
+        );
     if (wrapHeader) {
-      return ConstrainedBox(
-        constraints: const BoxConstraints(minHeight: 48),
-        child: OverflowBar(
-          alignment: MainAxisAlignment.spaceBetween,
-          overflowAlignment: OverflowBarAlignment.end,
-          spacing: 12,
-          overflowSpacing: 12,
-          children: [
-            titleWidget ?? Text(title, style: theme.textTheme.headlineSmall),
-            if (actions != null)
-              FittedBox(fit: BoxFit.scaleDown, child: actions!),
-          ],
-        ),
+      return OverflowBar(
+        alignment: MainAxisAlignment.spaceBetween,
+        overflowAlignment: OverflowBarAlignment.end,
+        spacing: 12,
+        overflowSpacing: PageHeaderLayout.rowGap,
+        children: [
+          SizedBox(
+            height: rowHeight,
+            child: Center(widthFactor: 1, child: heading),
+          ),
+          if (actions != null)
+            FittedBox(fit: BoxFit.scaleDown, child: actions!),
+        ],
       );
     }
     return SizedBox(
-      height: 48,
+      height: rowHeight,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          Expanded(
-            child:
-                titleWidget ??
-                Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.headlineSmall,
-                ),
-          ),
+          Expanded(child: heading),
           if (actions != null) ...[const SizedBox(width: 12), actions!],
         ],
       ),

@@ -51,7 +51,7 @@ class _DnsPageState extends State<DnsPage> {
     return HeaderScaffold(
       title: const Text('DNS'),
       body: (headerInset) => SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
+        padding: EdgeInsets.fromLTRB(24, headerInset, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(

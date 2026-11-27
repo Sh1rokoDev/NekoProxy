@@ -36,7 +36,7 @@ class _BackupPageState extends State<BackupPage> {
       title: const Text('备份与恢复'),
       maxContentWidth: 760,
       body: (headerInset) => SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
+        padding: EdgeInsets.fromLTRB(24, headerInset, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 760),

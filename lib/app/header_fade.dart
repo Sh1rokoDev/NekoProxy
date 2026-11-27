@@ -1,8 +1,23 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:material_ui/material_ui.dart';
 
 import 'header_icon_button.dart';
+
+abstract final class PageHeaderLayout {
+  static const verticalPadding = 20.0;
+  static const rowGap = 12.0;
+  static const fadeTail = 12.0;
+
+  static double rowHeightOf(BuildContext context) {
+    final style = Theme.of(context).textTheme.headlineSmall;
+    final fontSize = MediaQuery.textScalerOf(context)
+        .scale(style?.fontSize ?? 24);
+    final lineHeight = fontSize * (style?.height ?? 4 / 3);
+    return math.max(48, lineHeight.ceilToDouble());
+  }
+}
 
 /// A full-height viewport with a frosted overlay starting at its top edge.
 class HeaderFade extends StatelessWidget {
@@ -92,7 +107,6 @@ class HeaderScaffold extends StatelessWidget {
     this.actions = const [],
     this.floatingActionButton,
     this.maxContentWidth = defaultContentWidth,
-    this.fadeTail = 20,
     this.scrollsBehindHeader = true,
   });
 
@@ -106,7 +120,6 @@ class HeaderScaffold extends StatelessWidget {
   final Widget? floatingActionButton;
 
   final double maxContentWidth;
-  final double fadeTail;
   final bool scrollsBehindHeader;
 
   @override
@@ -116,6 +129,9 @@ class HeaderScaffold extends StatelessWidget {
     final theme = Theme.of(context);
     final localizations = MaterialLocalizations.of(context);
     final close = route is PageRoute<dynamic> && route.fullscreenDialog;
+    final textScaler = MediaQuery.textScalerOf(context);
+    final rowHeight = PageHeaderLayout.rowHeightOf(context);
+    const verticalPadding = PageHeaderLayout.verticalPadding;
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -125,8 +141,7 @@ class HeaderScaffold extends StatelessWidget {
         );
         final narrowActions =
             actions.length >= 3 &&
-            constraints.maxWidth <
-                400 * MediaQuery.textScalerOf(context).scale(1);
+            constraints.maxWidth < 400 * textScaler.scale(1);
         final toolbarActions = [
           for (final (index, action) in actions.indexed) ...[
             if (index > 0) const SizedBox(width: _actionGap),
@@ -137,10 +152,14 @@ class HeaderScaffold extends StatelessWidget {
           extendBodyBehindAppBar: true,
           floatingActionButton: floatingActionButton,
           appBar: AppBar(
+            toolbarHeight: verticalPadding + rowHeight,
             automaticallyImplyLeading: false,
             leading: hasBack
                 ? Padding(
-                    padding: EdgeInsetsDirectional.only(start: gutter),
+                    padding: EdgeInsetsDirectional.only(
+                      top: verticalPadding,
+                      start: gutter,
+                    ),
                     child: Center(
                       child: HeaderIconButton(
                         icon: close
@@ -155,30 +174,46 @@ class HeaderScaffold extends StatelessWidget {
                   )
                 : null,
             leadingWidth: gutter + HeaderIconButton.size,
-            title: title,
-            titleTextStyle: theme.textTheme.titleLarge,
+            title: Padding(
+              padding: const EdgeInsets.only(top: verticalPadding),
+              child: Builder(
+                // AppBar clamps title scaling. Use the same scale as PageFrame.
+                builder: (context) => MediaQuery(
+                  data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+                  child: DefaultTextStyle.merge(maxLines: 1, child: title),
+                ),
+              ),
+            ),
+            titleTextStyle: theme.textTheme.headlineSmall,
             titleSpacing: hasBack ? 12 : gutter,
             centerTitle: false,
             actions: narrowActions ? null : toolbarActions,
-            actionsPadding: EdgeInsetsDirectional.only(end: gutter),
-            bottom: narrowActions
-                ? PreferredSize(
-                    preferredSize: const Size.fromHeight(
-                      HeaderIconButton.size + _actionGap,
-                    ),
-                    child: Padding(
-                      padding: EdgeInsetsDirectional.only(
-                        start: gutter,
-                        end: gutter,
-                        bottom: _actionGap,
-                      ),
-                      child: Row(
+            actionsPadding: EdgeInsetsDirectional.only(
+              top: verticalPadding,
+              end: gutter,
+            ),
+            bottom: PreferredSize(
+              preferredSize: Size.fromHeight(
+                verticalPadding +
+                    (narrowActions
+                        ? PageHeaderLayout.rowGap + HeaderIconButton.size
+                        : 0),
+              ),
+              child: Padding(
+                padding: EdgeInsetsDirectional.only(
+                  start: gutter,
+                  end: gutter,
+                  top: narrowActions ? PageHeaderLayout.rowGap : 0,
+                  bottom: verticalPadding,
+                ),
+                child: narrowActions
+                    ? Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: toolbarActions,
-                      ),
-                    ),
-                  )
-                : null,
+                      )
+                    : const SizedBox.shrink(),
+              ),
+            ),
             forceMaterialTransparency: true,
           ),
           body: Builder(
@@ -186,7 +221,7 @@ class HeaderScaffold extends StatelessWidget {
               final inset = MediaQuery.paddingOf(context).top;
               return SizedBox.expand(
                 child: HeaderFade(
-                  extent: inset + fadeTail,
+                  extent: inset + PageHeaderLayout.fadeTail,
                   child: MediaQuery.removePadding(
                     context: context,
                     removeTop: true,

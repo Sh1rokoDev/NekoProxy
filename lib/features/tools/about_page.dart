@@ -59,7 +59,7 @@ class _AboutPageState extends State<AboutPage> {
       title: const Text('关于 NekoProxy'),
       maxContentWidth: 720,
       body: (headerInset) => SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
+        padding: EdgeInsets.fromLTRB(24, headerInset, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 720),

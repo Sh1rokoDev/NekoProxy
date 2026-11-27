@@ -84,7 +84,6 @@ class _ConfigPageState extends State<ConfigPage> {
       ),
       maxContentWidth: 980,
       scrollsBehindHeader: false,
-      fadeTail: 8,
       body: (_) => Padding(
         padding: EdgeInsets.fromLTRB(
           24,

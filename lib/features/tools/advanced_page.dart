@@ -52,7 +52,7 @@ class _AdvancedPageState extends State<AdvancedPage> {
     return HeaderScaffold(
       title: const Text('运行参数'),
       body: (headerInset) => SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
+        padding: EdgeInsets.fromLTRB(24, headerInset, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(

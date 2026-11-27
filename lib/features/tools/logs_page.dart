@@ -282,7 +282,6 @@ class _LogsPageState extends State<LogsPage> {
         ),
       ],
       scrollsBehindHeader: false,
-      fadeTail: 8,
       body: (_) => Column(
         children: [
           Container(

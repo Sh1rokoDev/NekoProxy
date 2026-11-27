@@ -45,6 +45,61 @@ void main() {
     expect(tester.getTopLeft(find.byKey(content)).dy, titleBounds.center.dy);
   });
 
+  testWidgets('主页面和详情页的标题、按钮及模糊层上下边界一致', (tester) async {
+    const title = '页面标题';
+    const action = HeaderIconButton(icon: Icons.refresh, tooltip: '刷新');
+    addTearDown(tester.view.resetPadding);
+
+    for (final (topInset, scale) in [(0.0, 1.0), (24.0, 1.0), (24.0, 2.0)]) {
+      tester.view.padding = FakeViewPadding(
+        top: topInset * tester.view.devicePixelRatio,
+      );
+      Widget withTextScale(BuildContext context, Widget? child) => MediaQuery(
+        data: MediaQuery.of(context)
+            .copyWith(textScaler: TextScaler.linear(scale)),
+        child: child!,
+      );
+
+      final heading = find.text(title);
+      final button = find.byTooltip('刷新');
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: withTextScale,
+          home: const Scaffold(
+            body: PageFrame(
+              title: title,
+              wrapHeader: true,
+              actions: action,
+              child: SizedBox(height: 200),
+            ),
+          ),
+        ),
+      );
+      final titleBounds = tester.getRect(heading);
+      final buttonBounds = tester.getRect(button);
+      final frost = tester.getRect(find.byType(HeaderFrost));
+      expect(frost.top, 0);
+      if (scale == 1) {
+        expect(buttonBounds.top, topInset + 23);
+        expect(frost.bottom, topInset + 100);
+      }
+
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: withTextScale,
+          home: HeaderScaffold(
+            title: const Text(title),
+            actions: const [action],
+            body: (_) => const SizedBox.expand(),
+          ),
+        ),
+      );
+      expect(tester.getRect(heading), titleBounds);
+      expect(tester.getRect(button), buttonBounds);
+      expect(tester.getRect(find.byType(HeaderFrost)), frost);
+    }
+  });
+
   testWidgets('详情页的模糊层从状态栏顶部开始，标题避开系统区域', (tester) async {
     const topInset = 24.0;
     tester.view.padding = FakeViewPadding(
@@ -57,7 +112,7 @@ void main() {
         home: HeaderScaffold(
           title: const Text('详情'),
           body: (headerInset) => ListView(
-            padding: EdgeInsets.only(top: headerInset + 20),
+            padding: EdgeInsets.only(top: headerInset),
             children: const [SizedBox(key: firstRow, height: 1500)],
           ),
         ),
@@ -66,13 +121,13 @@ void main() {
 
     final frostBounds = tester.getRect(find.byType(HeaderFrost));
     expect(frostBounds.top, 0);
-    expect(frostBounds.bottom, topInset + kToolbarHeight + 20);
+    expect(frostBounds.bottom, topInset + 100);
     expect(tester.getTopLeft(find.text('详情')).dy, greaterThan(topInset));
-    expect(tester.getTopLeft(find.byKey(firstRow)).dy, frostBounds.bottom);
+    expect(tester.getTopLeft(find.byKey(firstRow)).dy, topInset + 88);
 
     tester.state<ScrollableState>(find.byType(Scrollable)).position.jumpTo(72);
     await tester.pump();
-    expect(tester.getTopLeft(find.byKey(firstRow)).dy, frostBounds.bottom - 72);
+    expect(tester.getTopLeft(find.byKey(firstRow)).dy, topInset + 16);
     expect(tester.getRect(find.byType(HeaderFrost)), frostBounds);
   });
 
@@ -119,19 +174,19 @@ void main() {
 
     final title = find.text('当前连接');
     final refresh = find.byTooltip('刷新');
-    expect(
-      tester.getTopLeft(refresh).dy,
-      greaterThan(tester.getRect(title).bottom),
-    );
+    final narrowTitleCenter = tester.getCenter(title).dy;
+    expect(tester.getCenter(find.byTooltip('Back')).dy, narrowTitleCenter);
+    expect(tester.getTopLeft(refresh).dy, 80);
     expect(
       tester.getTopLeft(find.text('连接列表')).dy,
-      greaterThan(tester.getRect(refresh).bottom),
+      tester.getRect(refresh).bottom + 20,
     );
     await tester.tap(refresh);
     expect(refreshed, isTrue);
 
     await tester.binding.setSurfaceSize(const Size(1200, 700));
     await tester.pumpAndSettle();
+    expect(tester.getCenter(title).dy, narrowTitleCenter);
     expect(
       tester.getCenter(refresh).dy,
       closeTo(tester.getCenter(title).dy, 1),

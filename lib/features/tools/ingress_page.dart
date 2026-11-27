@@ -66,7 +66,7 @@ class _IngressPageState extends State<IngressPage> {
     return HeaderScaffold(
       title: const Text('本地监听与 TUN'),
       body: (headerInset) => SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
+        padding: EdgeInsets.fromLTRB(24, headerInset, 24, 24),
         child: Center(
           child: ConstrainedBox(
             constraints: const BoxConstraints(

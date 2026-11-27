@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:nekoproxy/app/app.dart';
+import 'package:nekoproxy/app/header_fade.dart';
+import 'package:nekoproxy/app/header_icon_button.dart';
 import 'package:nekoproxy/app/navigation_dock.dart';
 import 'package:nekoproxy/app/sliding_segmented_control.dart';
 import 'package:nekoproxy/features/home/home_page.dart';
@@ -10,6 +12,55 @@ import 'package:nekoproxy/features/tools/tools_page.dart';
 import 'package:nekoproxy/state/app_controller.dart';
 
 void main() {
+  testWidgets('更多与当前连接距窗口顶部的标题和按钮间距一致', (tester) async {
+    tester.view.devicePixelRatio = 1.5;
+    tester.view.physicalSize = const Size(912, 1200);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    final controller = AppController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(NekoProxyApp(controller: controller));
+    await tester.pumpAndSettle();
+    await tester.tap(_destination('更多'));
+    await tester.pumpAndSettle();
+
+    final toolsPage = find.byType(ToolsPage);
+    final toolsTitle = tester.getRect(
+      find.descendant(of: toolsPage, matching: find.text('更多')),
+    );
+    final toolsAction = tester.getRect(
+      find
+          .descendant(of: toolsPage, matching: find.byType(HeaderIconButton))
+          .first,
+    );
+    final toolsHeader = tester.getRect(find.byType(HeaderFrost));
+    final entry = find.widgetWithText(ListTile, '当前连接');
+    await Scrollable.ensureVisible(tester.element(entry), alignment: 0.5);
+    await tester.pumpAndSettle();
+    await tester.tap(entry);
+    await tester.pumpAndSettle();
+
+    final details = find.byType(HeaderScaffold);
+    final detailsTitle = tester.getRect(
+      find.descendant(of: details, matching: find.text('当前连接')),
+    );
+    final back = tester.getRect(
+      find.ancestor(
+        of: find.byIcon(Icons.arrow_back_rounded),
+        matching: find.byType(HeaderIconButton),
+      ),
+    );
+    final detailsHeader = tester.getRect(
+      find.descendant(of: details, matching: find.byType(HeaderFrost)),
+    );
+    expect(detailsTitle.top, toolsTitle.top);
+    expect(detailsTitle.bottom, toolsTitle.bottom);
+    expect(back.top, toolsAction.top);
+    expect(back.bottom, toolsAction.bottom);
+    expect(detailsHeader.top, toolsHeader.top);
+    expect(detailsHeader.bottom, toolsHeader.bottom);
+  });
+
   testWidgets('底栏随按钮数量增宽，空间不足时均分可用宽度', (tester) async {
     const labels = ['首页', '节点', '规则', '更多', '设置'];
 

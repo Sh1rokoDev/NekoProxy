@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../app/header_fade.dart';
+
 class WireGuardQrScanner extends StatefulWidget {
   const WireGuardQrScanner({super.key});
 
@@ -12,9 +14,10 @@ class _WireGuardQrScannerState extends State<WireGuardQrScanner> {
   bool _finished = false;
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('扫描 WireGuard 二维码')),
-    body: MobileScanner(
+  Widget build(BuildContext context) => HeaderScaffold(
+    title: const Text('扫描 WireGuard 二维码'),
+    scrollsBehindHeader: false,
+    body: (_) => MobileScanner(
       onDetect: (capture) {
         if (_finished || ModalRoute.of(context)?.isCurrent != true) return;
         for (final barcode in capture.barcodes) {

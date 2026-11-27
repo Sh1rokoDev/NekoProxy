@@ -194,7 +194,7 @@ class ServiceStatusPage extends StatelessWidget {
     return HeaderScaffold(
       title: const Text('服务状态'),
       body: (headerInset) => ListView(
-        padding: EdgeInsets.fromLTRB(24, headerInset + 24, 24, 24),
+        padding: EdgeInsets.fromLTRB(24, headerInset, 24, 24),
         children: [
           Center(
             child: ConstrainedBox(

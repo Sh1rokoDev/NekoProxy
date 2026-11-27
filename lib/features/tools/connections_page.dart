@@ -70,7 +70,7 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                   .where((item) => _matchesSearch(controller, item))
                   .toList();
         Widget emptyState(double headerInset, Widget child) => Padding(
-          padding: EdgeInsets.fromLTRB(24, headerInset + 16, 24, 24),
+          padding: EdgeInsets.fromLTRB(24, headerInset, 24, 24),
           child: Center(
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 480),
@@ -116,7 +116,6 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
             ),
           ],
           maxContentWidth: PageFrame.maxContentWidth,
-          fadeTail: 16,
           body: (headerInset) => !controller.running
               ? emptyState(
                   headerInset,
@@ -138,7 +137,7 @@ class _ConnectionsPageState extends State<ConnectionsPage> {
                   ),
                 )
               : ListView.separated(
-                  padding: EdgeInsets.fromLTRB(24, headerInset + 16, 24, 32),
+                  padding: EdgeInsets.fromLTRB(24, headerInset, 24, 32),
                   itemCount: visibleConnections.length,
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {

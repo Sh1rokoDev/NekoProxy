@@ -50,7 +50,7 @@ class _OutboundSettingsPageState extends State<OutboundSettingsPage> {
       return HeaderScaffold(
         title: const Text('高级'),
         body: (inset) => ListView(
-          padding: EdgeInsets.fromLTRB(24, inset + 24, 24, 24),
+          padding: EdgeInsets.fromLTRB(24, inset, 24, 24),
           children: [
             Center(
               child: ConstrainedBox(

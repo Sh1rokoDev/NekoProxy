@@ -23,7 +23,7 @@ $sources = @{
 }
 $headers = @{ "User-Agent" = "NekoProxy-build" }
 
-function Get-ReleaseMetadata($source) {
+function Get-PublicReleaseMetadata($source) {
     $releasePath = "/v2fly/$($source.Repo)/releases"
     $tag = Get-LatestGitHubReleaseTag "v2fly/$($source.Repo)"
 
@@ -56,6 +56,40 @@ function Get-ReleaseMetadata($source) {
         throw "Invalid release asset size for $($source.Repo)."
     }
     return [ordered]@{ tag = $tag; sha256 = $digest[0].Groups[1].Value; size = $size }
+}
+
+function Get-ReleaseMetadata($source) {
+    if ([string]::IsNullOrWhiteSpace($env:NEKO_RULES_GITHUB_TOKEN)) {
+        return Get-PublicReleaseMetadata $source
+    }
+
+    $repository = "v2fly/$($source.Repo)"
+    $token = ConvertTo-SecureString $env:NEKO_RULES_GITHUB_TOKEN -AsPlainText -Force
+    try {
+        $release = Invoke-RestMethod "https://api.github.com/repos/$repository/releases/latest" `
+            -Authentication Bearer -Token $token -TimeoutSec 30 -MaximumRedirection 0 `
+            -Headers @{ Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2026-03-10' }
+    } catch {
+        Write-Warning "Cannot query the GitHub API for $repository. Using the public release page."
+        return Get-PublicReleaseMetadata $source
+    }
+
+    $tag = $release.tag_name
+    if ($tag -isnot [string] -or $tag -cnotmatch '\A[A-Za-z0-9._-]+\z' -or $tag -in @('.', '..')) {
+        throw "Invalid release tag for $repository."
+    }
+    $assets = @($release.assets | Where-Object { $_.name -ceq $source.Asset -and $_.state -ceq 'uploaded' })
+    if ($assets.Count -ne 1) {
+        throw "Missing or ambiguous release asset for $repository."
+    }
+    $asset = $assets[0]
+    $digest = [regex]::Match([string]$asset.digest, '\Asha256:([a-f0-9]{64})\z')
+    $size = 0L
+    if (-not $digest.Success -or -not [long]::TryParse([string]$asset.size, [ref]$size) -or
+        $size -lt 1 -or $size -gt 64MB) {
+        throw "Invalid release asset size or SHA-256 for $repository."
+    }
+    return [ordered]@{ tag = $tag; sha256 = $digest.Groups[1].Value; size = $size }
 }
 
 $previous = $null

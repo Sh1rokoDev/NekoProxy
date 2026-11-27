@@ -13,9 +13,11 @@ CRCCheck on
 !ifndef DISPLAY_VERSION
   !error "DISPLAY_VERSION is required. Use scripts/package-windows.ps1."
 !endif
+!ifndef PAYLOAD_DIR
+  !error "PAYLOAD_DIR is required. Use scripts/package-windows.ps1."
+!endif
 !define APP_EXE "nekoproxy.exe"
 !define ROOT "${__FILEDIR__}\.."
-!define RELEASE "${ROOT}\build\windows\x64\runner\Release"
 !ifndef OUTPUT_DIR
   !define OUTPUT_DIR "${ROOT}\dist"
 !endif
@@ -43,7 +45,7 @@ VIAddVersionKey "LegalCopyright" "GPL-3.0-or-later"
 !define MUI_ICON "${ROOT}\assets\icons\app_icon.ico"
 !define MUI_UNICON "${ROOT}\assets\icons\app_icon.ico"
 
-!insertmacro MUI_PAGE_LICENSE "${ROOT}\LICENSE"
+!insertmacro MUI_PAGE_LICENSE "${PAYLOAD_DIR}\LICENSE"
 !insertmacro MUI_PAGE_COMPONENTS
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
@@ -109,14 +111,7 @@ Section "NekoProxy（必需）" SecMain
   ${EndIf}
 
   SetOutPath "$INSTDIR"
-  File /r "${RELEASE}\*.*"
-  File "${ROOT}\LICENSE"
-  File "${ROOT}\README.md"
-  SetOutPath "$INSTDIR\third_party"
-  File "${ROOT}\third_party\THIRD_PARTY_NOTICES.md"
-  File "${ROOT}\third_party\wintun-LICENSE.txt"
-  File "${ROOT}\third_party\wfp-LICENSE.txt"
-  SetOutPath "$INSTDIR"
+  File /r "${PAYLOAD_DIR}\*.*"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   WriteRegStr HKLM "${REG_ROOT}" "InstallDir" "$INSTDIR"

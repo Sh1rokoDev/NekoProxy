@@ -41,6 +41,7 @@ function Invoke-WithLatestNekoRuntime {
     $stage = New-Item -ItemType Directory -Path (Join-Path $tempRoot "nekoproxy-runtime-$([guid]::NewGuid().ToString('N'))")
     $previousWorkspace = $env:GOWORK
     $previousToolchain = $env:GOTOOLCHAIN
+    $previousGoFlags = $env:GOFLAGS
     try {
         $env:GOWORK = 'off'
         $env:GOTOOLCHAIN = 'local'
@@ -48,10 +49,16 @@ function Invoke-WithLatestNekoRuntime {
         $runtime = Join-Path $stage.FullName 'runtime'
         Push-Location $runtime
         try {
+            $goFlags = & $go env GOFLAGS
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot read Go build flags.' }
+            # Update dependencies on demand, only in this private release module.
+            $env:GOFLAGS = "$goFlags -mod=mod".Trim()
             & $go mod edit '-dropreplace=github.com/sagernet/sing-box' "-require=github.com/sagernet/sing-box@$tag"
             if ($LASTEXITCODE -ne 0) { throw "Cannot configure the sing-box $tag build." }
-            & $go mod tidy
-            if ($LASTEXITCODE -ne 0) { throw "Cannot resolve dependencies for sing-box $tag." }
+
+            Write-Host "Building with sing-box $tag."
+            & $Build $runtime $tag
+
             $resolved = & $go list -m -f '{{.Version}}{{if .Replace}} (replaced){{end}}' github.com/sagernet/sing-box
             if ($LASTEXITCODE -ne 0 -or $resolved -cne $tag) {
                 throw "The build did not resolve the latest sing-box release $tag."
@@ -59,11 +66,10 @@ function Invoke-WithLatestNekoRuntime {
         } finally {
             Pop-Location
         }
-        Write-Host "Building with sing-box $tag."
-        & $Build $runtime $tag
     } finally {
         $env:GOWORK = $previousWorkspace
         $env:GOTOOLCHAIN = $previousToolchain
+        $env:GOFLAGS = $previousGoFlags
         $resolvedStage = (Resolve-Path -LiteralPath $stage.FullName).Path
         if ((Split-Path -Parent $resolvedStage) -ieq $tempRoot.TrimEnd([IO.Path]::DirectorySeparatorChar)) {
             Remove-Item -LiteralPath $resolvedStage -Recurse -Force

@@ -27,7 +27,7 @@ try {
 
         Push-Location $SourceDir
         try {
-            & $go test -mod=readonly -tags $tags ./...
+            & $go test -tags $tags ./...
             if ($LASTEXITCODE -ne 0) { throw 'Linux runtime tests failed.' }
             & $go build -tags $tags -trimpath -buildvcs=false -ldflags "-s -w -X main.version=$($version.Version)" -o $worker ./cmd/worker
             if ($LASTEXITCODE -ne 0) { throw 'Linux worker build failed.' }

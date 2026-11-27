@@ -16,10 +16,17 @@ jobs:
   build:
     if: ${{ !github.event.deleted }}
     strategy:
+      fail-fast: false
       matrix:
-        platform: [windows, android]
+        include:
+          - platform: windows
+            runner: windows-2025
+          - platform: android
+            runner: windows-2025
+          - platform: linux
+            runner: ubuntu-24.04
     name: Build ${{ matrix.platform }}
-    runs-on: windows-2025
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     env:
       GOPROXY: https://proxy.golang.org,direct
@@ -38,16 +45,16 @@ jobs:
           if ($env:GITHUB_REF_NAME -cne "v$($version.BaseVersion)") {
             throw "Release tag must match pubspec.yaml: v$($version.BaseVersion)."
           }
+          if ($IsLinux -and (git status --porcelain)) { throw 'Release checkout must be clean.' }
 
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version: '1.27.4'
-          # The Windows and Android builds share a runner OS but compile different targets.
-          cache-dependency-path: |
-            runtime/go.sum
-            scripts/build-${{ matrix.platform }}.ps1
+          # Release tags cannot reuse each other's caches.
+          cache: false
 
       - name: Set up Flutter
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $sdk = Join-Path $env:RUNNER_TEMP 'flutter'
@@ -126,51 +133,8 @@ jobs:
             }
           }
 
-      - name: Record bundled upstream versions
-        shell: pwsh
-        run: Copy-Item -LiteralPath assets/rules/manifest.json -Destination dist/rules-manifest.json
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: ${{ matrix.platform }}
-          path: |
-            dist/NekoProxy-*.apk
-            dist/NekoProxy-*.zip
-            dist/NekoProxy-*-setup.exe
-            dist/NekoProxy-*.sha256
-            dist/rules-manifest.json
-          if-no-files-found: error
-          compression-level: 0
-
-  build-linux:
-    if: ${{ !github.event.deleted }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      GOPROXY: https://proxy.golang.org,direct
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Validate release tag
-        shell: pwsh
-        run: |
-          . ./scripts/version.ps1
-          $version = Get-NekoVersionInfo -Root $env:GITHUB_WORKSPACE
-          if ($env:GITHUB_REF_NAME -cne "v$($version.BaseVersion)") {
-            throw "Release tag must match pubspec.yaml: v$($version.BaseVersion)."
-          }
-          if (git status --porcelain) { throw 'Release checkout must be clean.' }
-
-      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
-        with:
-          go-version: '1.27.4'
-          cache-dependency-path: runtime/go.sum
-
       - name: Test the pinned development runtime
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
           git submodule update --init --depth 1 third_party/sing-box
@@ -178,6 +142,7 @@ jobs:
           go test -mod=readonly -tags with_gvisor,with_quic,with_wireguard,with_utls ./...
 
       - name: Set up Flutter and Linux build tools
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
           sudo apt-get update
@@ -186,10 +151,12 @@ jobs:
           echo "$RUNNER_TEMP/flutter/bin" >> "$GITHUB_PATH"
 
       - name: Package Linux x64
+        if: matrix.platform == 'linux'
         shell: pwsh
         run: ./scripts/package-linux.ps1
 
       - name: Verify Linux package
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
           artifact=(dist/NekoProxy-*-linux-x64.deb)
@@ -209,19 +176,27 @@ jobs:
           dart format --output=none --set-exit-if-changed lib/services/linux_system_proxy.dart test/linux_system_proxy_test.dart
           flutter test --no-pub test/linux_system_proxy_test.dart test/config_compiler_test.dart
 
+      - name: Record bundled upstream versions
+        if: matrix.platform != 'linux'
+        shell: pwsh
+        run: Copy-Item -LiteralPath assets/rules/manifest.json -Destination dist/rules-manifest.json
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: linux
+          name: ${{ matrix.platform }}
           path: |
+            dist/NekoProxy-*.apk
+            dist/NekoProxy-*.zip
+            dist/NekoProxy-*-setup.exe
             dist/NekoProxy-*-linux-x64.deb
-            dist/NekoProxy-*-linux-x64.deb.sha256
+            dist/NekoProxy-*.sha256
             dist/rules-manifest.json
           if-no-files-found: error
           compression-level: 0
 
   publish:
     if: ${{ !github.event.deleted }}
-    needs: [build, build-linux]
+    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write

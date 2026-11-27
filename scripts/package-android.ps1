@@ -20,8 +20,9 @@ if (-not (Test-Path $apk)) { throw "APK not found: $apk" }
 $apkName = "NekoProxy-$($version.Version)-android-arm64.apk"
 $target = Join-Path $DistDir $apkName
 Copy-Item $apk $target -Force
-$hash = (Get-FileHash $target -Algorithm SHA256).Hash.ToLowerInvariant()
+$checksum = Get-FileHash -LiteralPath $target -Algorithm SHA256
+$hash = $checksum.Hash.ToLowerInvariant()
 [IO.File]::WriteAllText("$target.sha256", "$hash *$apkName`n", (New-Object Text.UTF8Encoding($false)))
-Get-FileHash $target -Algorithm SHA256 | Format-List | Out-String | Write-Host
+$checksum | Format-List | Out-String | Write-Host
 Write-Host "APK: $target"
 Write-Host "SHA-256: $target.sha256"

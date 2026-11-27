@@ -92,7 +92,7 @@ Invoke-WithLatestNekoRuntime -Root $root -Build {
     $previousPath = $env:PATH
     try {
         $toolsDir = New-Item -ItemType Directory -Path (Join-Path $SourceDir "mobile-tools")
-        & $go build -mod=readonly -o $toolsDir.FullName golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
+        & $go build -o $toolsDir.FullName golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind
         if ($LASTEXITCODE -ne 0) { throw "Go mobile tool build failed" }
         $env:PATH = "$($toolsDir.FullName);$previousPath"
         $bindArgs = @(

@@ -66,6 +66,7 @@ $fileVersion = "$($version.BaseVersion).$($version.BuildNumber)"
     "/DFILE_VERSION=$fileVersion" `
     "/DDISPLAY_VERSION=$($version.Version)" `
     "/DOUTPUT_DIR=$DistDir" `
+    "/DPAYLOAD_DIR=$target" `
     (Join-Path $PSScriptRoot "installer-windows.nsi")
 if ($LASTEXITCODE -ne 0) { throw "NSIS build failed" }
 $setupName = "$packageName-setup.exe"

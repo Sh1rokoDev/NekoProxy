@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/dialogs.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/app/widgets.dart';
 import 'package:nekoproxy/data/app_storage.dart';
@@ -44,7 +45,7 @@ void main() {
     await tester.enterText(content, 'app.manual');
     await tester.tap(find.byTooltip('选择应用'));
     await tester.pumpAndSettle();
-    final picker = find.widgetWithText(AlertDialog, '选择应用');
+    final picker = find.widgetWithText(AppDialog, '选择应用');
     final search = find.descendant(
       of: picker,
       matching: find.widgetWithText(TextField, '搜索应用名或包名'),
@@ -204,7 +205,7 @@ void main() {
       expect(feedback.onTapDown, isNotNull);
       await tester.tap(row);
       await tester.pumpAndSettle();
-      expect(find.byType(AlertDialog), findsNothing);
+      expect(find.byType(AppDialog), findsNothing);
     }
     expect(find.text('核心规则'), findsNothing);
     expect(find.text('可编辑规则'), findsNothing);
@@ -243,7 +244,7 @@ void main() {
       find.descendant(of: firstCard, matching: find.byTooltip('编辑规则')),
     );
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(AlertDialog, '编辑规则'), findsOneWidget);
+    expect(find.widgetWithText(AppDialog, '编辑规则'), findsOneWidget);
     expect(find.text('匹配内容'), findsNothing);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
@@ -357,19 +358,19 @@ void main() {
     await tester.tap(find.text('识别流量协议'));
     await tester.pumpAndSettle();
     final details = find.descendant(
-      of: find.widgetWithText(AlertDialog, '识别流量协议'),
+      of: find.widgetWithText(AppDialog, '识别流量协议'),
       matching: find.byType(SelectableText),
     );
     expect(tester.widget<SelectableText>(details).data, contains('"sniff"'));
     await tester.tap(find.widgetWithText(TextButton, '关闭'));
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
 
     final add = find.widgetWithText(FloatingActionButton, '添加');
     expect(tester.getBottomRight(add), const Offset(336, 696));
     await tester.tap(add);
     await tester.pumpAndSettle();
-    expect(find.widgetWithText(AlertDialog, '添加规则'), findsOneWidget);
+    expect(find.widgetWithText(AppDialog, '添加规则'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -407,7 +408,7 @@ void main() {
     await tester.pumpAndSettle();
     final details = tester.widget<SelectableText>(
       find.descendant(
-        of: find.widgetWithText(AlertDialog, '阻断'),
+        of: find.widgetWithText(AppDialog, '阻断'),
         matching: find.byType(SelectableText),
       ),
     );

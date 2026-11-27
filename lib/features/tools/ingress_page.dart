@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../../app/app_scope.dart';
 import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
+import '../../app/theme.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
 
@@ -142,6 +143,8 @@ class _IngressPageState extends State<IngressPage> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<StackMode>(
+                        borderRadius: appMenuRadius,
+                        dropdownColor: Theme.of(context).popupMenuTheme.color,
                         initialValue: _stack,
                         decoration: const InputDecoration(labelText: '网络栈'),
                         items: const [

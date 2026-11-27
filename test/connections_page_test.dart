@@ -160,8 +160,13 @@ void main() {
     await tester.tap(details);
     await tester.pumpAndSettle();
     expect(find.text('连接详情'), findsOneWidget);
-    expect(find.textContaining('来源地址：127.0.0.1:49486'), findsOneWidget);
-    expect(find.textContaining('规则：AI 服务'), findsOneWidget);
+    final dialog = find.byType(Dialog);
+    for (final value in ['来源地址', '127.0.0.1:49486', '规则', 'AI 服务']) {
+      expect(
+        find.descendant(of: dialog, matching: find.text(value)),
+        findsOneWidget,
+      );
+    }
     await tester.tap(find.text('完成'));
     await tester.pumpAndSettle();
 

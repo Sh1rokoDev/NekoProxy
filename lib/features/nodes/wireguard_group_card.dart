@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/dialogs.dart';
 import '../../domain/models.dart';
 import '../../services/qr_service.dart';
 import '../../state/app_controller.dart';
@@ -26,7 +27,7 @@ enum _Editor { fields, source }
 Future<String?> askWireGuardGroupName(
   BuildContext context, {
   String name = '',
-}) => showDialog<String>(
+}) => showAppDialog<String>(
   context: context,
   builder: (_) => _GroupNameDialog(name: name),
 );
@@ -111,7 +112,7 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
         return;
       }
     }
-    final edited = await showDialog<WireGuardProfile>(
+    final edited = await showAppDialog<WireGuardProfile>(
       context: context,
       builder: (_) => WireGuardProfileEditor(
         profile: profile,
@@ -128,21 +129,21 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
     setState(() => _busy = true);
     try {
       final source = Platform.isAndroid
-          ? await showDialog<_QrSource>(
+          ? await showAppChoice<_QrSource>(
               context: context,
-              builder: (context) => SimpleDialog(
-                title: const Text('扫描二维码'),
-                children: [
-                  SimpleDialogOption(
-                    onPressed: () => Navigator.pop(context, _QrSource.camera),
-                    child: const Text('使用相机'),
-                  ),
-                  SimpleDialogOption(
-                    onPressed: () => Navigator.pop(context, _QrSource.image),
-                    child: const Text('从二维码图片导入'),
-                  ),
-                ],
-              ),
+              title: '扫描二维码',
+              options: const [
+                (
+                  value: _QrSource.camera,
+                  icon: Icons.photo_camera_outlined,
+                  label: '使用相机',
+                ),
+                (
+                  value: _QrSource.image,
+                  icon: Icons.image_outlined,
+                  label: '从二维码图片导入',
+                ),
+              ],
             )
           : _QrSource.image;
       if (!mounted || source == null) return;
@@ -181,24 +182,13 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
   }
 
   Future<void> _export(WireGuardProfile profile) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('导出 WireGuard .conf'),
-        content: const Text('导出的配置文件包含明文私钥和预共享密钥，请妥善保管。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('选择保存位置'),
-          ),
-        ],
-      ),
+    final confirmed = await confirmDialog(
+      context,
+      title: '导出 WireGuard .conf',
+      message: '导出的配置文件包含明文私钥和预共享密钥，请妥善保管。',
+      confirmLabel: '选择保存位置',
     );
-    if (!mounted || confirmed != true) return;
+    if (!mounted || !confirmed) return;
     setState(() => _busy = true);
     try {
       final filename = profile.name.replaceAll(
@@ -231,46 +221,38 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
   }
 
   Future<void> _add() async {
-    final action = await showModalBottomSheet<_Add>(
+    final action = await showAppSheet<_Add>(
       context: context,
-      useSafeArea: true,
-      builder: (context) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (final (action, icon, label) in const [
-              (_Add.single, Icons.add, '单个节点'),
-              (_Add.clipboard, Icons.content_paste_rounded, '从剪贴板导入'),
-              (_Add.file, Icons.file_open_outlined, '从文件导入'),
-              (_Add.qr, Icons.qr_code_2_rounded, '从二维码图片导入'),
-            ])
-              ListTile(
-                leading: Icon(icon),
-                title: Text(label),
-                onTap: () => Navigator.pop(context, action),
-              ),
-          ],
+      title: '添加 WireGuard 节点',
+      options: const [
+        (value: _Add.single, icon: Icons.add_rounded, label: '单个节点'),
+        (
+          value: _Add.clipboard,
+          icon: Icons.content_paste_rounded,
+          label: '从剪贴板导入',
         ),
-      ),
+        (value: _Add.file, icon: Icons.file_open_outlined, label: '从文件导入'),
+        (value: _Add.qr, icon: Icons.qr_code_2_rounded, label: '从二维码图片导入'),
+      ],
     );
     if (!mounted) return;
     switch (action) {
       case _Add.single:
-        final method = await showDialog<_Editor>(
+        final method = await showAppChoice<_Editor>(
           context: context,
-          builder: (context) => SimpleDialog(
-            title: const Text('创建 WireGuard 节点'),
-            children: [
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(context, _Editor.source),
-                child: const Text('编写 .conf'),
-              ),
-              SimpleDialogOption(
-                onPressed: () => Navigator.pop(context, _Editor.fields),
-                child: const Text('使用表单'),
-              ),
-            ],
-          ),
+          title: '创建 WireGuard 节点',
+          options: const [
+            (
+              value: _Editor.source,
+              icon: Icons.code_rounded,
+              label: '编写 .conf',
+            ),
+            (
+              value: _Editor.fields,
+              icon: Icons.list_alt_outlined,
+              label: '使用表单',
+            ),
+          ],
         );
         if (mounted && method != null) {
           await _edit(raw: method == _Editor.source);
@@ -297,24 +279,13 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
     }
   }
 
-  Future<bool> _confirmDelete(String name) async =>
-      await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text('删除 $name？'),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('删除'),
-            ),
-          ],
-        ),
-      ) ??
-      false;
+  Future<bool> _confirmDelete(String title, String name) => confirmDialog(
+    context,
+    title: title,
+    message: '删除「$name」？',
+    confirmLabel: '删除',
+    destructive: true,
+  );
 
   Future<void> _groupAction(_GroupAction action) async {
     switch (action) {
@@ -332,7 +303,8 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
       case _GroupAction.add:
         await _add();
       case _GroupAction.delete:
-        if (await _confirmDelete(widget.group.name) && mounted) {
+        if (await _confirmDelete('删除 WireGuard 分组', widget.group.name) &&
+            mounted) {
           await _run(
             () => widget.controller.deleteWireGuardGroup(widget.group.id),
           );
@@ -354,7 +326,7 @@ class _WireGuardGroupCardState extends State<WireGuardGroupCard> {
       case _ProfileAction.exportFile:
         await _export(profile);
       case _ProfileAction.delete:
-        if (await _confirmDelete(profile.name) && mounted) {
+        if (await _confirmDelete('删除 WireGuard 节点', profile.name) && mounted) {
           await _run(
             () => widget.controller.deleteWireGuardProfile(profile.id),
           );
@@ -586,7 +558,7 @@ class _GroupNameDialogState extends State<_GroupNameDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => AppDialog(
     title: Text(widget.name.isEmpty ? '创建 WireGuard 分组' : '重命名 WireGuard 分组'),
     content: TextField(
       controller: _name,

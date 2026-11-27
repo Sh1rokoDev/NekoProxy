@@ -4,6 +4,8 @@ import 'package:material_ui/material_ui.dart';
 
 import '../domain/models.dart';
 
+const appMenuRadius = BorderRadius.all(Radius.circular(8));
+
 ThemeMode appThemeMode(ThemePreference preference) => switch (preference) {
   ThemePreference.system => ThemeMode.system,
   ThemePreference.light => ThemeMode.light,
@@ -102,25 +104,19 @@ ThemeData buildAppTheme(Brightness brightness, Color seed) {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       side: BorderSide.none,
     ),
-    dialogTheme: DialogThemeData(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-    ),
     popupMenuTheme: PopupMenuThemeData(
-      color: scheme.surfaceContainerHigh,
+      color: scheme.surfaceContainerLow,
       elevation: 3,
-      menuPadding: const EdgeInsets.symmetric(vertical: 6),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      surfaceTintColor: Colors.transparent,
+      menuPadding: const EdgeInsets.symmetric(vertical: 4),
+      shape: RoundedRectangleBorder(
+        borderRadius: appMenuRadius,
+        side: BorderSide(color: scheme.outlineVariant.withValues(alpha: 0.65)),
+      ),
       textStyle: TextStyle(
         fontSize: 13.5,
         fontWeight: FontWeight.w500,
         color: scheme.onSurface,
-      ),
-    ),
-    bottomSheetTheme: BottomSheetThemeData(
-      showDragHandle: true,
-      backgroundColor: scheme.surfaceContainerLow,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
     ),
     navigationBarTheme: NavigationBarThemeData(

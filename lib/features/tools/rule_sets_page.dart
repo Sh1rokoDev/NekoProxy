@@ -101,24 +101,13 @@ class RuleSetsPage extends StatelessWidget {
     BuildContext context,
     AppController controller,
   ) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('恢复内置规则'),
-        content: const Text('将重新启用安装包内置的 GeoSite 和 GeoIP 规则集。确定继续吗？'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('恢复'),
-          ),
-        ],
-      ),
+    final confirmed = await confirmDialog(
+      context,
+      title: '恢复内置规则',
+      message: '将重新启用安装包内置的 GeoSite 和 GeoIP 规则集。',
+      confirmLabel: '恢复',
     );
-    if (confirmed == true) {
+    if (confirmed) {
       await controller.resetBuiltInRuleSets();
     }
   }

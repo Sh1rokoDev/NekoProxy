@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/dialogs.dart';
 import 'package:nekoproxy/app/app.dart';
 import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/state/app_controller.dart';
@@ -31,7 +32,7 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
 
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
     expect(find.text(subscriptionName), findsOneWidget);
     expect(find.text('测试节点'), findsOneWidget);
     expect(find.text('订阅已导入'), findsOneWidget);
@@ -53,7 +54,7 @@ void main() {
     controller.result.completeError(const FormatException('订阅请求超时'));
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
     expect(find.text('暂无节点'), findsOneWidget);
   });
 }

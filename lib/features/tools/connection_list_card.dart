@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/dialogs.dart';
 import '../../app/widgets.dart';
 import '../../domain/config_compiler.dart';
 import '../../runtime/runtime_client.dart';
@@ -181,15 +182,42 @@ class ConnectionListCard extends StatelessWidget {
           DateTime.fromMillisecondsSinceEpoch(connection.createdAt),
         ),
     };
-    showDialog<void>(
+    showAppDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
+        size: AppDialogSize.standard,
         title: const Text('连接详情'),
-        scrollable: true,
-        content: SelectableText(
-          fields.entries
-              .map((field) => '${field.key}：${field.value}')
-              .join('\n'),
+        content: SelectionArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final (index, field) in fields.entries.indexed) ...[
+                if (index > 0) const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Row(
+                    spacing: 12,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Text(
+                          field.key,
+                          style: TextStyle(
+                            color: Theme.of(context)
+                                .colorScheme
+                                .onSurfaceVariant,
+                          ),
+                        ),
+                      ),
+                      Expanded(flex: 7, child: Text(field.value)),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
         actions: [
           TextButton(

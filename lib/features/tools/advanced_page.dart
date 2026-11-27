@@ -3,8 +3,10 @@ import 'dart:convert';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/dialogs.dart';
 import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
+import '../../app/theme.dart';
 import '../../state/app_controller.dart';
 
 class AdvancedPage extends StatefulWidget {
@@ -113,6 +115,8 @@ class _AdvancedPageState extends State<AdvancedPage> {
                   title: '日志',
                   icon: Icons.receipt_long_outlined,
                   child: DropdownButtonFormField<String>(
+                    borderRadius: appMenuRadius,
+                    dropdownColor: Theme.of(context).popupMenuTheme.color,
                     initialValue: _logLevel,
                     decoration: const InputDecoration(labelText: '日志级别'),
                     items: const [
@@ -189,24 +193,12 @@ class _AdvancedPageState extends State<AdvancedPage> {
       if (!mounted) return;
       final preview = const JsonEncoder.withIndent('  ')
           .convert(compiled.redactedJson);
-      await showDialog<void>(
+      await showAppDialog<void>(
         context: context,
-        builder: (context) => AlertDialog(
+        builder: (context) => AppDialog(
+          size: AppDialogSize.wide,
           title: const Text('生成的 sing-box 配置'),
-          content: SizedBox(
-            width: 720,
-            height: 520,
-            child: SingleChildScrollView(
-              child: SelectableText(
-                preview,
-                style: const TextStyle(
-                  fontFamily: 'monospace',
-                  fontSize: 11,
-                  height: 1.4,
-                ),
-              ),
-            ),
-          ),
+          content: AppDialogCode(preview),
           actions: [
             TextButton(
               onPressed: () async {

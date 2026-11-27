@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../../app/dialogs.dart';
 import '../../domain/wireguard_profile.dart';
 
 class WireGuardProfileEditor extends StatefulWidget {
@@ -76,7 +77,8 @@ class _WireGuardProfileEditorState extends State<WireGuardProfileEditor> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
+  Widget build(BuildContext context) => AppDialog(
+    size: AppDialogSize.wide,
     title: Text(
       widget.raw
           ? '编写 WireGuard .conf'
@@ -84,94 +86,90 @@ class _WireGuardProfileEditorState extends State<WireGuardProfileEditor> {
           ? '创建 WireGuard 节点'
           : '编辑 WireGuard 节点',
     ),
-    scrollable: true,
-    content: SizedBox(
-      width: 480,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        spacing: 12,
-        children: [
-          TextField(
-            controller: _name,
-            decoration: const InputDecoration(labelText: '名称'),
-          ),
-          if (widget.raw)
-            if (widget.profile == null || _showRaw)
-              TextField(
-                controller: _raw,
-                keyboardType: TextInputType.multiline,
-                autocorrect: false,
-                enableSuggestions: false,
-                minLines: 6,
-                maxLines: 12,
-                decoration: const InputDecoration(
-                  labelText: 'WireGuard 配置',
-                  hintText: '[Interface]\n…\n\n[Peer]\n…',
-                ),
-              )
-            else
-              TextButton(
-                onPressed: () => setState(() => _showRaw = true),
-                child: const Text('显示并编辑配置（含密钥）'),
-              )
-          else ...[
-            const Text('本地接口'),
-            _interface.input('PrivateKey', '私钥', secret: true),
-            _interface.input('Address', '本地地址（Address）', hint: '10.0.0.2/24'),
-            _interface.input('DNS', 'DNS（选填）'),
-            _interface.input('ListenPort', '监听端口（选填）', numeric: true),
-            _interface.input('MTU', 'MTU（选填）', numeric: true),
-            for (final (index, peer) in _peers.indexed)
-              Column(
-                key: ObjectKey(peer),
-                spacing: 12,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(child: Text('对端 ${index + 1}')),
-                      if (_peers.length > 1)
-                        IconButton(
-                          tooltip: '移除对端 ${index + 1}',
-                          onPressed: () {
-                            setState(() => _peers.remove(peer));
-                            WidgetsBinding.instance.addPostFrameCallback(
-                              (_) => peer.dispose(),
-                            );
-                          },
-                          icon: const Icon(Icons.remove_circle_outline),
-                        ),
-                    ],
-                  ),
-                  peer.input('PublicKey', '对端公钥'),
-                  peer.input('PresharedKey', '预共享密钥（选填）', secret: true),
-                  peer.input(
-                    'Endpoint',
-                    '对端地址（Endpoint）',
-                    hint: 'vpn.example.com:51820',
-                  ),
-                  peer.input(
-                    'AllowedIPs',
-                    '允许的网段（AllowedIPs）',
-                    hint: '0.0.0.0/0, ::/0',
-                  ),
-                  peer.input('PersistentKeepalive', '保活秒数（选填）', numeric: true),
-                ],
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      spacing: 12,
+      children: [
+        TextField(
+          controller: _name,
+          decoration: const InputDecoration(labelText: '名称'),
+        ),
+        if (widget.raw)
+          if (widget.profile == null || _showRaw)
+            TextField(
+              controller: _raw,
+              keyboardType: TextInputType.multiline,
+              autocorrect: false,
+              enableSuggestions: false,
+              minLines: 6,
+              maxLines: 12,
+              decoration: const InputDecoration(
+                labelText: 'WireGuard 配置',
+                hintText: '[Interface]\n…\n\n[Peer]\n…',
               ),
-            OutlinedButton.icon(
-              onPressed: () => setState(() => _peers.add(_newPeer())),
-              icon: const Icon(Icons.add),
-              label: const Text('添加对端'),
+            )
+          else
+            TextButton(
+              onPressed: () => setState(() => _showRaw = true),
+              child: const Text('显示并编辑配置（含密钥）'),
+            )
+        else ...[
+          const Text('本地接口'),
+          _interface.input('PrivateKey', '私钥', secret: true),
+          _interface.input('Address', '本地地址（Address）', hint: '10.0.0.2/24'),
+          _interface.input('DNS', 'DNS（选填）'),
+          _interface.input('ListenPort', '监听端口（选填）', numeric: true),
+          _interface.input('MTU', 'MTU（选填）', numeric: true),
+          for (final (index, peer) in _peers.indexed)
+            Column(
+              key: ObjectKey(peer),
+              spacing: 12,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    Expanded(child: Text('对端 ${index + 1}')),
+                    if (_peers.length > 1)
+                      IconButton(
+                        tooltip: '移除对端 ${index + 1}',
+                        onPressed: () {
+                          setState(() => _peers.remove(peer));
+                          WidgetsBinding.instance.addPostFrameCallback(
+                            (_) => peer.dispose(),
+                          );
+                        },
+                        icon: const Icon(Icons.remove_circle_outline),
+                      ),
+                  ],
+                ),
+                peer.input('PublicKey', '对端公钥'),
+                peer.input('PresharedKey', '预共享密钥（选填）', secret: true),
+                peer.input(
+                  'Endpoint',
+                  '对端地址（Endpoint）',
+                  hint: 'vpn.example.com:51820',
+                ),
+                peer.input(
+                  'AllowedIPs',
+                  '允许的网段（AllowedIPs）',
+                  hint: '0.0.0.0/0, ::/0',
+                ),
+                peer.input('PersistentKeepalive', '保活秒数（选填）', numeric: true),
+              ],
             ),
-          ],
-          if (_error case final error?)
-            Text(
-              error,
-              style: TextStyle(color: Theme.of(context).colorScheme.error),
-            ),
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _peers.add(_newPeer())),
+            icon: const Icon(Icons.add),
+            label: const Text('添加对端'),
+          ),
         ],
-      ),
+        if (_error case final error?)
+          Text(
+            error,
+            style: TextStyle(color: Theme.of(context).colorScheme.error),
+          ),
+      ],
     ),
     actions: [
       TextButton(

@@ -54,7 +54,7 @@ void main() {
     expect(modeControl.selected, ThemePreference.system);
     expect(modeControl.axis, Axis.horizontal);
     for (final icon in [
-      Icons.settings_brightness_outlined,
+      Icons.monitor_outlined,
       Icons.light_mode_outlined,
       Icons.dark_mode_outlined,
     ]) {

@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/dialogs.dart';
 import '../../app/sliding_segmented_control.dart';
 import '../../domain/models.dart';
 
@@ -26,7 +27,7 @@ class _ThemeDialogState extends State<ThemeDialog> {
     SlidingSegmentOption(
       value: ThemePreference.system,
       label: '跟随系统',
-      icon: Icons.settings_brightness_outlined,
+      icon: Icons.monitor_outlined,
     ),
     SlidingSegmentOption(
       value: ThemePreference.light,
@@ -79,48 +80,27 @@ class _ThemeDialogState extends State<ThemeDialog> {
   @override
   Widget build(BuildContext context) {
     final settings = AppScope.of(context).settings;
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
+    final colors = Theme.of(context).colorScheme;
     final scale = _scaleDraft ?? settings.uiScalePercent;
-    const divider = Divider(height: 1);
-
-    return Dialog(
-      alignment: Alignment.center,
-      backgroundColor: colors.surface,
-      surfaceTintColor: Colors.transparent,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-      constraints: const BoxConstraints(maxWidth: 376),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Semantics(
-                    header: true,
-                    child: Text('主题', style: theme.textTheme.titleLarge),
-                  ),
-                ),
-                IconButton(
-                  tooltip: '关闭',
-                  onPressed: () => Navigator.of(context).pop(),
-                  icon: const Icon(Icons.close_rounded, size: 20),
-                ),
-              ],
-            ),
-            divider,
-            _ThemeSetting(
-              label: '深浅模式',
-              control: _buildModeControl(settings.theme),
-            ),
-            divider,
-            _ThemeSetting(
-              label: '强调色',
-              control: Wrap(
-                alignment: WrapAlignment.center,
+    return AppDialog(
+      title: const Text('主题'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: 8,
+        children: [
+          Semantics(
+            label: '深浅模式',
+            container: true,
+            child: _buildModeControl(settings.theme),
+          ),
+          OverflowBar(
+            alignment: MainAxisAlignment.spaceBetween,
+            spacing: 12,
+            overflowSpacing: 4,
+            children: [
+              const Text('强调色'),
+              Wrap(
                 children: [
                   for (final option in _accents)
                     _AccentSwatch(
@@ -133,103 +113,132 @@ class _ThemeDialogState extends State<ThemeDialog> {
                     ),
                 ],
               ),
+            ],
+          ),
+          _buildScaleControl(scale),
+          if (_saveFailed)
+            Semantics(
+              liveRegion: true,
+              child: Text(
+                '主题设置保存失败，请重试。',
+                style: TextStyle(color: colors.error),
+              ),
             ),
-            divider,
-            _ThemeSetting(
-              label: '界面缩放',
-              control: Row(
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScaleControl(int scale) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final theme = Theme.of(context);
+        final colors = theme.colorScheme;
+        const label = '界面缩放';
+        const controlWidth = 220.0;
+        const gap = 12.0;
+        final fontSize = DefaultTextStyle.of(context).style.fontSize ?? 14;
+        final labelWidth =
+            MediaQuery.textScalerOf(context).scale(fontSize) * label.length;
+        final narrow = constraints.maxWidth < controlWidth + gap + labelWidth;
+        return OverflowBar(
+          alignment: MainAxisAlignment.spaceBetween,
+          spacing: gap,
+          overflowSpacing: 4,
+          children: [
+            const Text(label),
+            SizedBox(
+              width: narrow ? constraints.maxWidth : controlWidth,
+              child: Row(
+                spacing: 10,
                 children: [
                   Expanded(
                     child: Semantics(
                       label: '界面缩放',
-                      child: Slider(
-                        value: scale.toDouble(),
-                        min: AppSettings.minUiScalePercent.toDouble(),
-                        max: AppSettings.maxUiScalePercent.toDouble(),
-                        divisions:
-                            (AppSettings.maxUiScalePercent -
-                                AppSettings.minUiScalePercent) ~/
-                            AppSettings.uiScaleStep,
-                        semanticFormatterCallback: (value) =>
-                            '${value.round()}%',
-                        onChanged: _saving
-                            ? null
-                            : (value) =>
-                                  setState(() => _scaleDraft = value.round()),
-                        onChangeEnd: (value) =>
-                            _save(uiScalePercent: value.round()),
+                      child: SliderTheme(
+                        data: theme.sliderTheme.copyWith(
+                          trackHeight: 4,
+                          trackShape: const RoundedRectSliderTrackShape(),
+                          thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 7,
+                            elevation: 0,
+                            pressedElevation: 0,
+                          ),
+                          tickMarkShape: SliderTickMarkShape.noTickMark,
+                          inactiveTrackColor: colors.outlineVariant,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        child: Slider(
+                          value: scale.toDouble(),
+                          min: AppSettings.minUiScalePercent.toDouble(),
+                          max: AppSettings.maxUiScalePercent.toDouble(),
+                          divisions:
+                              (AppSettings.maxUiScalePercent -
+                                  AppSettings.minUiScalePercent) ~/
+                              AppSettings.uiScaleStep,
+                          semanticFormatterCallback: (value) =>
+                              '${value.round()}%',
+                          onChanged: _saving
+                              ? null
+                              : (value) =>
+                                    setState(() => _scaleDraft = value.round()),
+                          onChangeEnd: (value) =>
+                              _save(uiScalePercent: value.round()),
+                        ),
                       ),
                     ),
                   ),
-                  Text('$scale%'),
+                  Text(
+                    '$scale%',
+                    style: TextStyle(
+                      color: colors.onSurfaceVariant,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
                 ],
               ),
             ),
-            if (_saveFailed)
-              Padding(
-                padding: const EdgeInsets.only(top: 4, bottom: 8),
-                child: Semantics(
-                  liveRegion: true,
-                  child: Text(
-                    '主题设置保存失败，请重试。',
-                    style: TextStyle(color: colors.error),
-                  ),
-                ),
-              ),
           ],
-        ),
-      ),
+        );
+      },
     );
   }
 
   Widget _buildModeControl(ThemePreference selected) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final fontSize =
-            Theme.of(context).textTheme.labelMedium?.fontSize ?? 12;
+        final theme = Theme.of(context);
+        final colors = theme.colorScheme;
+        final fontSize = theme.textTheme.labelMedium?.fontSize ?? 12;
         final textSize = MediaQuery.textScalerOf(context).scale(fontSize);
         final width = constraints.maxWidth;
-        final segmentHeight = math.max(42.0, textSize * 1.4 + 8);
+        final segmentHeight = math.max(48.0, textSize * 1.4 + 8);
         // Reserve room in each segment for the longest label, icon and padding.
         const iconAndPaddingWidth = 15.0 + 4.0 + 12.0;
         final horizontal =
             width >=
             (textSize * 4 + iconAndPaddingWidth) * _modeOptions.length + 8;
-        return SlidingSegmentedControl<ThemePreference>(
-          width: width,
-          height: horizontal
-              ? segmentHeight
-              : segmentHeight * _modeOptions.length + 8,
-          axis: horizontal ? Axis.horizontal : Axis.vertical,
-          segments: _modeOptions,
-          selected: selected,
-          onChanged: _saving ? null : (mode) => _save(theme: mode),
+        return Theme(
+          data: theme.copyWith(
+            colorScheme: colors.copyWith(
+              surfaceContainerHigh: colors.surfaceContainer,
+              secondaryContainer: colors.surfaceContainerLow,
+              onSecondaryContainer: colors.primary,
+            ),
+          ),
+          child: SlidingSegmentedControl<ThemePreference>(
+            width: width,
+            height: horizontal
+                ? segmentHeight
+                : segmentHeight * _modeOptions.length + 8,
+            axis: horizontal ? Axis.horizontal : Axis.vertical,
+            cornerRadius: 10,
+            segments: _modeOptions,
+            selected: selected,
+            onChanged: _saving ? null : (mode) => _save(theme: mode),
+          ),
         );
       },
-    );
-  }
-}
-
-class _ThemeSetting extends StatelessWidget {
-  const _ThemeSetting({required this.label, required this.control});
-
-  final String label;
-  final Widget control;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: OverflowBar(
-        alignment: MainAxisAlignment.spaceBetween,
-        overflowAlignment: OverflowBarAlignment.start,
-        spacing: 12,
-        overflowSpacing: 6,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.titleSmall),
-          SizedBox(width: 264, child: control),
-        ],
-      ),
     );
   }
 }
@@ -249,7 +258,7 @@ class _AccentSwatch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final outline = Theme.of(context).colorScheme.onSurfaceVariant;
+    final outline = Theme.of(context).colorScheme.onSurface;
     return Tooltip(
       message: name,
       excludeFromSemantics: true,
@@ -262,20 +271,22 @@ class _AccentSwatch extends StatelessWidget {
           containedInkWell: true,
           customBorder: const CircleBorder(),
           child: SizedBox(
-            width: 48,
-            height: 48,
+            width: 44,
+            height: 44,
             child: Center(
               child: Container(
-                width: 36,
-                height: 36,
-                padding: const EdgeInsets.all(4),
+                width: 32,
+                height: 32,
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: selected
                       ? Border.all(color: outline, width: 1.5)
                       : null,
                 ),
-                child: Ink(
+                child: Container(
+                  width: 24,
+                  height: 24,
                   decoration: BoxDecoration(
                     color: color,
                     shape: BoxShape.circle,
@@ -284,7 +295,7 @@ class _AccentSwatch extends StatelessWidget {
                       ? const Icon(
                           Icons.check_rounded,
                           color: Colors.white,
-                          size: 16,
+                          size: 14,
                         )
                       : null,
                 ),

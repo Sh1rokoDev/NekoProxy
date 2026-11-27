@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/dialogs.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/domain/models.dart';
 import 'package:nekoproxy/features/nodes/nodes_page.dart';
@@ -37,7 +38,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
     expect(find.text('常用节点'), findsOneWidget);
 
     await openDialog();
@@ -47,7 +48,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
     expect(tester.takeException(), isNull);
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
     expect(controller.snapshot.subscriptions.single.name, '常用节点');
   });
 }

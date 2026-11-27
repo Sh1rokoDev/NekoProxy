@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/dialogs.dart';
 import '../../app/widgets.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
@@ -162,31 +163,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               (kind != HomeCard.splitMode || showsRuleMode),
         )
         .toList();
-    final selected = await showModalBottomSheet<HomeCard>(
+    final selected = await showAppSheet<HomeCard>(
       context: context,
-      showDragHandle: true,
-      useSafeArea: true,
-      isScrollControlled: true,
-      builder: (context) => SafeArea(
-        top: false,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('添加卡片', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 12),
-              if (available.isEmpty) const Text('所有卡片均已添加'),
-              for (final kind in available)
-                ListTile(
-                  leading: const Icon(Icons.add_rounded),
-                  title: Text(_label(kind)),
-                  onTap: () => Navigator.pop(context, kind),
-                ),
-            ],
-          ),
-        ),
-      ),
+      title: '添加卡片',
+      emptyLabel: '所有卡片均已添加',
+      options: [
+        for (final kind in available)
+          (value: kind, icon: Icons.add_rounded, label: _label(kind)),
+      ],
     );
     if (!mounted || selected == null || !_canEdit(draft)) return;
     setState(() {

@@ -1,6 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
+import '../../app/dialogs.dart';
+import '../../app/theme.dart';
 import '../../domain/models.dart';
 import '../../runtime/runtime_client.dart';
 import '../../state/app_controller.dart';
@@ -9,14 +11,14 @@ Future<List<String>?> pickInstalledApps(
   BuildContext context,
   AppController controller,
   List<String> selected,
-) => showDialog<List<String>>(
+) => showAppDialog<List<String>>(
   context: context,
   builder: (_) =>
       _InstalledAppsDialog(controller: controller, selected: selected),
 );
 
 Future<void> showVpnAppFilter(BuildContext context, AppController controller) =>
-    showDialog<void>(
+    showAppDialog<void>(
       context: context,
       builder: (_) => _InstalledAppsDialog(
         controller: controller,
@@ -124,18 +126,14 @@ class _InstalledAppsDialogState extends State<_InstalledAppsDialog> {
     final iconPixels = (_iconSize * MediaQuery.devicePixelRatioOf(context))
         .ceil()
         .clamp(1, 128);
-    final shape = RoundedRectangleBorder(
-      borderRadius: BorderRadius.circular(12),
-      side: BorderSide(color: theme.colorScheme.outlineVariant),
-    );
-
     return PopScope(
       canPop: !_saving,
-      child: AlertDialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      child: AppDialog(
+        size: AppDialogSize.standard,
+        scrollContent: false,
+        canClose: !_saving,
         title: Text(filter ? '应用过滤' : '选择应用'),
         content: SizedBox(
-          width: 440,
           height: 440,
           child: CustomScrollView(
             slivers: [
@@ -152,6 +150,8 @@ class _InstalledAppsDialogState extends State<_InstalledAppsDialog> {
                   children: [
                     if (filter)
                       DropdownButtonFormField<PerAppMode>(
+                        borderRadius: appMenuRadius,
+                        dropdownColor: Theme.of(context).popupMenuTheme.color,
                         initialValue: _mode,
                         isExpanded: true,
                         decoration: const InputDecoration(
@@ -263,34 +263,37 @@ class _InstalledAppsDialogState extends State<_InstalledAppsDialog> {
                 ),
                 _ => SliverList.separated(
                   itemCount: apps.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 8),
+                  separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (context, index) {
                     final app = apps[index];
-                    return Material(
+                    final selected = _selected.contains(app.packageName);
+                    return CheckboxListTile(
                       key: ValueKey(app.packageName),
-                      type: MaterialType.card,
-                      color: theme.colorScheme.surfaceContainerLow,
-                      shape: shape,
-                      clipBehavior: Clip.antiAlias,
-                      child: CheckboxListTile(
-                        dense: true,
-                        value: _selected.contains(app.packageName),
-                        onChanged: canSelect
-                            ? (_) => setState(() => _toggle(app.packageName))
-                            : null,
-                        secondary: _buildIcon(app, iconPixels),
-                        title: Text(
-                          app.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        subtitle: Text(
-                          app.system
-                              ? '${app.packageName} · 系统应用'
-                              : app.packageName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                      dense: true,
+                      selected: selected,
+                      selectedTileColor: theme.colorScheme.primary.withValues(
+                        alpha: 0.08,
+                      ),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: appMenuRadius,
+                      ),
+                      value: selected,
+                      onChanged: canSelect
+                          ? (_) => setState(() => _toggle(app.packageName))
+                          : null,
+                      secondary: _buildIcon(app, iconPixels),
+                      title: Text(
+                        app.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      subtitle: Text(
+                        app.system
+                            ? '${app.packageName} · 系统应用'
+                            : app.packageName,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     );
                   },

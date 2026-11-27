@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/dialogs.dart';
 import '../../app/proxy_latency_builder.dart';
 import '../../app/widgets.dart';
 import '../../domain/models.dart';
@@ -646,7 +647,7 @@ class _NodesPageState extends State<NodesPage> {
     Subscription subscription,
   ) async {
     final isSubscription = subscription.isUrlSubscription;
-    final result = await showDialog<_EditSubscriptionResult>(
+    final result = await showAppDialog<_EditSubscriptionResult>(
       context: context,
       builder: (context) => _EditSubscriptionDialog(subscription: subscription),
     );
@@ -685,52 +686,51 @@ class _NodesPageState extends State<NodesPage> {
   ) async {
     var include = subscription.includeFilter;
     var exclude = subscription.excludeFilter;
-    final result = await showDialog<({String include, String exclude})>(
+    final result = await showAppDialog<({String include, String exclude})>(
       context: context,
-      builder: (context) => AlertDialog(
-        scrollable: true,
+      builder: (context) => AppDialog(
+        size: AppDialogSize.standard,
         title: const Text('节点过滤'),
-        content: SizedBox(
-          width: 520,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              TextFormField(
-                initialValue: subscription.includeFilter,
-                onChanged: (value) => include = value,
-                autofocus: true,
-                minLines: 1,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: '包含关键词',
-                  hintText: '例：香港, 日本',
-                  helperText: '留空显示全部；匹配名称、地址、协议',
-                ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              initialValue: subscription.includeFilter,
+              onChanged: (value) => include = value,
+              autofocus: true,
+              minLines: 1,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: '包含关键词',
+                hintText: '例：香港, 日本',
+                helperText: '留空显示全部；匹配名称、地址、协议',
               ),
-              const SizedBox(height: 14),
-              TextFormField(
-                initialValue: subscription.excludeFilter,
-                onChanged: (value) => exclude = value,
-                minLines: 1,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: '排除关键词',
-                  hintText: '例：剩余流量, 到期',
-                  helperText: '留空不排除；多个关键词用逗号分隔',
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          if (subscription.includeFilter.isNotEmpty ||
-              subscription.excludeFilter.isNotEmpty)
-            TextButton(
-              onPressed: () =>
-                  Navigator.pop(context, (include: '', exclude: '')),
-              child: const Text('清除过滤'),
             ),
+            const SizedBox(height: 14),
+            TextFormField(
+              initialValue: subscription.excludeFilter,
+              onChanged: (value) => exclude = value,
+              minLines: 1,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: '排除关键词',
+                hintText: '例：剩余流量, 到期',
+                helperText: '留空不排除；多个关键词用逗号分隔',
+              ),
+            ),
+          ],
+        ),
+        leadingAction:
+            subscription.includeFilter.isNotEmpty ||
+                subscription.excludeFilter.isNotEmpty
+            ? TextButton(
+                onPressed: () =>
+                    Navigator.pop(context, (include: '', exclude: '')),
+                child: const Text('清除过滤'),
+              )
+            : null,
+        actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('取消'),
@@ -760,46 +760,41 @@ class _NodesPageState extends State<NodesPage> {
   ) async {
     var mode = subscription.sortMode;
     var descending = subscription.sortDescending;
-    final result = await showDialog<bool>(
+    final result = await showAppDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          scrollable: true,
+        builder: (context, setDialogState) => AppDialog(
           title: const Text('节点排序'),
-          content: SizedBox(
-            width: 440,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final item in const [
-                      (NodeSortMode.manual, '默认顺序'),
-                      (NodeSortMode.name, '名称'),
-                      (NodeSortMode.protocol, '协议'),
-                      (NodeSortMode.latency, '延迟'),
-                      (NodeSortMode.favorite, '收藏优先'),
-                    ])
-                      ChoiceChip(
-                        label: Text(item.$2),
-                        selected: mode == item.$1,
-                        onSelected: (_) => setDialogState(() => mode = item.$1),
-                      ),
-                  ],
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  dense: true,
-                  title: const Text('降序排列'),
-                  value: descending,
-                  onChanged: (value) =>
-                      setDialogState(() => descending = value),
-                ),
-              ],
-            ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final item in const [
+                    (NodeSortMode.manual, '默认顺序'),
+                    (NodeSortMode.name, '名称'),
+                    (NodeSortMode.protocol, '协议'),
+                    (NodeSortMode.latency, '延迟'),
+                    (NodeSortMode.favorite, '收藏优先'),
+                  ])
+                    ChoiceChip(
+                      label: Text(item.$2),
+                      selected: mode == item.$1,
+                      onSelected: (_) => setDialogState(() => mode = item.$1),
+                    ),
+                ],
+              ),
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                dense: true,
+                title: const Text('降序排列'),
+                value: descending,
+                onChanged: (value) => setDialogState(() => descending = value),
+              ),
+            ],
           ),
           actions: [
             TextButton(
@@ -841,39 +836,18 @@ class _NodesPageState extends State<NodesPage> {
     BuildContext context,
     AppController controller,
   ) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showAppSheet<String>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('添加分组', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.cloud_download_outlined),
-              title: const Text('订阅分组'),
-              onTap: () => Navigator.pop(context, 'url'),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.create_new_folder_outlined),
-              title: const Text('节点分组'),
-              onTap: () => Navigator.pop(context, 'group'),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.vpn_key_outlined),
-              title: const Text('WireGuard 分组'),
-              onTap: () => Navigator.pop(context, 'wireguard'),
-            ),
-          ],
+      title: '添加分组',
+      options: const [
+        (value: 'url', icon: Icons.cloud_download_outlined, label: '订阅分组'),
+        (value: 'group', icon: Icons.create_new_folder_outlined, label: '节点分组'),
+        (
+          value: 'wireguard',
+          icon: Icons.vpn_key_outlined,
+          label: 'WireGuard 分组',
         ),
-      ),
+      ],
     );
     if (!context.mounted) return;
     switch (action) {
@@ -900,45 +874,19 @@ class _NodesPageState extends State<NodesPage> {
     AppController controller,
     Subscription group,
   ) async {
-    final action = await showModalBottomSheet<String>(
+    final action = await showAppSheet<String>(
       context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (context) => SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('添加节点', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: 12),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.add_link_rounded),
-              title: const Text('单个节点'),
-              onTap: () => Navigator.pop(context, 'link'),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.content_paste_rounded),
-              title: const Text('从剪贴板导入'),
-              onTap: () => Navigator.pop(context, 'clipboard'),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.file_open_outlined),
-              title: const Text('从文件导入'),
-              onTap: () => Navigator.pop(context, 'file'),
-            ),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.qr_code_2_rounded),
-              title: const Text('从二维码图片导入'),
-              onTap: () => Navigator.pop(context, 'qr'),
-            ),
-          ],
+      title: '添加节点',
+      options: const [
+        (value: 'link', icon: Icons.add_link_rounded, label: '单个节点'),
+        (
+          value: 'clipboard',
+          icon: Icons.content_paste_rounded,
+          label: '从剪贴板导入',
         ),
-      ),
+        (value: 'file', icon: Icons.file_open_outlined, label: '从文件导入'),
+        (value: 'qr', icon: Icons.qr_code_2_rounded, label: '从二维码图片导入'),
+      ],
     );
     if (!context.mounted) return;
     switch (action) {
@@ -1001,24 +949,21 @@ class _NodesPageState extends State<NodesPage> {
   ) async {
     final formKey = GlobalKey<FormState>();
     var name = '';
-    final result = await showDialog<String>(
+    final result = await showAppDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (context) => AppDialog(
         title: const Text('新建节点分组'),
-        content: SizedBox(
-          width: 420,
-          child: Form(
-            key: formKey,
-            child: TextFormField(
-              onChanged: (value) => name = value,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: '分组名称',
-                hintText: '例：常用节点',
-              ),
-              validator: (value) =>
-                  (value == null || value.trim().isEmpty) ? '请输入分组名称' : null,
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            onChanged: (value) => name = value,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '分组名称',
+              hintText: '例：常用节点',
             ),
+            validator: (value) =>
+                (value == null || value.trim().isEmpty) ? '请输入分组名称' : null,
           ),
         ),
         actions: [
@@ -1058,34 +1003,30 @@ class _NodesPageState extends State<NodesPage> {
   }) async {
     var link = '';
     final formKey = GlobalKey<FormState>();
-    final result = await showDialog<String>(
+    final result = await showAppDialog<String>(
       context: context,
-      builder: (context) => AlertDialog(
-        scrollable: true,
+      builder: (context) => AppDialog(
+        size: AppDialogSize.standard,
         title: const Text('添加节点'),
-        content: SizedBox(
-          width: 560,
-          child: Form(
-            key: formKey,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                TextFormField(
-                  onChanged: (value) => link = value,
-                  minLines: 4,
-                  maxLines: 8,
-                  autofocus: true,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-                  decoration: const InputDecoration(
-                    hintText: 'ss://…  或  vless://…',
-                  ),
-                  validator: (value) => (value == null || value.trim().isEmpty)
-                      ? '请输入节点链接'
-                      : null,
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextFormField(
+                onChanged: (value) => link = value,
+                minLines: 4,
+                maxLines: 8,
+                autofocus: true,
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+                decoration: const InputDecoration(
+                  hintText: 'ss://…  或  vless://…',
                 ),
-              ],
-            ),
+                validator: (value) =>
+                    (value == null || value.trim().isEmpty) ? '请输入节点链接' : null,
+              ),
+            ],
           ),
         ),
         actions: [
@@ -1122,7 +1063,7 @@ class _NodesPageState extends State<NodesPage> {
     BuildContext context,
     AppController controller,
   ) async {
-    final submitted = await showDialog<bool>(
+    final submitted = await showAppDialog<bool>(
       context: context,
       builder: (_) => _SubscriptionImportDialog(controller: controller),
     );
@@ -1140,61 +1081,41 @@ class _NodesPageState extends State<NodesPage> {
   }) async {
     var loading = false;
     String? error;
-    final submitted = await showDialog<int>(
+    final submitted = await showAppDialog<int>(
       context: context,
       builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          scrollable: true,
+        builder: (context, setDialogState) => AppDialog(
+          size: AppDialogSize.wide,
+          canClose: !loading,
           title: const Text('导入节点'),
-          content: SizedBox(
-            width: 560,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Text(
-                  '目标分组：${group.name}',
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                '目标分组：${group.name}',
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
+              ),
+              const SizedBox(height: 10),
+              AppDialogCode(
+                content.length > 1600
+                    ? '${content.substring(0, 1600)}\n…'
+                    : content,
+              ),
+              if (error != null) ...[
                 const SizedBox(height: 10),
-                Container(
-                  height: 150,
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Theme.of(context)
-                        .colorScheme
-                        .surfaceContainerHighest,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: SingleChildScrollView(
-                    child: Text(
-                      content.length > 1600
-                          ? '${content.substring(0, 1600)}\n…'
-                          : content,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 11,
-                      ),
-                    ),
-                  ),
+                Text(
+                  error!,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
-                if (error != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    error!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ],
-                if (loading) ...[
-                  const SizedBox(height: 12),
-                  const LinearProgressIndicator(),
-                ],
               ],
-            ),
+              if (loading) ...[
+                const SizedBox(height: 12),
+                const LinearProgressIndicator(),
+              ],
+            ],
           ),
           actions: [
             TextButton(
@@ -1248,49 +1169,46 @@ class _NodesPageState extends State<NodesPage> {
     var outboundJson = initialJson;
     String? error;
     final result =
-        await showDialog<({String name, Map<String, dynamic> outbound})>(
+        await showAppDialog<({String name, Map<String, dynamic> outbound})>(
           context: context,
           builder: (context) => StatefulBuilder(
-            builder: (context, setState) => AlertDialog(
-              scrollable: true,
+            builder: (context, setState) => AppDialog(
+              size: AppDialogSize.wide,
               title: Text('编辑 ${node.name}'),
-              content: SizedBox(
-                width: 640,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextFormField(
-                      initialValue: node.name,
-                      onChanged: (value) => name = value,
-                      decoration: const InputDecoration(labelText: '名称'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextFormField(
+                    initialValue: node.name,
+                    onChanged: (value) => name = value,
+                    decoration: const InputDecoration(labelText: '名称'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    initialValue: initialJson,
+                    onChanged: (value) => outboundJson = value,
+                    minLines: 10,
+                    maxLines: 16,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                      height: 1.4,
                     ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      initialValue: initialJson,
-                      onChanged: (value) => outboundJson = value,
-                      minLines: 10,
-                      maxLines: 16,
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
-                      decoration: const InputDecoration(
-                        labelText: 'sing-box 出站 JSON',
+                    decoration: const InputDecoration(
+                      labelText: 'sing-box 出站 JSON',
+                    ),
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      error!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
                       ),
                     ),
-                    if (error != null) ...[
-                      const SizedBox(height: 8),
-                      Text(
-                        error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
-                      ),
-                    ],
                   ],
-                ),
+                ],
               ),
               actions: [
                 TextButton(
@@ -1388,59 +1306,57 @@ class _SubscriptionImportDialogState extends State<_SubscriptionImportDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    scrollable: true,
+  Widget build(BuildContext context) => AppDialog(
+    size: AppDialogSize.standard,
+    canClose: !_loading,
     title: const Text('新建订阅分组'),
-    content: SizedBox(
-      width: 520,
-      child: Form(
-        key: _formKey,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextFormField(
-              controller: _urlController,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: '订阅 URL',
-                hintText: 'https://example.com/sub',
-              ),
-              validator: (value) {
-                final uri = Uri.tryParse(value?.trim() ?? '');
-                if (uri == null ||
-                    !(uri.scheme == 'http' || uri.scheme == 'https')) {
-                  return '请输入有效的 http(s) 链接';
-                }
-                return null;
-              },
+    content: Form(
+      key: _formKey,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _urlController,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: '订阅 URL',
+              hintText: 'https://example.com/sub',
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _nameController,
-              decoration: const InputDecoration(labelText: '名称（可选）'),
+            validator: (value) {
+              final uri = Uri.tryParse(value?.trim() ?? '');
+              if (uri == null ||
+                  !(uri.scheme == 'http' || uri.scheme == 'https')) {
+                return '请输入有效的 http(s) 链接';
+              }
+              return null;
+            },
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _nameController,
+            decoration: const InputDecoration(labelText: '名称（可选）'),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _uaController,
+            decoration: const InputDecoration(
+              labelText: 'User-Agent（可选）',
+              hintText: '留空使用 NekoProxy 默认值',
             ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _uaController,
-              decoration: const InputDecoration(
-                labelText: 'User-Agent（可选）',
-                hintText: '留空使用 NekoProxy 默认值',
-              ),
+          ),
+          if (_error case final error?) ...[
+            const SizedBox(height: 10),
+            Text(
+              error,
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
-            if (_error case final error?) ...[
-              const SizedBox(height: 10),
-              Text(
-                error,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            ],
-            if (_loading) ...[
-              const SizedBox(height: 14),
-              const LinearProgressIndicator(),
-            ],
           ],
-        ),
+          if (_loading) ...[
+            const SizedBox(height: 14),
+            const LinearProgressIndicator(),
+          ],
+        ],
       ),
     ),
     actions: [
@@ -1930,81 +1846,76 @@ class _EditSubscriptionDialogState extends State<_EditSubscriptionDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      scrollable: true,
+    return AppDialog(
+      size: AppDialogSize.standard,
       title: Text(_isSubscription ? '编辑订阅' : '重命名分组'),
-      content: SizedBox(
-        width: 520,
-        child: Form(
-          key: _formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              controller: _name,
+              autofocus: !_isSubscription,
+              decoration: const InputDecoration(labelText: '名称'),
+              validator: (value) =>
+                  (value == null || value.trim().isEmpty) ? '请输入名称' : null,
+            ),
+            if (_isSubscription) ...[
+              const SizedBox(height: 12),
               TextFormField(
-                controller: _name,
-                autofocus: !_isSubscription,
-                decoration: const InputDecoration(labelText: '名称'),
-                validator: (value) =>
-                    (value == null || value.trim().isEmpty) ? '请输入名称' : null,
+                controller: _url,
+                decoration: const InputDecoration(
+                  labelText: '订阅链接',
+                  hintText: 'https://example.com/sub',
+                ),
+                validator: (value) {
+                  final text = value?.trim() ?? '';
+                  if (text.isEmpty) return null;
+                  final uri = Uri.tryParse(text);
+                  if (uri == null ||
+                      !(uri.scheme == 'http' || uri.scheme == 'https')) {
+                    return '请输入有效的 http(s) 链接';
+                  }
+                  return null;
+                },
               ),
-              if (_isSubscription) ...[
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _url,
-                  decoration: const InputDecoration(
-                    labelText: '订阅链接',
-                    hintText: 'https://example.com/sub',
-                  ),
-                  validator: (value) {
-                    final text = value?.trim() ?? '';
-                    if (text.isEmpty) return null;
-                    final uri = Uri.tryParse(text);
-                    if (uri == null ||
-                        !(uri.scheme == 'http' || uri.scheme == 'https')) {
-                      return '请输入有效的 http(s) 链接';
-                    }
-                    return null;
-                  },
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: _userAgent,
+                decoration: const InputDecoration(labelText: 'User-Agent（可选）'),
+              ),
+              const SizedBox(height: 8),
+              SwitchRow(
+                title: '自动更新',
+                icon: Icons.update_rounded,
+                value: _autoUpdate,
+                onChanged: (value) => setState(() => _autoUpdate = value),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _updateInterval,
+                enabled: _autoUpdate,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
                 ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _userAgent,
-                  decoration: const InputDecoration(
-                    labelText: 'User-Agent（可选）',
-                  ),
-                ),
-                const SizedBox(height: 8),
-                SwitchRow(
-                  title: '自动更新',
-                  icon: Icons.update_rounded,
-                  value: _autoUpdate,
-                  onChanged: (value) => setState(() => _autoUpdate = value),
-                ),
-                const SizedBox(height: 8),
-                TextFormField(
-                  controller: _updateInterval,
-                  enabled: _autoUpdate,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(labelText: '更新周期（小时）'),
-                  validator: (value) {
-                    if (!_autoUpdate) return null;
-                    final minutes = _updateMinutesFromHours(value ?? '');
-                    if (minutes == null) return '请输入有效的更新周期';
-                    if (minutes < Subscription.minimumUpdateIntervalMinutes) {
-                      return '更新周期不能短于 30 分钟';
-                    }
-                    if (minutes > Subscription.maximumUpdateIntervalMinutes) {
-                      return '更新周期不能超过 30 天';
-                    }
-                    return null;
-                  },
-                ),
-              ],
+                decoration: const InputDecoration(labelText: '更新周期（小时）'),
+                validator: (value) {
+                  if (!_autoUpdate) return null;
+                  final minutes = _updateMinutesFromHours(value ?? '');
+                  if (minutes == null) return '请输入有效的更新周期';
+                  if (minutes < Subscription.minimumUpdateIntervalMinutes) {
+                    return '更新周期不能短于 30 分钟';
+                  }
+                  if (minutes > Subscription.maximumUpdateIntervalMinutes) {
+                    return '更新周期不能超过 30 天';
+                  }
+                  return null;
+                },
+              ),
             ],
-          ),
+          ],
         ),
       ),
       actions: [

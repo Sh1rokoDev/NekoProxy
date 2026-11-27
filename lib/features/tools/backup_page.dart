@@ -6,6 +6,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/dialogs.dart';
 import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
 import '../../services/backup_service.dart';
@@ -170,7 +171,7 @@ class _BackupPageState extends State<BackupPage> {
 
   Future<String?> _promptBackupPassword(String message) {
     var password = '';
-    return showDialog<String>(
+    return showAppDialog<String>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setDialogState) {
@@ -178,8 +179,7 @@ class _BackupPageState extends State<BackupPage> {
             if (password.isNotEmpty) Navigator.of(context).pop(password);
           }
 
-          return AlertDialog(
-            scrollable: true,
+          return AppDialog(
             title: const Text('输入备份密码'),
             content: Column(
               mainAxisSize: MainAxisSize.min,

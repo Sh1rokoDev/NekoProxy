@@ -3,6 +3,7 @@ import 'dart:ui' show PointerDeviceKind;
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/dialogs.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/models.dart';
@@ -316,7 +317,7 @@ void main() {
 
     await openEditor();
     final autoUpdateSwitch = find.descendant(
-      of: find.byType(AlertDialog),
+      of: find.byType(AppDialog),
       matching: find.byType(Switch),
     );
     expect(tester.widget<Switch>(autoUpdateSwitch).value, isTrue);

@@ -34,6 +34,7 @@ class SlidingSegmentedControl<T> extends StatefulWidget {
     this.axis = Axis.horizontal,
     this.navigation = false,
     this.maxSegmentExtent,
+    this.cornerRadius = 16,
   });
 
   final List<SlidingSegmentOption<T>> segments;
@@ -42,6 +43,7 @@ class SlidingSegmentedControl<T> extends StatefulWidget {
   final double width;
   final double height;
   final Axis axis;
+  final double cornerRadius;
 
   /// Sizes the track from its segments and animates changes to membership.
   final double? maxSegmentExtent;
@@ -59,8 +61,6 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
   static const _inset = 4.0;
   // The lifted selection grows past both edges of the track.
   static const _crossGrowth = 16.0;
-  static const _trackRadius = BorderRadius.all(Radius.circular(16));
-  static const _selectionRadius = BorderRadius.all(Radius.circular(12));
   static final _travel = SpringDescription.withDurationAndBounce(
     duration: const Duration(milliseconds: 400),
     bounce: 0.15,
@@ -381,6 +381,10 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
 
   Widget _buildTrack(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final trackRadius = BorderRadius.circular(widget.cornerRadius);
+    final selectionRadius = BorderRadius.circular(
+      math.max(0, widget.cornerRadius - _inset),
+    );
     final rtl = !_vertical && Directionality.of(context) == TextDirection.rtl;
     final active = {
       for (final (index, segment) in widget.segments.indexed)
@@ -535,7 +539,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                     child: DecoratedBox(
                       decoration: BoxDecoration(
                         color: scheme.surfaceContainerHigh,
-                        borderRadius: _trackRadius,
+                        borderRadius: trackRadius,
                         border: Border.all(
                           color: scheme.outlineVariant.withValues(alpha: 0.65),
                         ),
@@ -556,7 +560,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                                         scheme.secondaryContainer,
                                         lift.clamp(0.0, 1.0) * 0.45,
                                       ),
-                                borderRadius: _selectionRadius,
+                                borderRadius: selectionRadius,
                               ),
                             ),
                           ),
@@ -585,6 +589,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
                                   opacity: weights[slot],
                                   child: _SegmentLabel(
                                     destination: destination,
+                                    borderRadius: selectionRadius,
                                     selected:
                                         _selectedIndex == slots[slot].index,
                                     navigation: navigation,
@@ -623,6 +628,7 @@ class _SlidingSegmentedControlState<T> extends State<SlidingSegmentedControl<T>>
 class _SegmentLabel extends StatefulWidget {
   const _SegmentLabel({
     required this.destination,
+    required this.borderRadius,
     required this.selected,
     required this.emphasis,
     required this.navigation,
@@ -631,6 +637,7 @@ class _SegmentLabel extends StatefulWidget {
   });
 
   final SlidingSegmentOption<Object?> destination;
+  final BorderRadius borderRadius;
   final bool navigation;
   final bool selected;
   final double emphasis;
@@ -677,7 +684,7 @@ class _SegmentLabelState extends State<_SegmentLabel> {
         child: DecoratedBox(
           decoration: ShapeDecoration(
             shape: RoundedRectangleBorder(
-              borderRadius: _SlidingSegmentedControlState._selectionRadius,
+              borderRadius: widget.borderRadius,
               side: _focused
                   ? BorderSide(color: scheme.primary, width: 2)
                   : BorderSide.none,

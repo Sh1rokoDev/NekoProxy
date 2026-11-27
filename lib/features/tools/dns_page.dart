@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../../app/app_scope.dart';
 import '../../app/header_fade.dart';
 import '../../app/widgets.dart';
+import '../../app/theme.dart';
 import '../../state/app_controller.dart';
 
 class DnsPage extends StatefulWidget {
@@ -77,6 +78,8 @@ class _DnsPageState extends State<DnsPage> {
                       ),
                       const SizedBox(height: 12),
                       DropdownButtonFormField<String>(
+                        borderRadius: appMenuRadius,
+                        dropdownColor: Theme.of(context).popupMenuTheme.color,
                         initialValue: _strategy,
                         decoration: const InputDecoration(labelText: '域名解析策略'),
                         items: const [

@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/dialogs.dart';
 import '../../app/widgets.dart';
+import '../../app/theme.dart';
 import '../../domain/config_compiler.dart';
 import '../../domain/models.dart';
 import '../../state/app_controller.dart';
@@ -257,264 +259,262 @@ class _RulesPageState extends State<RulesPage> {
     }
 
     try {
-      final result = await showDialog<_EditorResult>(
+      final result = await showAppDialog<_EditorResult>(
         context: context,
         builder: (context) => StatefulBuilder(
           builder: (context, setDialogState) {
             final scheme = Theme.of(context).colorScheme;
             final availableKinds = _availableRuleKinds(controller);
-            return AlertDialog(
-              insetPadding: const EdgeInsets.symmetric(
-                horizontal: 20,
-                vertical: 24,
-              ),
+            return AppDialog(
+              size: AppDialogSize.wide,
               title: Text(editing ? '编辑规则' : '添加规则'),
-              content: SizedBox(
-                width: 560,
-                child: SingleChildScrollView(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(labelText: '规则名称'),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      TextField(
-                        controller: name,
-                        decoration: const InputDecoration(labelText: '规则名称'),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: DropdownButtonFormField<RuleLogic>(
-                              initialValue: logic,
-                              isExpanded: true,
-                              decoration: const InputDecoration(
-                                labelText: '匹配方式',
-                              ),
-                              items: const [
-                                DropdownMenuItem(
-                                  value: RuleLogic.single,
-                                  child: Text('单一条件'),
-                                ),
-                                DropdownMenuItem(
-                                  value: RuleLogic.and,
-                                  child: Text('全部 AND'),
-                                ),
-                                DropdownMenuItem(
-                                  value: RuleLogic.or,
-                                  child: Text('任一 OR'),
-                                ),
-                              ],
-                              onChanged: (value) {
-                                if (value == null) return;
-                                setDialogState(() {
-                                  if (value == RuleLogic.single) {
-                                    if (drafts.isNotEmpty) {
-                                      kind = drafts.first.kind;
-                                      singleValue.text =
-                                          drafts.first.value.text;
-                                    }
-                                  } else if (logic == RuleLogic.single) {
-                                    drafts.first.kind = kind;
-                                    drafts.first.value.text = singleValue.text;
-                                    while (drafts.length < 2) {
-                                      drafts.add(_ConditionDraft(kind, ''));
-                                    }
-                                  }
-                                  logic = value;
-                                  errorText = null;
-                                });
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: DropdownButtonFormField<RuleTarget>(
-                              initialValue: target,
-                              isExpanded: true,
-                              decoration: const InputDecoration(
-                                labelText: '动作',
-                              ),
-                              items: RuleTarget.values
-                                  .map(
-                                    (value) => DropdownMenuItem(
-                                      value: value,
-                                      child: Text(
-                                        _ruleTargetLongLabel(value),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  )
-                                  .toList(),
-                              onChanged: (value) => setDialogState(
-                                () => target = value ?? target,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      if (logic == RuleLogic.single) ...[
-                        DropdownButtonFormField<RuleKind>(
-                          initialValue: kind,
+                      Expanded(
+                        child: DropdownButtonFormField<RuleLogic>(
+                          borderRadius: appMenuRadius,
+                          dropdownColor: Theme.of(context).popupMenuTheme.color,
+                          initialValue: logic,
                           isExpanded: true,
-                          decoration: const InputDecoration(labelText: '匹配类型'),
-                          items: availableKinds
+                          decoration: const InputDecoration(labelText: '匹配方式'),
+                          items: const [
+                            DropdownMenuItem(
+                              value: RuleLogic.single,
+                              child: Text('单一条件'),
+                            ),
+                            DropdownMenuItem(
+                              value: RuleLogic.and,
+                              child: Text('全部 AND'),
+                            ),
+                            DropdownMenuItem(
+                              value: RuleLogic.or,
+                              child: Text('任一 OR'),
+                            ),
+                          ],
+                          onChanged: (value) {
+                            if (value == null) return;
+                            setDialogState(() {
+                              if (value == RuleLogic.single) {
+                                if (drafts.isNotEmpty) {
+                                  kind = drafts.first.kind;
+                                  singleValue.text = drafts.first.value.text;
+                                }
+                              } else if (logic == RuleLogic.single) {
+                                drafts.first.kind = kind;
+                                drafts.first.value.text = singleValue.text;
+                                while (drafts.length < 2) {
+                                  drafts.add(_ConditionDraft(kind, ''));
+                                }
+                              }
+                              logic = value;
+                              errorText = null;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: DropdownButtonFormField<RuleTarget>(
+                          borderRadius: appMenuRadius,
+                          dropdownColor: Theme.of(context).popupMenuTheme.color,
+                          initialValue: target,
+                          isExpanded: true,
+                          decoration: const InputDecoration(labelText: '动作'),
+                          items: RuleTarget.values
                               .map(
                                 (value) => DropdownMenuItem(
                                   value: value,
-                                  child: Text(_ruleKindLabel(value)),
+                                  child: Text(
+                                    _ruleTargetLongLabel(value),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                               )
                               .toList(),
                           onChanged: (value) =>
-                              setDialogState(() => kind = value ?? kind),
+                              setDialogState(() => target = value ?? target),
                         ),
-                        if (kind.takesValue) ...[
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: singleValue,
-                            minLines: 2,
-                            maxLines: 5,
-                            style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                            ),
-                            decoration: InputDecoration(
-                              labelText: '匹配内容',
-                              hintText: _ruleKindHint(kind),
-                              suffixIcon: conditionPicker(
-                                context,
-                                kind,
-                                singleValue,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ] else ...[
-                        for (var index = 0; index < drafts.length; index++)
-                          Padding(
-                            key: ObjectKey(drafts[index]),
-                            padding: const EdgeInsets.only(bottom: 8),
-                            child: Container(
-                              padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
-                              decoration: BoxDecoration(
-                                color: scheme.surfaceContainerHighest
-                                    .withValues(alpha: 0.4),
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Expanded(
-                                    flex: 4,
-                                    child: DropdownButtonFormField<RuleKind>(
-                                      initialValue: drafts[index].kind,
-                                      isExpanded: true,
-                                      decoration: InputDecoration(
-                                        labelText: '条件 ${index + 1}',
-                                        border: InputBorder.none,
-                                        isDense: true,
-                                      ),
-                                      items: availableKinds
-                                          .map(
-                                            (value) => DropdownMenuItem(
-                                              value: value,
-                                              child: Text(
-                                                _ruleKindLabel(value),
-                                                overflow: TextOverflow.ellipsis,
-                                              ),
-                                            ),
-                                          )
-                                          .toList(),
-                                      onChanged: (value) => setDialogState(
-                                        () => drafts[index].kind =
-                                            value ?? drafts[index].kind,
-                                      ),
-                                    ),
-                                  ),
-                                  if (drafts[index].kind.takesValue) ...[
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      flex: 5,
-                                      child: TextField(
-                                        controller: drafts[index].value,
-                                        style: const TextStyle(
-                                          fontFamily: 'monospace',
-                                          fontSize: 12,
-                                        ),
-                                        decoration: InputDecoration(
-                                          labelText: '内容',
-                                          hintText: _ruleKindHint(
-                                            drafts[index].kind,
-                                          ),
-                                          suffixIcon: conditionPicker(
-                                            context,
-                                            drafts[index].kind,
-                                            drafts[index].value,
-                                          ),
-                                          border: InputBorder.none,
-                                          isDense: true,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                  IconButton(
-                                    onPressed: drafts.length <= 2
-                                        ? null
-                                        : () => setDialogState(() {
-                                            final removed = drafts.removeAt(
-                                              index,
-                                            );
-                                            retired.add(removed.value);
-                                          }),
-                                    tooltip: '移除条件',
-                                    visualDensity: VisualDensity.compact,
-                                    iconSize: 19,
-                                    icon: const Icon(
-                                      Icons.remove_circle_outline_rounded,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        Align(
-                          alignment: Alignment.centerLeft,
-                          child: TextButton.icon(
-                            onPressed: () => setDialogState(() {
-                              drafts.add(_ConditionDraft(drafts.last.kind, ''));
-                            }),
-                            icon: const Icon(Icons.add_rounded, size: 18),
-                            label: const Text('添加条件'),
-                          ),
-                        ),
-                        Text(
-                          'AND 需要全部条件同时成立，OR 任一条件成立即可。',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: scheme.onSurfaceVariant),
-                        ),
-                      ],
-                      if (errorText != null) ...[
-                        const SizedBox(height: 10),
-                        Text(
-                          errorText!,
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: scheme.error),
-                        ),
-                      ],
+                      ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  if (logic == RuleLogic.single) ...[
+                    DropdownButtonFormField<RuleKind>(
+                      borderRadius: appMenuRadius,
+                      dropdownColor: Theme.of(context).popupMenuTheme.color,
+                      initialValue: kind,
+                      isExpanded: true,
+                      decoration: const InputDecoration(labelText: '匹配类型'),
+                      items: availableKinds
+                          .map(
+                            (value) => DropdownMenuItem(
+                              value: value,
+                              child: Text(_ruleKindLabel(value)),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (value) =>
+                          setDialogState(() => kind = value ?? kind),
+                    ),
+                    if (kind.takesValue) ...[
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: singleValue,
+                        minLines: 2,
+                        maxLines: 5,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12,
+                        ),
+                        decoration: InputDecoration(
+                          labelText: '匹配内容',
+                          hintText: _ruleKindHint(kind),
+                          suffixIcon: conditionPicker(
+                            context,
+                            kind,
+                            singleValue,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ] else ...[
+                    for (var index = 0; index < drafts.length; index++)
+                      Padding(
+                        key: ObjectKey(drafts[index]),
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Container(
+                          padding: const EdgeInsets.fromLTRB(10, 6, 4, 6),
+                          decoration: BoxDecoration(
+                            color: scheme.surfaceContainerHighest.withValues(
+                              alpha: 0.4,
+                            ),
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                flex: 4,
+                                child: DropdownButtonFormField<RuleKind>(
+                                  borderRadius: appMenuRadius,
+                                  dropdownColor: Theme.of(context)
+                                      .popupMenuTheme
+                                      .color,
+                                  initialValue: drafts[index].kind,
+                                  isExpanded: true,
+                                  decoration: InputDecoration(
+                                    labelText: '条件 ${index + 1}',
+                                    border: InputBorder.none,
+                                    isDense: true,
+                                  ),
+                                  items: availableKinds
+                                      .map(
+                                        (value) => DropdownMenuItem(
+                                          value: value,
+                                          child: Text(
+                                            _ruleKindLabel(value),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      )
+                                      .toList(),
+                                  onChanged: (value) => setDialogState(
+                                    () => drafts[index].kind =
+                                        value ?? drafts[index].kind,
+                                  ),
+                                ),
+                              ),
+                              if (drafts[index].kind.takesValue) ...[
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  flex: 5,
+                                  child: TextField(
+                                    controller: drafts[index].value,
+                                    style: const TextStyle(
+                                      fontFamily: 'monospace',
+                                      fontSize: 12,
+                                    ),
+                                    decoration: InputDecoration(
+                                      labelText: '内容',
+                                      hintText: _ruleKindHint(
+                                        drafts[index].kind,
+                                      ),
+                                      suffixIcon: conditionPicker(
+                                        context,
+                                        drafts[index].kind,
+                                        drafts[index].value,
+                                      ),
+                                      border: InputBorder.none,
+                                      isDense: true,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              IconButton(
+                                onPressed: drafts.length <= 2
+                                    ? null
+                                    : () => setDialogState(() {
+                                        final removed = drafts.removeAt(index);
+                                        retired.add(removed.value);
+                                      }),
+                                tooltip: '移除条件',
+                                visualDensity: VisualDensity.compact,
+                                iconSize: 19,
+                                icon: const Icon(
+                                  Icons.remove_circle_outline_rounded,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => setDialogState(() {
+                          drafts.add(_ConditionDraft(drafts.last.kind, ''));
+                        }),
+                        icon: const Icon(Icons.add_rounded, size: 18),
+                        label: const Text('添加条件'),
+                      ),
+                    ),
+                    Text(
+                      'AND 需要全部条件同时成立，OR 任一条件成立即可。',
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
+                    ),
+                  ],
+                  if (errorText != null) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      errorText!,
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: scheme.error),
+                    ),
+                  ],
+                ],
               ),
+              leadingAction: editing
+                  ? TextButton(
+                      onPressed: () =>
+                          Navigator.pop(context, _EditorResult.delete),
+                      style: TextButton.styleFrom(
+                        foregroundColor: scheme.error,
+                      ),
+                      child: const Text('删除'),
+                    )
+                  : null,
               actions: [
-                if (editing)
-                  TextButton(
-                    onPressed: () =>
-                        Navigator.pop(context, _EditorResult.delete),
-                    style: TextButton.styleFrom(foregroundColor: scheme.error),
-                    child: const Text('删除'),
-                  ),
                 TextButton(
                   onPressed: () => Navigator.pop(context),
                   child: const Text('取消'),
@@ -610,13 +610,14 @@ class _RulesPageState extends State<RulesPage> {
 
 Future<String?> _pickRuleSet(BuildContext context, List<String> tags) {
   var matches = tags;
-  return showDialog<String>(
+  return showAppDialog<String>(
     context: context,
     builder: (context) => StatefulBuilder(
-      builder: (context, setState) => AlertDialog(
+      builder: (context, setState) => AppDialog(
+        size: AppDialogSize.standard,
+        scrollContent: false,
         title: const Text('选择规则集'),
         content: SizedBox(
-          width: 400,
           height: 360,
           child: Column(
             children: [
@@ -698,7 +699,6 @@ class _CompiledRuleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
     final action = rule['action'];
     final (title, description) = switch (action) {
       'sniff' => ('识别流量协议', '按 DNS 设置执行流量嗅探，继续匹配后续规则'),
@@ -719,23 +719,13 @@ class _CompiledRuleTile extends StatelessWidget {
       leading: const Icon(Icons.lock_outline_rounded),
       title: title,
       description: description,
-      onTap: () => showDialog<void>(
+      onTap: () => showAppDialog<void>(
         context: context,
-        builder: (context) => AlertDialog(
-          insetPadding: const EdgeInsets.symmetric(
-            horizontal: 20,
-            vertical: 24,
-          ),
+        builder: (context) => AppDialog(
+          size: AppDialogSize.wide,
           title: Text(title),
-          scrollable: true,
-          content: SizedBox(
-            width: 560,
-            child: SelectableText(
-              const JsonEncoder.withIndent('  ').convert(rule),
-              style: theme.textTheme.bodySmall?.copyWith(
-                fontFamily: 'monospace',
-              ),
-            ),
+          content: AppDialogCode(
+            const JsonEncoder.withIndent('  ').convert(rule),
           ),
           actions: [
             TextButton(

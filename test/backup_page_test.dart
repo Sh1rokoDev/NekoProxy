@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:nekoproxy/app/dialogs.dart';
 import 'package:nekoproxy/app/app_scope.dart';
 import 'package:nekoproxy/app/widgets.dart';
 import 'package:nekoproxy/features/tools/backup_page.dart';
@@ -62,7 +63,7 @@ void main() {
     );
 
     final dialogField = find.descendant(
-      of: find.byType(AlertDialog),
+      of: find.byType(AppDialog),
       matching: find.byType(TextField),
     );
     final restoreButton = find.widgetWithText(FilledButton, '恢复');
@@ -89,7 +90,7 @@ void main() {
     await tester.pump();
     await tester.tap(restoreButton);
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
     expect(find.text('备份已恢复'), findsOneWidget);
     expect(controller.attemptedPasswords, [null, 'wrong', 'correct']);
     expect(picker.pickCount, 1);
@@ -100,7 +101,7 @@ void main() {
     expect(find.text('密码错误或备份已损坏'), findsOneWidget);
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
     expect(controller.attemptedPasswords, [null, 'wrong', 'correct', 'wrong']);
     expect(
       tester

@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:material_ui/material_ui.dart';
 
 import '../../app/app_scope.dart';
+import '../../app/dialogs.dart';
 import '../../app/widgets.dart';
 import '../../services/windows_startup.dart';
 import '../../state/app_controller.dart';
@@ -29,7 +30,7 @@ class ToolsPage extends StatelessWidget {
         icon: Icons.palette_outlined,
         label: '主题',
         tooltip: '主题设置',
-        onPressed: () => showDialog<void>(
+        onPressed: () => showAppDialog<void>(
           context: context,
           builder: (_) => const ThemeDialog(),
         ),

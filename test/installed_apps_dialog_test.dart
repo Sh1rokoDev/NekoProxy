@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as images;
+import 'package:nekoproxy/app/dialogs.dart';
 import 'package:nekoproxy/app/theme.dart';
 import 'package:nekoproxy/data/app_storage.dart';
 import 'package:nekoproxy/domain/models.dart';
@@ -243,7 +244,7 @@ void main() {
     storage.fail = false;
     await tester.tap(find.text('保存并重新连接'));
     await tester.pumpAndSettle();
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(AppDialog), findsNothing);
     expect(controller.settings.perAppMode, PerAppMode.allow);
     expect(controller.settings.perAppPackages, ['app.example']);
     expect(controller.restarts, 1);
